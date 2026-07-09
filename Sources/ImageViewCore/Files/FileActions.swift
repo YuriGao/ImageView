@@ -3,6 +3,7 @@ import Foundation
 
 public enum FileActionError: Error, Equatable {
     case emptyName
+    case invalidBaseName
     case unsupportedRenameTarget
 }
 
@@ -23,16 +24,24 @@ public final class FileActions {
         guard !trimmed.isEmpty else {
             throw FileActionError.emptyName
         }
+        guard trimmed != ".",
+              trimmed != "..",
+              !trimmed.contains("/") else {
+            throw FileActionError.invalidBaseName
+        }
 
         let ext = url.pathExtension
         guard !ext.isEmpty else {
             throw FileActionError.unsupportedRenameTarget
         }
 
-        let destination = url
-            .deletingLastPathComponent()
+        let parentDirectory = url.deletingLastPathComponent()
+        let destination = parentDirectory
             .appendingPathComponent(trimmed)
             .appendingPathExtension(ext)
+        guard destination.deletingLastPathComponent().standardizedFileURL == parentDirectory.standardizedFileURL else {
+            throw FileActionError.invalidBaseName
+        }
         try fileManager.moveItem(at: url, to: destination)
         return destination
     }

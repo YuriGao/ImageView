@@ -200,6 +200,29 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.currentFilename, "first.png")
     }
 
+    func testMoveCurrentToTrashClearsDisplayedImageWhenLastItemIsRemoved() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let imageURL = root.appendingPathComponent("solo.png")
+        try makePNGData(width: 5, height: 4).write(to: imageURL)
+        let viewModel = ViewerViewModel(
+            moveToTrashAtURL: { _ in }
+        )
+
+        await viewModel.open(url: imageURL)
+        XCTAssertEqual(viewModel.displayTitle, "solo.png")
+        XCTAssertNotNil(viewModel.currentImage)
+
+        viewModel.moveCurrentToTrash()
+
+        XCTAssertNil(viewModel.currentImage)
+        XCTAssertNil(viewModel.navigationState)
+        XCTAssertEqual(viewModel.displayTitle, "ImageView")
+        XCTAssertEqual(viewModel.errorMessage, "没有可显示的图片")
+    }
+
     func testCanPreloadInBackgroundSkipsFallbackFormats() {
         XCTAssertTrue(ViewerViewModel.canPreloadInBackground(.png))
         XCTAssertTrue(ViewerViewModel.canPreloadInBackground(.jpeg))

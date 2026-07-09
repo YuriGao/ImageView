@@ -25,6 +25,7 @@ final class ViewerViewModel: ObservableObject {
     private let scanContainingDirectory: @Sendable (URL) async throws -> [ImageItem]
     private let decodeImageAtURL: @Sendable (URL, SupportedImageFormat) throws -> DecodedImage
     private let loadImageAtURL: @Sendable (URL, SupportedImageFormat) async throws -> DecodedImage
+    private let moveToTrashAtURL: @Sendable (URL) throws -> Void
     private let fileActions = FileActions()
     private let cache = ImageCache(costLimit: 512 * 1024 * 1024)
     private var openGeneration: UInt64 = 0
@@ -38,10 +39,14 @@ final class ViewerViewModel: ObservableObject {
             let decoder = ImageDecodeService()
             return try decoder.decode(url: $0, format: $1, maxPixelSize: nil)
         },
+        moveToTrashAtURL: @escaping @Sendable (URL) throws -> Void = {
+            try FileActions().moveToTrash($0)
+        },
         loadImageAtURL: (@Sendable (URL, SupportedImageFormat) async throws -> DecodedImage)? = nil
     ) {
         self.scanContainingDirectory = scanContainingDirectory
         self.decodeImageAtURL = decodeImageAtURL
+        self.moveToTrashAtURL = moveToTrashAtURL
         if let loadImageAtURL {
             self.loadImageAtURL = loadImageAtURL
         } else {
@@ -125,8 +130,17 @@ final class ViewerViewModel: ObservableObject {
     func moveCurrentToTrash() {
         guard let url = navigationState?.currentItem?.url else { return }
         do {
-            try fileActions.moveToTrash(url)
+            try moveToTrashAtURL(url)
             navigationState?.removeCurrent()
+            if navigationState?.currentItem == nil {
+                navigationState = nil
+                currentImage = nil
+                errorMessage = "没有可显示的图片"
+                updateDisplayTitle()
+                return
+            }
+
+            errorMessage = nil
             updateDisplayTitle()
             Task { await displayCurrentAndPreload() }
         } catch {

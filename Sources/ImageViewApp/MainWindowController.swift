@@ -122,6 +122,37 @@ final class MainWindowController: NSWindowController {
         super.keyDown(with: event)
     }
 
+    @objc func renameCurrentImage(_ sender: Any?) {
+        guard let item = viewModel.navigationState?.currentItem else {
+            NSSound.beep()
+            return
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "重命名"
+        alert.informativeText = "输入新的文件名（不含扩展名）。"
+        let textField = NSTextField(string: item.url.deletingPathExtension().lastPathComponent)
+        textField.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
+        alert.accessoryView = textField
+        alert.addButton(withTitle: "重命名")
+        alert.addButton(withTitle: "取消")
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        viewModel.renameCurrent(to: textField.stringValue)
+    }
+
+    @objc func revealCurrentImageInFinder(_ sender: Any?) {
+        viewModel.revealCurrentInFinder()
+    }
+
+    @objc func copyCurrentImagePath(_ sender: Any?) {
+        viewModel.copyCurrentPathToPasteboard()
+    }
+
+    @objc func moveCurrentImageToTrash(_ sender: Any?) {
+        viewModel.moveCurrentToTrash()
+    }
+
     private func installKeyMonitor() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, self.window?.isKeyWindow == true else {
@@ -197,5 +228,19 @@ final class MainWindowController: NSWindowController {
             zoomText: "\(Int((scale * 100).rounded()))%",
             isPinned: true
         )
+    }
+}
+
+extension MainWindowController: NSMenuItemValidation {
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        switch menuItem.action {
+        case #selector(renameCurrentImage(_:)),
+             #selector(revealCurrentImageInFinder(_:)),
+             #selector(copyCurrentImagePath(_:)),
+             #selector(moveCurrentImageToTrash(_:)):
+            return viewModel.navigationState?.currentItem != nil
+        default:
+            return true
+        }
     }
 }
