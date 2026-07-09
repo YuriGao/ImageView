@@ -1,1 +1,7 @@
-.worktrees/
+.build/
+.swiftpm/
+DerivedData/
+*.xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.app/
+.DS_Store
