@@ -59,3 +59,21 @@ Created:
 ## Concerns
 
 - `DirectoryScanner` uses `@unchecked Sendable` because `FileManager` is not `Sendable` in this SDK. That is acceptable for this task, but it is a reminder that the scanner owns a non-thread-safe Foundation dependency.
+
+## Review Fix Addendum
+
+I moved the directory enumeration, filtering, and sorting work onto a background queue so `scan(containing:)` keeps the same async API without doing the heavy directory walk on the caller's executor.
+
+### Verification Run
+
+- `swift test --filter DirectoryScannerTests`
+- `swift test`
+
+### Output Summary
+
+- `DirectoryScannerTests`: 2 tests passed, 0 failures
+- Full suite: 6 tests passed, 0 failures
+
+### Notes
+
+- Added a focused regression test that calls `DirectoryScanner.scan(containing:)` from `@MainActor` and confirms directory enumeration happens off the main thread.

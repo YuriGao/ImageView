@@ -3,6 +3,19 @@ import XCTest
 @testable import ImageViewCore
 
 final class DirectoryScannerTests: XCTestCase {
+    private final class RecordingFileManager: FileManager {
+        private(set) var enumeratedOnMainThread = false
+
+        override func contentsOfDirectory(
+            at url: URL,
+            includingPropertiesForKeys keys: [URLResourceKey]?,
+            options mask: FileManager.DirectoryEnumerationOptions = []
+        ) throws -> [URL] {
+            enumeratedOnMainThread = Thread.isMainThread
+            return try super.contentsOfDirectory(at: url, includingPropertiesForKeys: keys, options: mask)
+        }
+    }
+
     func testScansOnlySupportedImagesInOpenedFilesDirectory() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -19,5 +32,22 @@ final class DirectoryScannerTests: XCTestCase {
 
         XCTAssertEqual(items.map(\.url.lastPathComponent), ["image-1.jpg", "image-2.png"])
         XCTAssertTrue(items.contains { $0.url == opened })
+    }
+
+    @MainActor
+    func testDirectoryEnumerationRunsOffTheMainThread() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let opened = root.appendingPathComponent("image-1.png")
+        FileManager.default.createFile(atPath: opened.path, contents: Data())
+
+        let fileManager = RecordingFileManager()
+        let scanner = DirectoryScanner(fileManager: fileManager)
+
+        _ = try await scanner.scan(containing: opened)
+
+        XCTAssertFalse(fileManager.enumeratedOnMainThread)
     }
 }
