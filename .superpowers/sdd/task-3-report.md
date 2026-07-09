@@ -31,3 +31,8 @@ Self-Review
 
 Concerns
 - None at present. The implementation and tests are green, and I did not need to modify any shared interfaces.
+
+Review Fix Addendum
+- Updated `NavigationState` to `public struct NavigationState: Equatable, Sendable`.
+- Exposed `items` and `currentIndex` as `public private(set)` so other modules can read navigation sequence state without mutating it.
+- Re-ran `swift test --filter NavigationStateTests` and `swift test`; both passed.

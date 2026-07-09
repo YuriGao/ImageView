@@ -1,8 +1,8 @@
 import Foundation
 
-public struct NavigationState: Equatable {
-    var items: [ImageItem]
-    var currentIndex: Int?
+public struct NavigationState: Equatable, Sendable {
+    public private(set) var items: [ImageItem]
+    public private(set) var currentIndex: Int?
 
     public init(items: [ImageItem], currentURL: URL) {
         self.items = items.sorted { NaturalSort.compare($0.url.lastPathComponent, $1.url.lastPathComponent) }
