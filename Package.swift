@@ -16,7 +16,8 @@ let package = Package(
         .executableTarget(
             name: "ImageViewApp",
             dependencies: ["ImageViewCore"],
-            path: "Sources/ImageViewApp"
+            path: "Sources/ImageViewApp",
+            exclude: ["Resources"]
         ),
         .testTarget(
             name: "ImageViewCoreTests",
