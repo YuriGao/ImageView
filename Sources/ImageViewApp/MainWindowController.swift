@@ -39,6 +39,7 @@ final class MainWindowController: NSWindowController {
     private let canvas = ImageCanvasView()
     private let errorOverlay = ErrorOverlayView()
     private let hudView = NSHostingView(rootView: HUDView(filename: "ImageView", positionText: "0 / 0", zoomText: "100%", isPinned: true))
+    private let inspectorView = NSHostingView(rootView: InspectorView(metadata: nil))
     private let filmstripView = FilmstripView()
     private var cancellables: Set<AnyCancellable> = []
     private var gestureCoordinator: GestureCoordinator?
@@ -85,9 +86,11 @@ final class MainWindowController: NSWindowController {
         rootView.addSubview(canvas)
         canvas.addSubview(errorOverlay)
         rootView.addSubview(hudView)
+        rootView.addSubview(inspectorView)
         rootView.addSubview(filmstripView)
         errorOverlay.translatesAutoresizingMaskIntoConstraints = false
         hudView.translatesAutoresizingMaskIntoConstraints = false
+        inspectorView.translatesAutoresizingMaskIntoConstraints = false
         filmstripView.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             canvas.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
@@ -100,6 +103,9 @@ final class MainWindowController: NSWindowController {
             hudView.centerXAnchor.constraint(equalTo: rootView.centerXAnchor),
             hudView.leadingAnchor.constraint(greaterThanOrEqualTo: rootView.leadingAnchor, constant: 16),
             hudView.trailingAnchor.constraint(lessThanOrEqualTo: rootView.trailingAnchor, constant: -16),
+            inspectorView.trailingAnchor.constraint(equalTo: rootView.trailingAnchor, constant: -16),
+            inspectorView.topAnchor.constraint(equalTo: rootView.topAnchor, constant: 64),
+            inspectorView.bottomAnchor.constraint(lessThanOrEqualTo: filmstripView.topAnchor, constant: -16),
             filmstripView.leadingAnchor.constraint(equalTo: rootView.leadingAnchor, constant: 16),
             filmstripView.trailingAnchor.constraint(equalTo: rootView.trailingAnchor, constant: -16),
             filmstripView.bottomAnchor.constraint(equalTo: rootView.bottomAnchor, constant: -16),
@@ -131,6 +137,12 @@ final class MainWindowController: NSWindowController {
         viewModel.$errorMessage
             .sink { [weak self] message in
                 self?.errorOverlay.stringValue = message ?? ""
+            }
+            .store(in: &cancellables)
+
+        viewModel.$currentMetadata
+            .sink { [weak self] metadata in
+                self?.inspectorView.rootView = InspectorView(metadata: metadata)
             }
             .store(in: &cancellables)
 
@@ -236,6 +248,10 @@ final class MainWindowController: NSWindowController {
 
     @objc func toggleFilmstrip(_ sender: Any?) {
         settings.showsFilmstrip.toggle()
+    }
+
+    @objc func toggleInspector(_ sender: Any?) {
+        settings.showsInspector.toggle()
     }
 
     private func installKeyMonitor() {
@@ -391,6 +407,7 @@ final class MainWindowController: NSWindowController {
             usesBlackFullscreenBackground: settings.usesBlackFullscreenBackground
         )
         filmstripView.isHidden = !settings.showsFilmstrip
+        inspectorView.isHidden = !settings.showsInspector
         updateHUD()
     }
 
@@ -467,6 +484,10 @@ extension MainWindowController: NSMenuItemValidation {
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(toggleFilmstrip(_:)) {
             menuItem.state = settings.showsFilmstrip ? .on : .off
+            return true
+        }
+        if menuItem.action == #selector(toggleInspector(_:)) {
+            menuItem.state = settings.showsInspector ? .on : .off
             return true
         }
 

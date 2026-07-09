@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var didFinishLaunching = false
     private var preferencesMenuItem: NSMenuItem?
     private var toggleFilmstripMenuItem: NSMenuItem?
+    private var toggleInspectorMenuItem: NSMenuItem?
     private var renameMenuItem: NSMenuItem?
     private var revealMenuItem: NSMenuItem?
     private var copyPathMenuItem: NSMenuItem?
@@ -110,6 +111,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         toggleFilmstripMenuItem.keyEquivalentModifierMask = [.command, .option]
         viewMenu.addItem(toggleFilmstripMenuItem)
 
+        let toggleInspectorMenuItem = NSMenuItem(title: "Show Info", action: #selector(MainWindowController.toggleInspector(_:)), keyEquivalent: "i")
+        toggleInspectorMenuItem.keyEquivalentModifierMask = [.command, .option]
+        viewMenu.addItem(toggleInspectorMenuItem)
+
         let editMenuItem = NSMenuItem()
         mainMenu.addItem(editMenuItem)
         let editMenu = NSMenu(title: "Edit")
@@ -140,6 +145,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         self.preferencesMenuItem = preferencesMenuItem
         self.toggleFilmstripMenuItem = toggleFilmstripMenuItem
+        self.toggleInspectorMenuItem = toggleInspectorMenuItem
         self.renameMenuItem = renameMenuItem
         self.revealMenuItem = revealMenuItem
         self.copyPathMenuItem = copyPathMenuItem
@@ -158,6 +164,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let target = mainWindowController
         preferencesMenuItem?.target = self
         toggleFilmstripMenuItem?.target = target
+        toggleInspectorMenuItem?.target = target
         renameMenuItem?.target = target
         revealMenuItem?.target = target
         copyPathMenuItem?.target = target

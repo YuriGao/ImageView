@@ -138,4 +138,18 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertTrue(controller.validateMenuItem(item))
         XCTAssertEqual(item.state, .on)
     }
+
+    func testInspectorMenuValidationReflectsSettingState() {
+        let defaults = UserDefaults(suiteName: "ImageViewAppTests.Inspector.\(UUID().uuidString)")!
+        let settings = AppSettings(defaults: defaults)
+        let controller = MainWindowController(window: nil, settings: settings)
+        let item = NSMenuItem(title: "Show Info", action: #selector(MainWindowController.toggleInspector(_:)), keyEquivalent: "")
+
+        XCTAssertTrue(controller.validateMenuItem(item))
+        XCTAssertEqual(item.state, .off)
+
+        settings.showsInspector = true
+        XCTAssertTrue(controller.validateMenuItem(item))
+        XCTAssertEqual(item.state, .on)
+    }
 }

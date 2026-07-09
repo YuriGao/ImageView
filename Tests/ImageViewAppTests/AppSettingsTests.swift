@@ -9,6 +9,7 @@ final class AppSettingsTests: XCTestCase {
 
         XCTAssertFalse(settings.pinsHUD)
         XCTAssertFalse(settings.showsFilmstrip)
+        XCTAssertFalse(settings.showsInspector)
         XCTAssertTrue(settings.confirmsDelete)
         XCTAssertTrue(settings.usesBlackFullscreenBackground)
     }
@@ -18,12 +19,14 @@ final class AppSettingsTests: XCTestCase {
         let first = AppSettings(defaults: defaults)
         first.pinsHUD = true
         first.showsFilmstrip = true
+        first.showsInspector = true
         first.confirmsDelete = false
         first.usesBlackFullscreenBackground = false
 
         let second = AppSettings(defaults: defaults)
         XCTAssertTrue(second.pinsHUD)
         XCTAssertTrue(second.showsFilmstrip)
+        XCTAssertTrue(second.showsInspector)
         XCTAssertFalse(second.confirmsDelete)
         XCTAssertFalse(second.usesBlackFullscreenBackground)
     }

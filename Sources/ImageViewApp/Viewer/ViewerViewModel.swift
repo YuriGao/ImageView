@@ -7,6 +7,7 @@ import ImageViewCore
 final class ViewerViewModel: ObservableObject {
     @Published private(set) var navigationState: NavigationState?
     @Published private(set) var currentImage: DecodedImage?
+    @Published private(set) var currentMetadata: ImageMetadata?
     @Published private(set) var errorMessage: String?
     @Published private(set) var displayTitle = "ImageView"
     @Published private(set) var hasUnsavedEdits = false
@@ -27,6 +28,7 @@ final class ViewerViewModel: ObservableObject {
     private let decodeImageAtURL: @Sendable (URL, SupportedImageFormat) throws -> DecodedImage
     private let loadImageAtURL: @Sendable (URL, SupportedImageFormat) async throws -> DecodedImage
     private let moveToTrashAtURL: @Sendable (URL) throws -> Void
+    private let metadataService = ImageMetadataService()
     private let fileActions = FileActions()
     private let editingService = ImageEditingService()
     private let cache = ImageCache(costLimit: ImageCache.defaultFullImageCostLimit)
@@ -72,6 +74,7 @@ final class ViewerViewModel: ObservableObject {
         let generation = openGeneration
         pendingOperations.removeAll()
         persistedCurrentImage = nil
+        currentMetadata = nil
         hasUnsavedEdits = false
         errorMessage = nil
         updateDisplayTitle()
@@ -80,6 +83,7 @@ final class ViewerViewModel: ObservableObject {
             guard generation == openGeneration else { return }
             navigationState = nil
             currentImage = nil
+            currentMetadata = nil
             persistedCurrentImage = nil
             errorMessage = "不支持的图片格式：\(url.pathExtension)"
             updateDisplayTitle()
@@ -93,6 +97,7 @@ final class ViewerViewModel: ObservableObject {
             guard generation == openGeneration else { return }
             currentImage = image
             persistedCurrentImage = image
+            updateMetadata(url: url, format: format, image: image)
             navigationState = NavigationState(items: [fallbackItem], currentURL: url)
             updateDisplayTitle()
 
@@ -113,6 +118,7 @@ final class ViewerViewModel: ObservableObject {
             guard generation == openGeneration else { return }
             navigationState = nil
             currentImage = nil
+            currentMetadata = nil
             persistedCurrentImage = nil
             errorMessage = "图片损坏或无法解码：\(url.lastPathComponent)"
             updateDisplayTitle()
@@ -151,6 +157,7 @@ final class ViewerViewModel: ObservableObject {
             if navigationState?.currentItem == nil {
                 navigationState = nil
                 currentImage = nil
+                currentMetadata = nil
                 persistedCurrentImage = nil
                 errorMessage = "没有可显示的图片"
                 updateDisplayTitle()
@@ -170,6 +177,9 @@ final class ViewerViewModel: ObservableObject {
         do {
             let newURL = try fileActions.rename(item.url, to: newBaseName)
             navigationState?.replaceCurrentURL(newURL, format: item.format)
+            if let image = currentImage {
+                updateMetadata(url: newURL, format: item.format, image: image)
+            }
             errorMessage = nil
             updateDisplayTitle()
         } catch {
@@ -192,6 +202,9 @@ final class ViewerViewModel: ObservableObject {
                 pixelSize: CGSize(width: output.width, height: output.height),
                 isAnimated: false
             )
+            if let item = navigationState?.currentItem, let currentImage {
+                updateMetadata(url: item.url, format: item.format, image: currentImage)
+            }
             pendingOperations.append(operation)
             hasUnsavedEdits = true
             errorMessage = nil
@@ -218,6 +231,7 @@ final class ViewerViewModel: ObservableObject {
                 await cache.insert(decoded, for: item.url, cost: decoded.cgImage.bytesPerRow * decoded.cgImage.height)
             }
             persistedCurrentImage = decoded
+            updateMetadata(url: item.url, format: item.format, image: decoded)
             pendingOperations.removeAll()
             hasUnsavedEdits = false
             errorMessage = nil
@@ -239,6 +253,9 @@ final class ViewerViewModel: ObservableObject {
             let restoredImage = try restoredCurrentImage()
             currentImage = restoredImage
             persistedCurrentImage = restoredImage
+            if let item = navigationState?.currentItem {
+                updateMetadata(url: item.url, format: item.format, image: restoredImage)
+            }
             pendingOperations.removeAll()
             hasUnsavedEdits = false
             errorMessage = nil
@@ -268,6 +285,7 @@ final class ViewerViewModel: ObservableObject {
         }
         currentImage = image
         persistedCurrentImage = image
+        updateMetadata(url: item.url, format: item.format, image: image)
         preloadNeighbors()
     }
 
@@ -311,6 +329,15 @@ final class ViewerViewModel: ObservableObject {
 
     private func updateDisplayTitle() {
         displayTitle = currentFilename
+    }
+
+    private func updateMetadata(url: URL, format: SupportedImageFormat, image: DecodedImage) {
+        currentMetadata = metadataService.metadata(
+            for: url,
+            format: format,
+            pixelWidth: image.cgImage.width,
+            pixelHeight: image.cgImage.height
+        )
     }
 
     private func restoredCurrentImage() throws -> DecodedImage {

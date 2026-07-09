@@ -25,6 +25,9 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.navigationState?.items.map(\.url.lastPathComponent), ["a.png", "b.png"])
         XCTAssertEqual(viewModel.navigationState?.currentItem?.url.lastPathComponent, "b.png")
         XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 6, height: 4))
+        XCTAssertEqual(viewModel.currentMetadata?.format, .png)
+        XCTAssertEqual(viewModel.currentMetadata?.pixelWidth, 6)
+        XCTAssertEqual(viewModel.currentMetadata?.pixelHeight, 4)
         XCTAssertNil(viewModel.errorMessage)
     }
 
@@ -42,6 +45,7 @@ final class ViewerViewModelTests: XCTestCase {
 
         XCTAssertEqual(viewModel.errorMessage, "图片损坏或无法解码：broken.png")
         XCTAssertNil(viewModel.currentImage)
+        XCTAssertNil(viewModel.currentMetadata)
     }
 
     func testOpenSetsErrorMessageWhenImageFormatIsUnsupported() async throws {
@@ -58,6 +62,7 @@ final class ViewerViewModelTests: XCTestCase {
 
         XCTAssertEqual(viewModel.errorMessage, "不支持的图片格式：txt")
         XCTAssertNil(viewModel.currentImage)
+        XCTAssertNil(viewModel.currentMetadata)
         XCTAssertNil(viewModel.navigationState)
     }
 
@@ -88,6 +93,7 @@ final class ViewerViewModelTests: XCTestCase {
 
         XCTAssertEqual(viewModel.errorMessage, "图片损坏或无法解码：broken.png")
         XCTAssertNil(viewModel.currentImage)
+        XCTAssertNil(viewModel.currentMetadata)
         XCTAssertNil(viewModel.navigationState)
     }
 
@@ -235,6 +241,7 @@ final class ViewerViewModelTests: XCTestCase {
         viewModel.moveCurrentToTrash()
 
         XCTAssertNil(viewModel.currentImage)
+        XCTAssertNil(viewModel.currentMetadata)
         XCTAssertNil(viewModel.navigationState)
         XCTAssertEqual(viewModel.displayTitle, "ImageView")
         XCTAssertEqual(viewModel.errorMessage, "没有可显示的图片")
