@@ -150,18 +150,7 @@ final class MainWindowController: NSWindowController {
     }
 
     @objc func moveCurrentImageToTrash(_ sender: Any?) {
-        guard let item = viewModel.navigationState?.currentItem else {
-            NSSound.beep()
-            return
-        }
-
-        let alert = NSAlert()
-        alert.messageText = "Move to Trash?"
-        alert.informativeText = "This will move \"\(item.url.lastPathComponent)\" to the Trash."
-        alert.addButton(withTitle: "Move to Trash")
-        alert.addButton(withTitle: "Cancel")
-
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard confirmMoveCurrentImageToTrash() else { return }
         viewModel.moveCurrentToTrash()
     }
 
@@ -183,6 +172,7 @@ final class MainWindowController: NSWindowController {
             viewModel.showNext()
             return true
         case .moveToTrash:
+            guard confirmMoveCurrentImageToTrash() else { return true }
             viewModel.moveCurrentToTrash()
             return true
         case .toggleZoom:
@@ -240,6 +230,21 @@ final class MainWindowController: NSWindowController {
             zoomText: "\(Int((scale * 100).rounded()))%",
             isPinned: true
         )
+    }
+
+    private func confirmMoveCurrentImageToTrash() -> Bool {
+        guard let item = viewModel.navigationState?.currentItem else {
+            NSSound.beep()
+            return false
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "Move to Trash?"
+        alert.informativeText = "This will move \"\(item.url.lastPathComponent)\" to the Trash."
+        alert.addButton(withTitle: "Move to Trash")
+        alert.addButton(withTitle: "Cancel")
+
+        return alert.runModal() == .alertFirstButtonReturn
     }
 }
 
