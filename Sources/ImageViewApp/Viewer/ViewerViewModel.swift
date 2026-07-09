@@ -8,6 +8,7 @@ final class ViewerViewModel: ObservableObject {
     @Published private(set) var navigationState: NavigationState?
     @Published private(set) var currentImage: DecodedImage?
     @Published private(set) var errorMessage: String?
+    @Published private(set) var displayTitle = "ImageView"
 
     private let scanContainingDirectory: @Sendable (URL) async throws -> [ImageItem]
     private let decodeImageAtURL: @Sendable (URL, SupportedImageFormat) throws -> DecodedImage
@@ -48,6 +49,7 @@ final class ViewerViewModel: ObservableObject {
         openGeneration += 1
         let generation = openGeneration
         errorMessage = nil
+        updateDisplayTitle()
 
         do {
             guard let format = SupportedImageFormat(fileExtension: url.pathExtension) else {
@@ -59,6 +61,7 @@ final class ViewerViewModel: ObservableObject {
             guard generation == openGeneration else { return }
             currentImage = image
             navigationState = NavigationState(items: [fallbackItem], currentURL: url)
+            updateDisplayTitle()
 
             do {
                 let items = try await scanContainingDirectory(url)
@@ -66,6 +69,7 @@ final class ViewerViewModel: ObservableObject {
 
                 if items.contains(where: { $0.url.standardizedFileURL == url.standardizedFileURL }) {
                     navigationState = NavigationState(items: items, currentURL: url)
+                    updateDisplayTitle()
                 }
             } catch {
                 guard generation == openGeneration else { return }
@@ -77,16 +81,19 @@ final class ViewerViewModel: ObservableObject {
             navigationState = nil
             currentImage = nil
             errorMessage = "无法打开图片：\(url.lastPathComponent)"
+            updateDisplayTitle()
         }
     }
 
     func showNext() {
         navigationState?.moveNext()
+        updateDisplayTitle()
         Task { await displayCurrentAndPreload() }
     }
 
     func showPrevious() {
         navigationState?.movePrevious()
+        updateDisplayTitle()
         Task { await displayCurrentAndPreload() }
     }
 
@@ -108,10 +115,16 @@ final class ViewerViewModel: ObservableObject {
         guard let state = navigationState, let current = state.currentItem else { return }
         let currentURL = current.url
         let currentIndex = state.items.firstIndex { $0.url == currentURL } ?? 0
-        let neighbors = state.items.enumerated().compactMap { index, item in
-            abs(index - currentIndex) <= 2 ? item : nil
+        let neighbors: [ImageItem] = state.items.enumerated().compactMap { entry -> ImageItem? in
+            let (index, item) = entry
+            guard abs(index - currentIndex) <= 2,
+                  Self.canPreloadInBackground(item.format) else {
+                return nil
+            }
+            return item
         }
 
+        guard !neighbors.isEmpty else { return }
         let decodeImageAtURL = self.decodeImageAtURL
         Task.detached { [cache] in
             for item in neighbors {
@@ -121,5 +134,18 @@ final class ViewerViewModel: ObservableObject {
                 }
             }
         }
+    }
+
+    static func canPreloadInBackground(_ format: SupportedImageFormat) -> Bool {
+        switch format {
+        case .svg, .webp, .avif:
+            return false
+        case .jpeg, .png, .gif, .tiff, .bmp, .heic, .heif:
+            return true
+        }
+    }
+
+    private func updateDisplayTitle() {
+        displayTitle = navigationState?.currentItem?.url.lastPathComponent ?? "ImageView"
     }
 }

@@ -38,7 +38,12 @@ final class MainWindowController: NSWindowController {
         viewModel.$currentImage
             .sink { [weak self] image in
                 self?.canvas.image = image
-                self?.window?.title = self?.viewModel.navigationState?.currentItem?.url.lastPathComponent ?? "ImageView"
+            }
+            .store(in: &cancellables)
+
+        viewModel.$displayTitle
+            .sink { [weak self] title in
+                self?.window?.title = title
             }
             .store(in: &cancellables)
 

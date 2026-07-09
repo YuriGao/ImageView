@@ -57,6 +57,49 @@ Result:
 - PASS
 - `Build complete!`
 
+## Third Review Fix Addendum
+
+- Added `@Published private(set) var displayTitle` to `ViewerViewModel` and refreshed it whenever navigation changes or an open fails, so the title tracks the actual current item state instead of piggybacking on `$currentImage`.
+- Switched `MainWindowController` to bind the window title from `$displayTitle`, leaving the image subscription responsible only for canvas rendering.
+- Restricted detached neighbor preloading to background-safe formats with `ViewerViewModel.canPreloadInBackground(_:)`, which skips `.svg`, `.webp`, and `.avif` so AppKit-backed fallback decode paths are not invoked off-main.
+- Expanded `ViewerViewModelTests` with regressions for title updates across navigation/failure and for the preload eligibility guard.
+
+### Third Review Verification
+
+Command:
+
+```sh
+HOME=$(pwd)/.build/home \
+CLANG_MODULE_CACHE_PATH=$(pwd)/.build/ModuleCache \
+SWIFTPM_MODULECACHE_OVERRIDE=$(pwd)/.build/ModuleCache \
+SWIFTPM_PACKAGECACHE_PATH=$(pwd)/.build/package-cache \
+swift test --disable-sandbox
+```
+
+Result:
+
+- PASS
+- 20 tests executed, 0 failures
+
+Command:
+
+```sh
+HOME=$(pwd)/.build/home \
+CLANG_MODULE_CACHE_PATH=$(pwd)/.build/ModuleCache \
+SWIFTPM_MODULECACHE_OVERRIDE=$(pwd)/.build/ModuleCache \
+SWIFTPM_PACKAGECACHE_PATH=$(pwd)/.build/package-cache \
+swift build --disable-sandbox
+```
+
+Result:
+
+- PASS
+- `Build complete!`
+
+### Third Review Notes
+
+- SwiftPM still emitted readonly user-cache warnings in this harness even with workspace-local cache overrides, but both required commands completed successfully.
+
 ### Full test suite
 
 Command:

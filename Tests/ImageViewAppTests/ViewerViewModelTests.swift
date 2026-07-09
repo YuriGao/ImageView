@@ -128,6 +128,53 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.errorMessage)
     }
 
+    func testDisplayTitleTracksCurrentItemAcrossNavigationAndErrors() async throws {
+        let firstURL = URL(fileURLWithPath: "/tmp/first.png")
+        let secondURL = URL(fileURLWithPath: "/tmp/second.png")
+        let brokenURL = URL(fileURLWithPath: "/tmp/broken.png")
+        let image = try makeDecodedImage(width: 4, height: 3)
+        let scanner = ControlledScanner { url in
+            let format = try XCTUnwrap(SupportedImageFormat(fileExtension: url.pathExtension))
+            if url == firstURL {
+                return [
+                    ImageItem(url: firstURL, format: format),
+                    ImageItem(url: secondURL, format: format)
+                ]
+            }
+            return [ImageItem(url: url, format: format)]
+        }
+        let decoder = StubDecoder { url, _ in
+            if url == brokenURL {
+                throw ImageDecodeError.cannotCreateSource
+            }
+            return image
+        }
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: scanner.scan(containing:),
+            decodeImageAtURL: decoder.decode(url:format:)
+        )
+
+        XCTAssertEqual(viewModel.displayTitle, "ImageView")
+
+        await viewModel.open(url: firstURL)
+        XCTAssertEqual(viewModel.displayTitle, "first.png")
+
+        viewModel.showNext()
+        await waitUntil { viewModel.displayTitle == "second.png" }
+        XCTAssertEqual(viewModel.displayTitle, "second.png")
+
+        await viewModel.open(url: brokenURL)
+        XCTAssertEqual(viewModel.displayTitle, "ImageView")
+    }
+
+    func testCanPreloadInBackgroundSkipsFallbackFormats() {
+        XCTAssertTrue(ViewerViewModel.canPreloadInBackground(.png))
+        XCTAssertTrue(ViewerViewModel.canPreloadInBackground(.jpeg))
+        XCTAssertFalse(ViewerViewModel.canPreloadInBackground(.svg))
+        XCTAssertFalse(ViewerViewModel.canPreloadInBackground(.webp))
+        XCTAssertFalse(ViewerViewModel.canPreloadInBackground(.avif))
+    }
+
     private func makePNGData(width: Int, height: Int) throws -> Data {
         let colorSpace = CGColorSpaceCreateDeviceRGB()
         guard let context = CGContext(
@@ -180,6 +227,20 @@ final class ViewerViewModelTests: XCTestCase {
         case cannotCreateContext
         case cannotEncodeImage
         case scanFailed
+    }
+
+    private func waitUntil(
+        timeoutNanoseconds: UInt64 = 1_000_000_000,
+        condition: @escaping @MainActor () -> Bool
+    ) async {
+        let deadline = DispatchTime.now().uptimeNanoseconds + timeoutNanoseconds
+        while !condition() {
+            if DispatchTime.now().uptimeNanoseconds >= deadline {
+                XCTFail("Timed out waiting for condition")
+                return
+            }
+            await Task.yield()
+        }
     }
 }
 
