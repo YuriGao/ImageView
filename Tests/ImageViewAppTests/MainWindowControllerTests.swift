@@ -28,4 +28,23 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertEqual(MainWindowController.keyAction(for: 53, shouldEndEditing: true), .endEditing)
         XCTAssertEqual(MainWindowController.keyAction(for: 53, shouldEndEditing: false), .passThrough)
     }
+
+    func testResolveUnsavedChangesProceedsOnlyForDiscardOrSuccessfulSave() {
+        XCTAssertEqual(
+            MainWindowController.resolveUnsavedChanges(choice: .save, saveSucceeded: true),
+            .proceed
+        )
+        XCTAssertEqual(
+            MainWindowController.resolveUnsavedChanges(choice: .save, saveSucceeded: false),
+            .stayOnCurrentImage
+        )
+        XCTAssertEqual(
+            MainWindowController.resolveUnsavedChanges(choice: .discard, saveSucceeded: false),
+            .proceed
+        )
+        XCTAssertEqual(
+            MainWindowController.resolveUnsavedChanges(choice: .cancel, saveSucceeded: false),
+            .stayOnCurrentImage
+        )
+    }
 }

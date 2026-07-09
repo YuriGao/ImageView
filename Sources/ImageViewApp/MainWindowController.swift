@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import ImageViewCore
 import SwiftUI
 
 @MainActor
@@ -12,6 +13,17 @@ final class MainWindowController: NSWindowController {
         case toggleFullscreen
         case endEditing
         case passThrough
+    }
+
+    enum UnsavedChangesChoice: Equatable {
+        case save
+        case discard
+        case cancel
+    }
+
+    enum UnsavedChangesResolution: Equatable {
+        case proceed
+        case stayOnCurrentImage
     }
 
     private let viewModel = ViewerViewModel()
@@ -38,10 +50,14 @@ final class MainWindowController: NSWindowController {
     }
 
     func open(url: URL) {
-        Task { await viewModel.open(url: url) }
+        confirmUnsavedEditsIfNeeded(for: .opening) { [weak self] in
+            guard let self else { return }
+            Task { await self.viewModel.open(url: url) }
+        }
     }
 
     private func setup() {
+        window?.delegate = self
         window?.titlebarAppearsTransparent = true
         window?.center()
         rootView.wantsLayer = true
@@ -72,14 +88,14 @@ final class MainWindowController: NSWindowController {
             filmstripView.heightAnchor.constraint(equalToConstant: 36)
         ])
 
-        canvas.onNext = { [weak self] in self?.viewModel.showNext() }
-        canvas.onPrevious = { [weak self] in self?.viewModel.showPrevious() }
+        canvas.onNext = { [weak self] in self?.navigateToNextImage() }
+        canvas.onPrevious = { [weak self] in self?.navigateToPreviousImage() }
         canvas.onTransformChanged = { [weak self] scale in
             self?.updateHUD(zoomScale: scale)
         }
         gestureCoordinator = GestureCoordinator(canvas: canvas)
         filmstripView.onSelect = { [weak self] item in
-            self?.viewModel.show(item: item)
+            self?.selectImage(item)
         }
 
         viewModel.$currentImage
@@ -138,7 +154,10 @@ final class MainWindowController: NSWindowController {
         alert.addButton(withTitle: "取消")
 
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        viewModel.renameCurrent(to: textField.stringValue)
+        let newName = textField.stringValue
+        confirmUnsavedEditsIfNeeded(for: .renaming) { [weak self] in
+            self?.viewModel.renameCurrent(to: newName)
+        }
     }
 
     @objc func revealCurrentImageInFinder(_ sender: Any?) {
@@ -151,7 +170,9 @@ final class MainWindowController: NSWindowController {
 
     @objc func moveCurrentImageToTrash(_ sender: Any?) {
         guard confirmMoveCurrentImageToTrash() else { return }
-        viewModel.moveCurrentToTrash()
+        confirmUnsavedEditsIfNeeded(for: .movingToTrash) { [weak self] in
+            self?.viewModel.moveCurrentToTrash()
+        }
     }
 
     private func installKeyMonitor() {
@@ -166,14 +187,16 @@ final class MainWindowController: NSWindowController {
     private func handleKeyDown(_ event: NSEvent) -> Bool {
         switch Self.keyAction(for: event.keyCode, shouldEndEditing: shouldEndEditing(for: event)) {
         case .showPrevious:
-            viewModel.showPrevious()
+            navigateToPreviousImage()
             return true
         case .showNext:
-            viewModel.showNext()
+            navigateToNextImage()
             return true
         case .moveToTrash:
             guard confirmMoveCurrentImageToTrash() else { return true }
-            viewModel.moveCurrentToTrash()
+            confirmUnsavedEditsIfNeeded(for: .movingToTrash) { [weak self] in
+                self?.viewModel.moveCurrentToTrash()
+            }
             return true
         case .toggleZoom:
             canvas.toggleFitOrActualSize()
@@ -222,6 +245,17 @@ final class MainWindowController: NSWindowController {
         previousURL?.standardizedFileURL != newURL?.standardizedFileURL
     }
 
+    static func resolveUnsavedChanges(choice: UnsavedChangesChoice, saveSucceeded: Bool) -> UnsavedChangesResolution {
+        switch choice {
+        case .save:
+            return saveSucceeded ? .proceed : .stayOnCurrentImage
+        case .discard:
+            return .proceed
+        case .cancel:
+            return .stayOnCurrentImage
+        }
+    }
+
     private func updateHUD(zoomScale: CGFloat? = nil) {
         let scale = zoomScale ?? canvas.scale
         hudView.rootView = HUDView(
@@ -246,6 +280,62 @@ final class MainWindowController: NSWindowController {
 
         return alert.runModal() == .alertFirstButtonReturn
     }
+
+    private func navigateToNextImage() {
+        confirmUnsavedEditsIfNeeded(for: .navigating) { [weak self] in
+            self?.viewModel.showNext()
+        }
+    }
+
+    private func navigateToPreviousImage() {
+        confirmUnsavedEditsIfNeeded(for: .navigating) { [weak self] in
+            self?.viewModel.showPrevious()
+        }
+    }
+
+    private func selectImage(_ item: ImageItem) {
+        confirmUnsavedEditsIfNeeded(for: .navigating) { [weak self] in
+            self?.viewModel.show(item: item)
+        }
+    }
+
+    private func confirmUnsavedEditsIfNeeded(
+        for transition: UnsavedChangesTransition,
+        perform action: () -> Void
+    ) {
+        guard viewModel.hasUnsavedEdits else {
+            action()
+            return
+        }
+
+        let choice = promptForUnsavedChanges(transition: transition)
+        let saveSucceeded = choice == .save ? viewModel.saveCurrentEdits() : false
+        let resolution = Self.resolveUnsavedChanges(choice: choice, saveSucceeded: saveSucceeded)
+
+        guard resolution == .proceed else { return }
+        if choice == .discard {
+            viewModel.discardCurrentEdits()
+        }
+        action()
+    }
+
+    private func promptForUnsavedChanges(transition: UnsavedChangesTransition) -> UnsavedChangesChoice {
+        let alert = NSAlert()
+        alert.messageText = "Save changes before \(transition.description)?"
+        alert.informativeText = "You have unsaved edits for the current image."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Discard")
+        alert.addButton(withTitle: "Cancel")
+
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            return .save
+        case .alertSecondButtonReturn:
+            return .discard
+        default:
+            return .cancel
+        }
+    }
 }
 
 extension MainWindowController: NSMenuItemValidation {
@@ -258,6 +348,45 @@ extension MainWindowController: NSMenuItemValidation {
             return viewModel.navigationState?.currentItem != nil
         default:
             return true
+        }
+    }
+}
+
+extension MainWindowController: NSWindowDelegate {
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard viewModel.hasUnsavedEdits else { return true }
+
+        let choice = promptForUnsavedChanges(transition: .closing)
+        let saveSucceeded = choice == .save ? viewModel.saveCurrentEdits() : false
+        let resolution = Self.resolveUnsavedChanges(choice: choice, saveSucceeded: saveSucceeded)
+
+        if choice == .discard, resolution == .proceed {
+            viewModel.discardCurrentEdits()
+        }
+
+        return resolution == .proceed
+    }
+}
+
+private enum UnsavedChangesTransition {
+    case opening
+    case navigating
+    case renaming
+    case movingToTrash
+    case closing
+
+    var description: String {
+        switch self {
+        case .opening:
+            return "opening another image"
+        case .navigating:
+            return "changing images"
+        case .renaming:
+            return "renaming this file"
+        case .movingToTrash:
+            return "moving this file to the Trash"
+        case .closing:
+            return "closing the window"
         }
     }
 }

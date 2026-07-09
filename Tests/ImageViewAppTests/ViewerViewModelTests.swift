@@ -292,7 +292,7 @@ final class ViewerViewModelTests: XCTestCase {
         viewModel.applyEdit(.rotateClockwise)
         XCTAssertTrue(viewModel.hasUnsavedEdits)
 
-        viewModel.saveCurrentEdits()
+        XCTAssertTrue(viewModel.saveCurrentEdits())
 
         XCTAssertFalse(viewModel.hasUnsavedEdits)
         XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 3, height: 8))
@@ -318,10 +318,28 @@ final class ViewerViewModelTests: XCTestCase {
 
         await viewModel.open(url: svgURL)
         viewModel.applyEdit(.mirrorHorizontal)
-        viewModel.saveCurrentEdits()
+        XCTAssertFalse(viewModel.saveCurrentEdits())
 
         XCTAssertTrue(viewModel.hasUnsavedEdits)
         XCTAssertEqual(viewModel.errorMessage, "无法保存该格式的编辑结果")
+    }
+
+    func testDiscardCurrentEditsClearsUnsavedStateWithoutReloading() async throws {
+        let imageURL = try makeTemporaryPNG(width: 6, height: 4, name: "discard-in-place")
+        defer { try? FileManager.default.removeItem(at: imageURL.deletingLastPathComponent()) }
+
+        let viewModel = ViewerViewModel()
+        await viewModel.open(url: imageURL)
+        let editedSizeBeforeDiscard = CGSize(width: 4, height: 6)
+
+        viewModel.applyEdit(.rotateClockwise)
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, editedSizeBeforeDiscard)
+
+        viewModel.discardCurrentEdits()
+
+        XCTAssertFalse(viewModel.hasUnsavedEdits)
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, editedSizeBeforeDiscard)
+        XCTAssertNil(viewModel.errorMessage)
     }
 
     private func makePNGData(width: Int, height: Int) throws -> Data {

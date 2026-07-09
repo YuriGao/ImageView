@@ -188,10 +188,11 @@ final class ViewerViewModel: ObservableObject {
         }
     }
 
-    func saveCurrentEdits() {
+    @discardableResult
+    func saveCurrentEdits() -> Bool {
         guard let item = navigationState?.currentItem,
               let image = currentImage else {
-            return
+            return false
         }
 
         do {
@@ -207,15 +208,21 @@ final class ViewerViewModel: ObservableObject {
             pendingOperations.removeAll()
             hasUnsavedEdits = false
             errorMessage = nil
+            return true
         } catch {
             errorMessage = "无法保存该格式的编辑结果"
+            return false
         }
     }
 
-    func discardCurrentEditsAndReload() {
+    func discardCurrentEdits() {
         pendingOperations.removeAll()
         hasUnsavedEdits = false
         errorMessage = nil
+    }
+
+    func discardCurrentEditsAndReload() {
+        discardCurrentEdits()
         Task { await displayCurrentAndPreload() }
     }
 

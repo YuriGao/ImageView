@@ -18,9 +18,9 @@ public final class ImageEditingService {
         try operations.reduce(image) { current, operation in
             switch operation {
             case .rotateClockwise:
-                return try transform(current, radians: .pi / 2, scaleX: 1, scaleY: 1)
-            case .rotateCounterClockwise:
                 return try transform(current, radians: -.pi / 2, scaleX: 1, scaleY: 1)
+            case .rotateCounterClockwise:
+                return try transform(current, radians: .pi / 2, scaleX: 1, scaleY: 1)
             case .mirrorHorizontal:
                 return try transform(current, radians: 0, scaleX: -1, scaleY: 1)
             case .mirrorVertical:
@@ -115,8 +115,12 @@ public final class ImageEditingService {
             return UTType.tiff.identifier
         case .bmp:
             return UTType.bmp.identifier
-        case .heic, .heif:
+        case .heic:
             return UTType.heic.identifier
+        case .heif:
+            let heifIdentifier = UTType.heif.identifier
+            let destinationTypes = CGImageDestinationCopyTypeIdentifiers() as? [String] ?? []
+            return destinationTypes.contains(heifIdentifier) ? heifIdentifier : nil
         case .gif, .webp, .avif, .svg:
             return nil
         }
