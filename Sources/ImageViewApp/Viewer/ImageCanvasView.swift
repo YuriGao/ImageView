@@ -5,6 +5,7 @@ final class ImageCanvasView: NSView {
     var onNext: (() -> Void)?
     var onPrevious: (() -> Void)?
     var onTransformChanged: ((CGFloat) -> Void)?
+    private var lastDragLocation: CGPoint?
 
     var backgroundColor: NSColor = .black {
         didSet { needsDisplay = true }
@@ -47,12 +48,68 @@ final class ImageCanvasView: NSView {
         offset = CGPoint(x: offset.x + delta.x, y: offset.y + delta.y)
     }
 
+    func handleScroll(deltaX: CGFloat, deltaY: CGFloat, at point: CGPoint, modifierFlags: NSEvent.ModifierFlags = []) {
+        if scale > 1.01, !modifierFlags.contains(.option), !modifierFlags.contains(.command) {
+            pan(by: CGPoint(x: -deltaX, y: -deltaY))
+            return
+        }
+
+        if abs(deltaX) > abs(deltaY), abs(deltaX) > 20, scale <= 1.01 {
+            deltaX < 0 ? onNext?() : onPrevious?()
+            return
+        }
+
+        guard abs(deltaY) > 0.1 else { return }
+        let zoomDelta = max(0.7, min(1.3, 1.0 - (deltaY * 0.01)))
+        zoom(by: zoomDelta, around: point)
+    }
+
+    func beginMouseDrag(at point: CGPoint) {
+        lastDragLocation = point
+    }
+
+    func continueMouseDrag(to point: CGPoint) {
+        guard scale > 1.01,
+              let lastDragLocation else {
+            self.lastDragLocation = point
+            return
+        }
+
+        pan(by: CGPoint(x: point.x - lastDragLocation.x, y: point.y - lastDragLocation.y))
+        self.lastDragLocation = point
+    }
+
+    func endMouseDrag() {
+        lastDragLocation = nil
+    }
+
     func toggleFitOrActualSize() {
         if abs(scale - 1.0) < 0.01 {
             scale = 2.0
         } else {
             resetViewTransform()
         }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        beginMouseDrag(at: convert(event.locationInWindow, from: nil))
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        continueMouseDrag(to: convert(event.locationInWindow, from: nil))
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        endMouseDrag()
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        handleScroll(
+            deltaX: event.scrollingDeltaX,
+            deltaY: event.scrollingDeltaY,
+            at: convert(event.locationInWindow, from: nil),
+            modifierFlags: event.modifierFlags
+        )
     }
 
     override func draw(_ dirtyRect: NSRect) {
