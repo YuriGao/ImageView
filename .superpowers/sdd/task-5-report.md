@@ -151,3 +151,43 @@ Result:
 
 - PASS
 - `Build complete!`
+
+## Second Review Fix Addendum
+
+- Refactored `ViewerViewModel` image loading so `display(url:format:)` returns a `DecodedImage` instead of publishing it directly. `open(url:)` now checks the open generation before assigning `currentImage` or fallback navigation, which closes the repeated-open race where an older decode could still overwrite the latest request.
+- Changed the open flow to commit a single-image fallback navigation state immediately after a successful decode and to treat directory scan failure as non-fatal. When scan fails after decode succeeds, the opened image remains visible, navigation stays on the single opened item, and no generic open error is shown.
+- Added two regressions in `ViewerViewModelTests`:
+  - decode succeeds + scan fails preserves `currentImage` and one-item navigation
+  - slow first decode + faster second open keeps the second image/navigation as the final state
+
+### Second Review Verification
+
+Command:
+
+```sh
+CLANG_MODULE_CACHE_PATH=$(pwd)/.build/clang-module-cache \
+SWIFTPM_MODULECACHE_OVERRIDE=$(pwd)/.build/swiftpm-module-cache \
+SWIFTPM_CUSTOM_CACHE_PATH=$(pwd)/.build/swiftpm-cache \
+SWIFTPM_SECURITY_DIRECTORY=$(pwd)/.build/swiftpm-security \
+swift test --disable-sandbox
+```
+
+Result:
+
+- PASS
+- 18 tests executed, 0 failures
+
+Command:
+
+```sh
+CLANG_MODULE_CACHE_PATH=$(pwd)/.build/clang-module-cache \
+SWIFTPM_MODULECACHE_OVERRIDE=$(pwd)/.build/swiftpm-module-cache \
+SWIFTPM_CUSTOM_CACHE_PATH=$(pwd)/.build/swiftpm-cache \
+SWIFTPM_SECURITY_DIRECTORY=$(pwd)/.build/swiftpm-security \
+swift build --disable-sandbox
+```
+
+Result:
+
+- PASS
+- `Build complete!`
