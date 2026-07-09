@@ -35,6 +35,7 @@
         <string>public.heic</string>
         <string>public.heif</string>
         <string>org.webmproject.webp</string>
+        <string>public.avif</string>
         <string>public.svg-image</string>
       </array>
     </dict>
