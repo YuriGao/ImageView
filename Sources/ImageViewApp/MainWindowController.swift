@@ -4,6 +4,15 @@ import SwiftUI
 
 @MainActor
 final class MainWindowController: NSWindowController {
+    enum KeyAction: Equatable {
+        case showPrevious
+        case showNext
+        case toggleZoom
+        case toggleFullscreen
+        case endEditing
+        case passThrough
+    }
+
     private let viewModel = ViewerViewModel()
     private let rootView = NSView()
     private let canvas = ImageCanvasView()
@@ -13,6 +22,7 @@ final class MainWindowController: NSWindowController {
     private var cancellables: Set<AnyCancellable> = []
     private var gestureCoordinator: GestureCoordinator?
     private var keyMonitor: Any?
+    private var displayedItemURL: URL?
 
     convenience init() {
         let window = NSWindow(
@@ -91,8 +101,14 @@ final class MainWindowController: NSWindowController {
 
         viewModel.$navigationState
             .sink { [weak self] state in
-                self?.filmstripView.apply(items: state?.items ?? [], current: state?.currentItem)
-                self?.updateHUD()
+                guard let self else { return }
+                let newURL = state?.currentItem?.url
+                if Self.shouldResetCanvasTransform(from: self.displayedItemURL, to: newURL) {
+                    self.canvas.resetViewTransform()
+                }
+                self.displayedItemURL = newURL?.standardizedFileURL
+                self.filmstripView.apply(items: state?.items ?? [], current: state?.currentItem)
+                self.updateHUD()
             }
             .store(in: &cancellables)
 
@@ -115,25 +131,56 @@ final class MainWindowController: NSWindowController {
     }
 
     private func handleKeyDown(_ event: NSEvent) -> Bool {
-        switch event.keyCode {
-        case 123:
+        switch Self.keyAction(for: event.keyCode, shouldEndEditing: shouldEndEditing(for: event)) {
+        case .showPrevious:
             viewModel.showPrevious()
             return true
-        case 124:
+        case .showNext:
             viewModel.showNext()
             return true
-        case 49:
+        case .toggleZoom:
             canvas.toggleFitOrActualSize()
             return true
-        case 36:
+        case .toggleFullscreen:
             window?.toggleFullScreen(nil)
             return true
-        case 53:
+        case .endEditing:
             window?.endEditing(for: nil)
             return true
-        default:
+        case .passThrough:
             return false
         }
+    }
+
+    private func shouldEndEditing(for event: NSEvent) -> Bool {
+        guard event.keyCode == 53,
+              let window,
+              let responder = window.firstResponder else {
+            return false
+        }
+
+        return responder is NSText || responder is NSTextView
+    }
+
+    static func keyAction(for keyCode: UInt16, shouldEndEditing: Bool) -> KeyAction {
+        switch keyCode {
+        case 123:
+            return .showPrevious
+        case 124:
+            return .showNext
+        case 49:
+            return .toggleZoom
+        case 36:
+            return .toggleFullscreen
+        case 53:
+            return shouldEndEditing ? .endEditing : .passThrough
+        default:
+            return .passThrough
+        }
+    }
+
+    static func shouldResetCanvasTransform(from previousURL: URL?, to newURL: URL?) -> Bool {
+        previousURL?.standardizedFileURL != newURL?.standardizedFileURL
     }
 
     private func updateHUD(zoomScale: CGFloat? = nil) {
