@@ -250,6 +250,80 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertFalse(ViewerViewModel.canPreloadInBackground(.avif))
     }
 
+    func testApplyEditMarksUnsavedAndUpdatesImageSize() async throws {
+        let imageURL = try makeTemporaryPNG(width: 6, height: 4, name: "edit-source")
+        defer { try? FileManager.default.removeItem(at: imageURL.deletingLastPathComponent()) }
+
+        let viewModel = ViewerViewModel()
+        await viewModel.open(url: imageURL)
+
+        viewModel.applyEdit(.rotateClockwise)
+
+        XCTAssertTrue(viewModel.hasUnsavedEdits)
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 4, height: 6))
+        XCTAssertNil(viewModel.errorMessage)
+    }
+
+    func testDiscardCurrentEditsReloadsCachedOriginalAndClearsUnsavedState() async throws {
+        let imageURL = try makeTemporaryPNG(width: 7, height: 5, name: "discard-source")
+        defer { try? FileManager.default.removeItem(at: imageURL.deletingLastPathComponent()) }
+
+        let viewModel = ViewerViewModel()
+        await viewModel.open(url: imageURL)
+
+        viewModel.applyEdit(.rotateClockwise)
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 5, height: 7))
+
+        viewModel.discardCurrentEditsAndReload()
+        await waitUntil { viewModel.hasUnsavedEdits == false && viewModel.currentImage?.pixelSize == CGSize(width: 7, height: 5) }
+
+        XCTAssertFalse(viewModel.hasUnsavedEdits)
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 7, height: 5))
+        XCTAssertNil(viewModel.errorMessage)
+    }
+
+    func testSaveCurrentEditsClearsUnsavedStateForWritableFormats() async throws {
+        let imageURL = try makeTemporaryPNG(width: 8, height: 3, name: "save-source")
+        defer { try? FileManager.default.removeItem(at: imageURL.deletingLastPathComponent()) }
+
+        let viewModel = ViewerViewModel()
+        await viewModel.open(url: imageURL)
+
+        viewModel.applyEdit(.rotateClockwise)
+        XCTAssertTrue(viewModel.hasUnsavedEdits)
+
+        viewModel.saveCurrentEdits()
+
+        XCTAssertFalse(viewModel.hasUnsavedEdits)
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 3, height: 8))
+        XCTAssertNil(viewModel.errorMessage)
+    }
+
+    func testSaveCurrentEditsShowsErrorForUnsupportedFormats() async throws {
+        let svgURL = URL(fileURLWithPath: "/tmp/vector.svg")
+        let image = try makeDecodedImage(width: 4, height: 2)
+        let scanner = ControlledScanner { url in
+            XCTAssertEqual(url, svgURL)
+            return [ImageItem(url: svgURL, format: .svg)]
+        }
+        let decoder = StubDecoder { url, format in
+            XCTAssertEqual(url, svgURL)
+            XCTAssertEqual(format, .svg)
+            return image
+        }
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: scanner.scan(containing:),
+            decodeImageAtURL: decoder.decode(url:format:)
+        )
+
+        await viewModel.open(url: svgURL)
+        viewModel.applyEdit(.mirrorHorizontal)
+        viewModel.saveCurrentEdits()
+
+        XCTAssertTrue(viewModel.hasUnsavedEdits)
+        XCTAssertEqual(viewModel.errorMessage, "无法保存该格式的编辑结果")
+    }
+
     private func makePNGData(width: Int, height: Int) throws -> Data {
         let colorSpace = CGColorSpaceCreateDeviceRGB()
         guard let context = CGContext(
@@ -279,6 +353,14 @@ final class ViewerViewModelTests: XCTestCase {
         }
 
         return destinationData as Data
+    }
+
+    private func makeTemporaryPNG(width: Int, height: Int, name: String) throws -> URL {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let imageURL = root.appendingPathComponent("\(name).png")
+        try makePNGData(width: width, height: height).write(to: imageURL)
+        return imageURL
     }
 
     private func makeDecodedImage(width: Int, height: Int) throws -> DecodedImage {

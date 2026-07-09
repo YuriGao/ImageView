@@ -9,6 +9,7 @@ final class ViewerViewModel: ObservableObject {
     @Published private(set) var currentImage: DecodedImage?
     @Published private(set) var errorMessage: String?
     @Published private(set) var displayTitle = "ImageView"
+    @Published private(set) var hasUnsavedEdits = false
 
     var currentFilename: String {
         navigationState?.currentItem?.url.lastPathComponent ?? "ImageView"
@@ -27,8 +28,10 @@ final class ViewerViewModel: ObservableObject {
     private let loadImageAtURL: @Sendable (URL, SupportedImageFormat) async throws -> DecodedImage
     private let moveToTrashAtURL: @Sendable (URL) throws -> Void
     private let fileActions = FileActions()
+    private let editingService = ImageEditingService()
     private let cache = ImageCache(costLimit: 512 * 1024 * 1024)
     private var openGeneration: UInt64 = 0
+    private var pendingOperations: [EditOperation] = []
 
     init(
         scanContainingDirectory: @escaping @Sendable (URL) async throws -> [ImageItem] = {
@@ -66,6 +69,8 @@ final class ViewerViewModel: ObservableObject {
     func open(url: URL) async {
         openGeneration += 1
         let generation = openGeneration
+        pendingOperations.removeAll()
+        hasUnsavedEdits = false
         errorMessage = nil
         updateDisplayTitle()
 
@@ -163,6 +168,55 @@ final class ViewerViewModel: ObservableObject {
     func revealCurrentInFinder() {
         guard let url = navigationState?.currentItem?.url else { return }
         fileActions.revealInFinder(url)
+    }
+
+    func applyEdit(_ operation: EditOperation) {
+        guard let image = currentImage else { return }
+
+        do {
+            let output = try editingService.apply([operation], to: image.cgImage)
+            currentImage = DecodedImage(
+                cgImage: output,
+                pixelSize: CGSize(width: output.width, height: output.height),
+                isAnimated: false
+            )
+            pendingOperations.append(operation)
+            hasUnsavedEdits = true
+            errorMessage = nil
+        } catch {
+            errorMessage = "无法应用编辑"
+        }
+    }
+
+    func saveCurrentEdits() {
+        guard let item = navigationState?.currentItem,
+              let image = currentImage else {
+            return
+        }
+
+        do {
+            try editingService.save(image.cgImage, to: item.url, format: item.format)
+            let decoded = DecodedImage(
+                cgImage: image.cgImage,
+                pixelSize: image.pixelSize,
+                isAnimated: false
+            )
+            Task { [cache] in
+                await cache.insert(decoded, for: item.url, cost: decoded.cgImage.bytesPerRow * decoded.cgImage.height)
+            }
+            pendingOperations.removeAll()
+            hasUnsavedEdits = false
+            errorMessage = nil
+        } catch {
+            errorMessage = "无法保存该格式的编辑结果"
+        }
+    }
+
+    func discardCurrentEditsAndReload() {
+        pendingOperations.removeAll()
+        hasUnsavedEdits = false
+        errorMessage = nil
+        Task { await displayCurrentAndPreload() }
     }
 
     func copyCurrentPathToPasteboard() {
