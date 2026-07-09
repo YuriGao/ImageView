@@ -167,6 +167,39 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.displayTitle, "ImageView")
     }
 
+    func testHUDMetadataTracksNavigationAndSelection() async throws {
+        let firstURL = URL(fileURLWithPath: "/tmp/first.png")
+        let secondURL = URL(fileURLWithPath: "/tmp/second.png")
+        let image = try makeDecodedImage(width: 4, height: 3)
+        let scanner = ControlledScanner { url in
+            let format = try XCTUnwrap(SupportedImageFormat(fileExtension: url.pathExtension))
+            return [
+                ImageItem(url: firstURL, format: format),
+                ImageItem(url: secondURL, format: format)
+            ]
+        }
+        let decoder = StubDecoder { _, _ in image }
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: scanner.scan(containing:),
+            decodeImageAtURL: decoder.decode(url:format:)
+        )
+
+        XCTAssertEqual(viewModel.positionText, "0 / 0")
+
+        await viewModel.open(url: firstURL)
+        XCTAssertEqual(viewModel.currentFilename, "first.png")
+        XCTAssertEqual(viewModel.positionText, "1 / 2")
+
+        viewModel.showNext()
+        await waitUntil { viewModel.positionText == "2 / 2" }
+        XCTAssertEqual(viewModel.currentFilename, "second.png")
+
+        let selected = try XCTUnwrap(viewModel.navigationState?.items.first)
+        viewModel.show(item: selected)
+        await waitUntil { viewModel.positionText == "1 / 2" }
+        XCTAssertEqual(viewModel.currentFilename, "first.png")
+    }
+
     func testCanPreloadInBackgroundSkipsFallbackFormats() {
         XCTAssertTrue(ViewerViewModel.canPreloadInBackground(.png))
         XCTAssertTrue(ViewerViewModel.canPreloadInBackground(.jpeg))

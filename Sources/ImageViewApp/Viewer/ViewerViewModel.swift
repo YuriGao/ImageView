@@ -10,6 +10,18 @@ final class ViewerViewModel: ObservableObject {
     @Published private(set) var errorMessage: String?
     @Published private(set) var displayTitle = "ImageView"
 
+    var currentFilename: String {
+        navigationState?.currentItem?.url.lastPathComponent ?? "ImageView"
+    }
+
+    var positionText: String {
+        guard let state = navigationState,
+              let currentIndex = state.currentIndex else {
+            return "0 / 0"
+        }
+        return "\(currentIndex + 1) / \(state.items.count)"
+    }
+
     private let scanContainingDirectory: @Sendable (URL) async throws -> [ImageItem]
     private let decodeImageAtURL: @Sendable (URL, SupportedImageFormat) throws -> DecodedImage
     private let loadImageAtURL: @Sendable (URL, SupportedImageFormat) async throws -> DecodedImage
@@ -97,6 +109,18 @@ final class ViewerViewModel: ObservableObject {
         Task { await displayCurrentAndPreload() }
     }
 
+    func show(item: ImageItem) {
+        guard let state = navigationState,
+              state.items.contains(item) else {
+            Task { await open(url: item.url) }
+            return
+        }
+
+        navigationState = NavigationState(items: state.items, currentURL: item.url)
+        updateDisplayTitle()
+        Task { await displayCurrentAndPreload() }
+    }
+
     private func displayCurrentAndPreload() async {
         guard let item = navigationState?.currentItem else { return }
         guard let image = try? await display(url: item.url, format: item.format),
@@ -146,6 +170,6 @@ final class ViewerViewModel: ObservableObject {
     }
 
     private func updateDisplayTitle() {
-        displayTitle = navigationState?.currentItem?.url.lastPathComponent ?? "ImageView"
+        displayTitle = currentFilename
     }
 }

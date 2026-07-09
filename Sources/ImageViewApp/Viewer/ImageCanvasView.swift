@@ -2,12 +2,19 @@ import AppKit
 import ImageViewCore
 
 final class ImageCanvasView: NSView {
+    var onNext: (() -> Void)?
+    var onPrevious: (() -> Void)?
+    var onTransformChanged: ((CGFloat) -> Void)?
+
     var image: DecodedImage? {
         didSet { needsDisplay = true }
     }
 
     var scale: CGFloat = 1.0 {
-        didSet { needsDisplay = true }
+        didSet {
+            needsDisplay = true
+            onTransformChanged?(scale)
+        }
     }
 
     var offset: CGPoint = .zero {
@@ -15,6 +22,34 @@ final class ImageCanvasView: NSView {
     }
 
     override var isFlipped: Bool { true }
+    override var acceptsFirstResponder: Bool { true }
+
+    func resetViewTransform() {
+        scale = 1.0
+        offset = .zero
+    }
+
+    func zoom(by delta: CGFloat, around point: CGPoint) {
+        let previousScale = scale
+        scale = min(max(scale * delta, 0.1), 12.0)
+        let ratio = scale / previousScale
+        offset = CGPoint(
+            x: point.x - (point.x - offset.x) * ratio,
+            y: point.y - (point.y - offset.y) * ratio
+        )
+    }
+
+    func pan(by delta: CGPoint) {
+        offset = CGPoint(x: offset.x + delta.x, y: offset.y + delta.y)
+    }
+
+    func toggleFitOrActualSize() {
+        if abs(scale - 1.0) < 0.01 {
+            scale = 2.0
+        } else {
+            resetViewTransform()
+        }
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         NSColor.black.setFill()
