@@ -324,21 +324,43 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.errorMessage, "无法保存该格式的编辑结果")
     }
 
-    func testDiscardCurrentEditsClearsUnsavedStateWithoutReloading() async throws {
+    func testDiscardCurrentEditsRestoresOriginalImageAndClearsUnsavedState() async throws {
         let imageURL = try makeTemporaryPNG(width: 6, height: 4, name: "discard-in-place")
         defer { try? FileManager.default.removeItem(at: imageURL.deletingLastPathComponent()) }
 
         let viewModel = ViewerViewModel()
         await viewModel.open(url: imageURL)
-        let editedSizeBeforeDiscard = CGSize(width: 4, height: 6)
 
         viewModel.applyEdit(.rotateClockwise)
-        XCTAssertEqual(viewModel.currentImage?.pixelSize, editedSizeBeforeDiscard)
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 4, height: 6))
 
-        viewModel.discardCurrentEdits()
+        XCTAssertTrue(viewModel.discardCurrentEdits())
 
         XCTAssertFalse(viewModel.hasUnsavedEdits)
-        XCTAssertEqual(viewModel.currentImage?.pixelSize, editedSizeBeforeDiscard)
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 6, height: 4))
+        XCTAssertNil(viewModel.errorMessage)
+    }
+
+    func testDiscardCurrentEditsAtNavigationBoundaryLeavesOriginalImageVisible() async throws {
+        let firstURL = try makeTemporaryPNG(width: 6, height: 4, name: "boundary-first")
+        let root = firstURL.deletingLastPathComponent()
+        let secondURL = root.appendingPathComponent("boundary-second.png")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try makePNGData(width: 8, height: 5).write(to: secondURL)
+
+        let viewModel = ViewerViewModel()
+        await viewModel.open(url: secondURL)
+
+        viewModel.applyEdit(.rotateClockwise)
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 5, height: 8))
+        XCTAssertEqual(viewModel.positionText, "2 / 2")
+
+        XCTAssertTrue(viewModel.discardCurrentEdits())
+        viewModel.showNext()
+        await waitUntil { viewModel.hasUnsavedEdits == false && viewModel.positionText == "2 / 2" }
+
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 8, height: 5))
+        XCTAssertFalse(viewModel.hasUnsavedEdits)
         XCTAssertNil(viewModel.errorMessage)
     }
 

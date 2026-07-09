@@ -313,8 +313,8 @@ final class MainWindowController: NSWindowController {
         let resolution = Self.resolveUnsavedChanges(choice: choice, saveSucceeded: saveSucceeded)
 
         guard resolution == .proceed else { return }
-        if choice == .discard {
-            viewModel.discardCurrentEdits()
+        if choice == .discard, !viewModel.discardCurrentEdits() {
+            return
         }
         action()
     }
@@ -361,7 +361,7 @@ extension MainWindowController: NSWindowDelegate {
         let resolution = Self.resolveUnsavedChanges(choice: choice, saveSucceeded: saveSucceeded)
 
         if choice == .discard, resolution == .proceed {
-            viewModel.discardCurrentEdits()
+            return viewModel.discardCurrentEdits()
         }
 
         return resolution == .proceed

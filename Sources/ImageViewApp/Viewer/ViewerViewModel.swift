@@ -32,6 +32,7 @@ final class ViewerViewModel: ObservableObject {
     private let cache = ImageCache(costLimit: 512 * 1024 * 1024)
     private var openGeneration: UInt64 = 0
     private var pendingOperations: [EditOperation] = []
+    private var persistedCurrentImage: DecodedImage?
 
     init(
         scanContainingDirectory: @escaping @Sendable (URL) async throws -> [ImageItem] = {
@@ -70,6 +71,7 @@ final class ViewerViewModel: ObservableObject {
         openGeneration += 1
         let generation = openGeneration
         pendingOperations.removeAll()
+        persistedCurrentImage = nil
         hasUnsavedEdits = false
         errorMessage = nil
         updateDisplayTitle()
@@ -83,6 +85,7 @@ final class ViewerViewModel: ObservableObject {
             let image = try await display(url: url, format: format)
             guard generation == openGeneration else { return }
             currentImage = image
+            persistedCurrentImage = image
             navigationState = NavigationState(items: [fallbackItem], currentURL: url)
             updateDisplayTitle()
 
@@ -103,6 +106,7 @@ final class ViewerViewModel: ObservableObject {
             guard generation == openGeneration else { return }
             navigationState = nil
             currentImage = nil
+            persistedCurrentImage = nil
             errorMessage = "无法打开图片：\(url.lastPathComponent)"
             updateDisplayTitle()
         }
@@ -140,6 +144,7 @@ final class ViewerViewModel: ObservableObject {
             if navigationState?.currentItem == nil {
                 navigationState = nil
                 currentImage = nil
+                persistedCurrentImage = nil
                 errorMessage = "没有可显示的图片"
                 updateDisplayTitle()
                 return
@@ -205,6 +210,7 @@ final class ViewerViewModel: ObservableObject {
             Task { [cache] in
                 await cache.insert(decoded, for: item.url, cost: decoded.cgImage.bytesPerRow * decoded.cgImage.height)
             }
+            persistedCurrentImage = decoded
             pendingOperations.removeAll()
             hasUnsavedEdits = false
             errorMessage = nil
@@ -215,14 +221,29 @@ final class ViewerViewModel: ObservableObject {
         }
     }
 
-    func discardCurrentEdits() {
-        pendingOperations.removeAll()
-        hasUnsavedEdits = false
-        errorMessage = nil
+    @discardableResult
+    func discardCurrentEdits() -> Bool {
+        guard hasUnsavedEdits else {
+            errorMessage = nil
+            return true
+        }
+
+        do {
+            let restoredImage = try restoredCurrentImage()
+            currentImage = restoredImage
+            persistedCurrentImage = restoredImage
+            pendingOperations.removeAll()
+            hasUnsavedEdits = false
+            errorMessage = nil
+            return true
+        } catch {
+            errorMessage = "无法还原原始图片"
+            return false
+        }
     }
 
     func discardCurrentEditsAndReload() {
-        discardCurrentEdits()
+        guard discardCurrentEdits() else { return }
         Task { await displayCurrentAndPreload() }
     }
 
@@ -239,6 +260,7 @@ final class ViewerViewModel: ObservableObject {
             return
         }
         currentImage = image
+        persistedCurrentImage = image
         preloadNeighbors()
     }
 
@@ -282,5 +304,17 @@ final class ViewerViewModel: ObservableObject {
 
     private func updateDisplayTitle() {
         displayTitle = currentFilename
+    }
+
+    private func restoredCurrentImage() throws -> DecodedImage {
+        if let persistedCurrentImage {
+            return persistedCurrentImage
+        }
+
+        guard let item = navigationState?.currentItem else {
+            throw ImageDecodeError.cannotDecodeImage
+        }
+
+        return try decodeImageAtURL(item.url, item.format)
     }
 }
