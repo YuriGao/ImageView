@@ -1,6 +1,9 @@
 import Foundation
 
 public actor ImageCache {
+    public static let defaultFullImageCostLimit = 512 * 1024 * 1024
+    public static let defaultThumbnailCostLimit = 128 * 1024 * 1024
+
     private struct Entry {
         let image: DecodedImage
         let cost: Int
@@ -12,7 +15,7 @@ public actor ImageCache {
     private var tick: UInt64 = 0
     private let costLimit: Int
 
-    public init(costLimit: Int) {
+    public init(costLimit: Int = ImageCache.defaultFullImageCostLimit) {
         self.costLimit = max(1, costLimit)
     }
 

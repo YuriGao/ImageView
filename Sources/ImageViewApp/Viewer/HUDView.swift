@@ -10,6 +10,7 @@ struct HUDView: View {
         HStack(spacing: 12) {
             Text(filename)
                 .lineLimit(1)
+                .truncationMode(.middle)
             Text(positionText)
             Text(zoomText)
         }

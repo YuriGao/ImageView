@@ -40,8 +40,25 @@ final class ViewerViewModelTests: XCTestCase {
 
         await viewModel.open(url: brokenURL)
 
-        XCTAssertEqual(viewModel.errorMessage, "无法打开图片：broken.png")
+        XCTAssertEqual(viewModel.errorMessage, "图片损坏或无法解码：broken.png")
         XCTAssertNil(viewModel.currentImage)
+    }
+
+    func testOpenSetsErrorMessageWhenImageFormatIsUnsupported() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let unsupportedURL = root.appendingPathComponent("broken.txt")
+        try Data("not an image".utf8).write(to: unsupportedURL)
+
+        let viewModel = ViewerViewModel()
+
+        await viewModel.open(url: unsupportedURL)
+
+        XCTAssertEqual(viewModel.errorMessage, "不支持的图片格式：txt")
+        XCTAssertNil(viewModel.currentImage)
+        XCTAssertNil(viewModel.navigationState)
     }
 
     func testOpenFailureClearsPreviouslyDisplayedImageAndNavigationState() async throws {
@@ -69,7 +86,7 @@ final class ViewerViewModelTests: XCTestCase {
 
         await viewModel.open(url: brokenURL)
 
-        XCTAssertEqual(viewModel.errorMessage, "无法打开图片：broken.png")
+        XCTAssertEqual(viewModel.errorMessage, "图片损坏或无法解码：broken.png")
         XCTAssertNil(viewModel.currentImage)
         XCTAssertNil(viewModel.navigationState)
     }

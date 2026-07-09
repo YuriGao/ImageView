@@ -29,7 +29,7 @@ final class ViewerViewModel: ObservableObject {
     private let moveToTrashAtURL: @Sendable (URL) throws -> Void
     private let fileActions = FileActions()
     private let editingService = ImageEditingService()
-    private let cache = ImageCache(costLimit: 512 * 1024 * 1024)
+    private let cache = ImageCache(costLimit: ImageCache.defaultFullImageCostLimit)
     private var openGeneration: UInt64 = 0
     private var pendingOperations: [EditOperation] = []
     private var persistedCurrentImage: DecodedImage?
@@ -76,12 +76,19 @@ final class ViewerViewModel: ObservableObject {
         errorMessage = nil
         updateDisplayTitle()
 
-        do {
-            guard let format = SupportedImageFormat(fileExtension: url.pathExtension) else {
-                throw ImageDecodeError.cannotCreateSource
-            }
+        guard let format = SupportedImageFormat(fileExtension: url.pathExtension) else {
+            guard generation == openGeneration else { return }
+            navigationState = nil
+            currentImage = nil
+            persistedCurrentImage = nil
+            errorMessage = "不支持的图片格式：\(url.pathExtension)"
+            updateDisplayTitle()
+            return
+        }
 
-            let fallbackItem = ImageItem(url: url, format: format)
+        let fallbackItem = ImageItem(url: url, format: format)
+
+        do {
             let image = try await display(url: url, format: format)
             guard generation == openGeneration else { return }
             currentImage = image
@@ -107,7 +114,7 @@ final class ViewerViewModel: ObservableObject {
             navigationState = nil
             currentImage = nil
             persistedCurrentImage = nil
-            errorMessage = "无法打开图片：\(url.lastPathComponent)"
+            errorMessage = "图片损坏或无法解码：\(url.lastPathComponent)"
             updateDisplayTitle()
         }
     }
