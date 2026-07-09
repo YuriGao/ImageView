@@ -33,6 +33,7 @@ final class ImageDecodeServiceTests: XCTestCase {
 
         XCTAssertEqual(decoded.pixelSize.width, 16)
         XCTAssertEqual(decoded.pixelSize.height, 16)
+        XCTAssertEqual(pixelColor(in: decoded.cgImage, x: 8, y: 8), .red)
     }
 
     private func makePNGData(width: Int, height: Int) throws -> Data {
@@ -69,5 +70,35 @@ final class ImageDecodeServiceTests: XCTestCase {
     private enum TestError: Error {
         case cannotCreateContext
         case cannotEncodeImage
+    }
+
+    private func pixelColor(in image: CGImage, x: Int, y: Int) -> RGBA? {
+        guard let provider = image.dataProvider,
+              let data = provider.data,
+              let bytes = CFDataGetBytePtr(data) else {
+            return nil
+        }
+
+        let bytesPerPixel = image.bitsPerPixel / 8
+        let offset = (y * image.bytesPerRow) + (x * bytesPerPixel)
+        guard bytesPerPixel >= 4 else {
+            return nil
+        }
+
+        return RGBA(
+            red: bytes[offset],
+            green: bytes[offset + 1],
+            blue: bytes[offset + 2],
+            alpha: bytes[offset + 3]
+        )
+    }
+
+    private struct RGBA: Equatable {
+        let red: UInt8
+        let green: UInt8
+        let blue: UInt8
+        let alpha: UInt8
+
+        static let red = RGBA(red: 255, green: 0, blue: 0, alpha: 255)
     }
 }
