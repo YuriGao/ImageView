@@ -116,3 +116,38 @@ Observed result:
 - The task brief’s `application(_:open:)` logic calls `showWindowIfNeeded()` before checking whether `mainWindowController` is nil, which makes the `pendingOpenURLs` append branch effectively unreachable in the implemented flow. I preserved the requested structure instead of refactoring behavior beyond the brief.
 - The shell environment could not provide direct visual confirmation of the black window, only successful build/startup evidence plus a still-running app process before manual interruption.
 - SwiftPM still printed read-only user cache warnings even with workspace-local cache overrides, but build and test commands completed successfully with `--disable-sandbox`.
+
+## Review Fix Addendum
+
+- Cleared stale viewer state on open failure by only committing navigation after a successful decode and by resetting `currentImage` plus `navigationState` when the current open request fails.
+- Simplified `AppDelegate.application(_:open:)` to a single-current-image policy: buffer one URL only before `applicationDidFinishLaunching(_:)`, then consistently open the last requested URL once the app is ready.
+- Added open request generation tracking in `ViewerViewModel` so an older open that finishes later cannot overwrite the latest requested image/navigation state.
+- Expanded `ViewerViewModelTests` with focused regressions for stale state after a failed open and for out-of-order open completion.
+
+### Review Fix Verification
+
+Command:
+
+```sh
+CLANG_MODULE_CACHE_PATH=$(pwd)/.build/clang-module-cache \
+SWIFTPM_MODULECACHE_OVERRIDE=$(pwd)/.build/swiftpm-module-cache \
+swift test --disable-sandbox
+```
+
+Result:
+
+- PASS
+- 17 tests executed, 0 failures
+
+Command:
+
+```sh
+CLANG_MODULE_CACHE_PATH=$(pwd)/.build/clang-module-cache \
+SWIFTPM_MODULECACHE_OVERRIDE=$(pwd)/.build/swiftpm-module-cache \
+swift build --disable-sandbox
+```
+
+Result:
+
+- PASS
+- `Build complete!`

@@ -1,6 +1,7 @@
 import CoreGraphics
 import Foundation
 import ImageIO
+import ImageViewCore
 import UniformTypeIdentifiers
 import XCTest
 @testable import ImageViewApp
@@ -43,6 +44,73 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.currentImage)
     }
 
+    func testOpenFailureClearsPreviouslyDisplayedImageAndNavigationState() async throws {
+        let goodURL = URL(fileURLWithPath: "/tmp/good.png")
+        let brokenURL = URL(fileURLWithPath: "/tmp/broken.png")
+        let goodImage = try makeDecodedImage(width: 6, height: 4)
+        let scanner = ControlledScanner { url in
+            let format = try XCTUnwrap(SupportedImageFormat(fileExtension: url.pathExtension))
+            return [ImageItem(url: url, format: format)]
+        }
+        let decoder = StubDecoder { url, _ in
+            if url == goodURL {
+                return goodImage
+            }
+            throw ImageDecodeError.cannotCreateSource
+        }
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: scanner.scan(containing:),
+            decodeImageAtURL: decoder.decode(url:format:)
+        )
+
+        await viewModel.open(url: goodURL)
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 6, height: 4))
+        XCTAssertEqual(viewModel.navigationState?.currentItem?.url, goodURL)
+
+        await viewModel.open(url: brokenURL)
+
+        XCTAssertEqual(viewModel.errorMessage, "无法打开图片：broken.png")
+        XCTAssertNil(viewModel.currentImage)
+        XCTAssertNil(viewModel.navigationState)
+    }
+
+    func testOpenKeepsLatestRequestWhenEarlierScanFinishesLater() async throws {
+        let firstURL = URL(fileURLWithPath: "/tmp/first.png")
+        let secondURL = URL(fileURLWithPath: "/tmp/second.png")
+        let firstImage = try makeDecodedImage(width: 3, height: 2)
+        let secondImage = try makeDecodedImage(width: 9, height: 7)
+        let scanner = ControlledScanner { url in
+            let format = try XCTUnwrap(SupportedImageFormat(fileExtension: url.pathExtension))
+            return [ImageItem(url: url, format: format)]
+        }
+        let decoder = StubDecoder { url, _ in
+            switch url {
+            case firstURL:
+                return firstImage
+            case secondURL:
+                return secondImage
+            default:
+                throw ImageDecodeError.cannotCreateSource
+            }
+        }
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: scanner.scan(containing:),
+            decodeImageAtURL: decoder.decode(url:format:)
+        )
+
+        await scanner.pause(url: firstURL)
+        let firstOpen = Task { await viewModel.open(url: firstURL) }
+        await scanner.waitUntilPaused(url: firstURL)
+
+        await viewModel.open(url: secondURL)
+        try await scanner.resume(url: firstURL)
+        _ = await firstOpen.value
+
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 9, height: 7))
+        XCTAssertEqual(viewModel.navigationState?.currentItem?.url, secondURL)
+        XCTAssertNil(viewModel.errorMessage)
+    }
+
     private func makePNGData(width: Int, height: Int) throws -> Data {
         let colorSpace = CGColorSpaceCreateDeviceRGB()
         guard let context = CGContext(
@@ -74,8 +142,79 @@ final class ViewerViewModelTests: XCTestCase {
         return destinationData as Data
     }
 
+    private func makeDecodedImage(width: Int, height: Int) throws -> DecodedImage {
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        guard let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ), let image = context.makeImage() else {
+            throw TestError.cannotCreateContext
+        }
+
+        return DecodedImage(cgImage: image, pixelSize: CGSize(width: width, height: height), isAnimated: false)
+    }
+
     private enum TestError: Error {
         case cannotCreateContext
         case cannotEncodeImage
+    }
+}
+
+private actor ControlledScanner {
+    typealias Handler = @Sendable (URL) throws -> [ImageItem]
+
+    private struct PausedRequest {
+        let handler: Handler
+        var continuation: CheckedContinuation<[ImageItem], Error>?
+        var isWaiting = false
+    }
+
+    private let handler: Handler
+    private var pausedRequests: [URL: PausedRequest] = [:]
+
+    init(handler: @escaping Handler) {
+        self.handler = handler
+    }
+
+    func pause(url: URL) {
+        pausedRequests[url] = PausedRequest(handler: handler)
+    }
+
+    func scan(containing url: URL) async throws -> [ImageItem] {
+        if pausedRequests[url] != nil {
+            return try await withCheckedThrowingContinuation { continuation in
+                pausedRequests[url]?.continuation = continuation
+                pausedRequests[url]?.isWaiting = true
+            }
+        }
+
+        return try handler(url)
+    }
+
+    func waitUntilPaused(url: URL) async {
+        while pausedRequests[url]?.isWaiting != true {
+            await Task.yield()
+        }
+    }
+
+    func resume(url: URL) throws {
+        guard let request = pausedRequests.removeValue(forKey: url),
+              let continuation = request.continuation else {
+            return
+        }
+        continuation.resume(returning: try request.handler(url))
+    }
+}
+
+private struct StubDecoder {
+    let handler: @Sendable (URL, SupportedImageFormat) throws -> DecodedImage
+
+    func decode(url: URL, format: SupportedImageFormat) throws -> DecodedImage {
+        try handler(url, format)
     }
 }
