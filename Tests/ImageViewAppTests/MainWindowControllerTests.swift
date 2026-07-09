@@ -19,6 +19,7 @@ final class MainWindowControllerTests: XCTestCase {
     func testKeyActionRoutesNavigationAndFullscreenKeys() {
         XCTAssertEqual(MainWindowController.keyAction(for: 123, shouldEndEditing: false), .showPrevious)
         XCTAssertEqual(MainWindowController.keyAction(for: 124, shouldEndEditing: false), .showNext)
+        XCTAssertEqual(MainWindowController.keyAction(for: 51, shouldEndEditing: false), .moveToTrash)
         XCTAssertEqual(MainWindowController.keyAction(for: 49, shouldEndEditing: false), .toggleZoom)
         XCTAssertEqual(MainWindowController.keyAction(for: 36, shouldEndEditing: false), .toggleFullscreen)
     }

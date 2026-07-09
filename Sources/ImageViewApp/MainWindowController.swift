@@ -7,6 +7,7 @@ final class MainWindowController: NSWindowController {
     enum KeyAction: Equatable {
         case showPrevious
         case showNext
+        case moveToTrash
         case toggleZoom
         case toggleFullscreen
         case endEditing
@@ -138,6 +139,9 @@ final class MainWindowController: NSWindowController {
         case .showNext:
             viewModel.showNext()
             return true
+        case .moveToTrash:
+            viewModel.moveCurrentToTrash()
+            return true
         case .toggleZoom:
             canvas.toggleFitOrActualSize()
             return true
@@ -168,6 +172,8 @@ final class MainWindowController: NSWindowController {
             return .showPrevious
         case 124:
             return .showNext
+        case 51:
+            return .moveToTrash
         case 49:
             return .toggleZoom
         case 36:

@@ -25,6 +25,7 @@ final class ViewerViewModel: ObservableObject {
     private let scanContainingDirectory: @Sendable (URL) async throws -> [ImageItem]
     private let decodeImageAtURL: @Sendable (URL, SupportedImageFormat) throws -> DecodedImage
     private let loadImageAtURL: @Sendable (URL, SupportedImageFormat) async throws -> DecodedImage
+    private let fileActions = FileActions()
     private let cache = ImageCache(costLimit: 512 * 1024 * 1024)
     private var openGeneration: UInt64 = 0
 
@@ -119,6 +120,40 @@ final class ViewerViewModel: ObservableObject {
         navigationState = NavigationState(items: state.items, currentURL: item.url)
         updateDisplayTitle()
         Task { await displayCurrentAndPreload() }
+    }
+
+    func moveCurrentToTrash() {
+        guard let url = navigationState?.currentItem?.url else { return }
+        do {
+            try fileActions.moveToTrash(url)
+            navigationState?.removeCurrent()
+            updateDisplayTitle()
+            Task { await displayCurrentAndPreload() }
+        } catch {
+            errorMessage = "无法移动到废纸篓：\(url.lastPathComponent)"
+        }
+    }
+
+    func renameCurrent(to newBaseName: String) {
+        guard let item = navigationState?.currentItem else { return }
+        do {
+            let newURL = try fileActions.rename(item.url, to: newBaseName)
+            navigationState?.replaceCurrentURL(newURL, format: item.format)
+            updateDisplayTitle()
+        } catch {
+            errorMessage = "无法重命名：\(item.url.lastPathComponent)"
+        }
+    }
+
+    func revealCurrentInFinder() {
+        guard let url = navigationState?.currentItem?.url else { return }
+        fileActions.revealInFinder(url)
+    }
+
+    func copyCurrentPathToPasteboard() {
+        guard let url = navigationState?.currentItem?.url else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(fileActions.absolutePath(for: url), forType: .string)
     }
 
     private func displayCurrentAndPreload() async {
