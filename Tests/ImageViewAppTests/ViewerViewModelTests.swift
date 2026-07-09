@@ -223,6 +223,25 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.errorMessage, "没有可显示的图片")
     }
 
+    func testRenameCurrentSuccessClearsPriorErrorMessage() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let imageURL = root.appendingPathComponent("start.png")
+        try makePNGData(width: 5, height: 4).write(to: imageURL)
+        let viewModel = ViewerViewModel()
+
+        await viewModel.open(url: imageURL)
+        viewModel.renameCurrent(to: "   ")
+        XCTAssertEqual(viewModel.errorMessage, "无法重命名：start.png")
+
+        viewModel.renameCurrent(to: "renamed")
+
+        XCTAssertEqual(viewModel.navigationState?.currentItem?.url.lastPathComponent, "renamed.png")
+        XCTAssertNil(viewModel.errorMessage)
+    }
+
     func testCanPreloadInBackgroundSkipsFallbackFormats() {
         XCTAssertTrue(ViewerViewModel.canPreloadInBackground(.png))
         XCTAssertTrue(ViewerViewModel.canPreloadInBackground(.jpeg))

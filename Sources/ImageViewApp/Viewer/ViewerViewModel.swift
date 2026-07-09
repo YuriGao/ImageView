@@ -153,6 +153,7 @@ final class ViewerViewModel: ObservableObject {
         do {
             let newURL = try fileActions.rename(item.url, to: newBaseName)
             navigationState?.replaceCurrentURL(newURL, format: item.format)
+            errorMessage = nil
             updateDisplayTitle()
         } catch {
             errorMessage = "无法重命名：\(item.url.lastPathComponent)"

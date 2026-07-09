@@ -150,6 +150,18 @@ final class MainWindowController: NSWindowController {
     }
 
     @objc func moveCurrentImageToTrash(_ sender: Any?) {
+        guard let item = viewModel.navigationState?.currentItem else {
+            NSSound.beep()
+            return
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "Move to Trash?"
+        alert.informativeText = "This will move \"\(item.url.lastPathComponent)\" to the Trash."
+        alert.addButton(withTitle: "Move to Trash")
+        alert.addButton(withTitle: "Cancel")
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
         viewModel.moveCurrentToTrash()
     }
 
