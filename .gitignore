@@ -1,5 +1,7 @@
 .build/
 .swiftpm/
+.superpowers/
+.worktrees/
 DerivedData/
 *.xcuserdata/
 *.xcodeproj/project.xcworkspace/xcuserdata/
