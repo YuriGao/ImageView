@@ -2,9 +2,13 @@ import AppKit
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private let settings = AppSettings.shared
     private var mainWindowController: MainWindowController?
+    private var preferencesWindowController: PreferencesWindowController?
     private var pendingLaunchURL: URL?
     private var didFinishLaunching = false
+    private var preferencesMenuItem: NSMenuItem?
+    private var toggleFilmstripMenuItem: NSMenuItem?
     private var renameMenuItem: NSMenuItem?
     private var revealMenuItem: NSMenuItem?
     private var copyPathMenuItem: NSMenuItem?
@@ -43,10 +47,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showWindowIfNeeded() {
         if mainWindowController == nil {
-            mainWindowController = MainWindowController()
+            mainWindowController = MainWindowController(settings: settings)
         }
         connectMenuTargets()
         mainWindowController?.showWindow(nil)
+    }
+
+    @objc private func showPreferences(_ sender: Any?) {
+        if preferencesWindowController == nil {
+            preferencesWindowController = PreferencesWindowController(settings: settings)
+        }
+        preferencesWindowController?.showWindow(sender)
+        preferencesWindowController?.window?.makeKeyAndOrderFront(sender)
     }
 
     private func installMainMenuIfNeeded() {
@@ -61,6 +73,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(appMenuItem)
         let appMenu = NSMenu()
         appMenuItem.submenu = appMenu
+        let preferencesMenuItem = NSMenuItem(title: "Settings…", action: #selector(showPreferences(_:)), keyEquivalent: ",")
+        preferencesMenuItem.target = self
+        appMenu.addItem(preferencesMenuItem)
+        appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit \(ProcessInfo.processInfo.processName)", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 
         let fileMenuItem = NSMenuItem()
@@ -84,6 +100,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let moveToTrashMenuItem = NSMenuItem(title: "Move to Trash", action: #selector(MainWindowController.moveCurrentImageToTrash(_:)), keyEquivalent: "\u{8}")
         fileMenu.addItem(moveToTrashMenuItem)
+
+        let viewMenuItem = NSMenuItem()
+        mainMenu.addItem(viewMenuItem)
+        let viewMenu = NSMenu(title: "View")
+        viewMenuItem.submenu = viewMenu
+
+        let toggleFilmstripMenuItem = NSMenuItem(title: "Show Filmstrip", action: #selector(MainWindowController.toggleFilmstrip(_:)), keyEquivalent: "f")
+        toggleFilmstripMenuItem.keyEquivalentModifierMask = [.command, .option]
+        viewMenu.addItem(toggleFilmstripMenuItem)
 
         let editMenuItem = NSMenuItem()
         mainMenu.addItem(editMenuItem)
@@ -113,6 +138,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         discardEditsMenuItem.keyEquivalentModifierMask = [.command, .shift]
         editMenu.addItem(discardEditsMenuItem)
 
+        self.preferencesMenuItem = preferencesMenuItem
+        self.toggleFilmstripMenuItem = toggleFilmstripMenuItem
         self.renameMenuItem = renameMenuItem
         self.revealMenuItem = revealMenuItem
         self.copyPathMenuItem = copyPathMenuItem
@@ -129,6 +156,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func connectMenuTargets() {
         let target = mainWindowController
+        preferencesMenuItem?.target = self
+        toggleFilmstripMenuItem?.target = target
         renameMenuItem?.target = target
         revealMenuItem?.target = target
         copyPathMenuItem?.target = target

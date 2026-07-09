@@ -3,21 +3,38 @@ import Foundation
 
 @MainActor
 final class AppSettings: ObservableObject {
+    static let shared = AppSettings()
+
+    private let defaults: UserDefaults
+
     @Published var pinsHUD: Bool {
-        didSet { UserDefaults.standard.set(pinsHUD, forKey: "pinsHUD") }
+        didSet { defaults.set(pinsHUD, forKey: Self.pinsHUDKey) }
+    }
+
+    @Published var showsFilmstrip: Bool {
+        didSet { defaults.set(showsFilmstrip, forKey: Self.showsFilmstripKey) }
     }
 
     @Published var confirmsDelete: Bool {
-        didSet { UserDefaults.standard.set(confirmsDelete, forKey: "confirmsDelete") }
+        didSet { defaults.set(confirmsDelete, forKey: Self.confirmsDeleteKey) }
     }
 
     @Published var usesBlackFullscreenBackground: Bool {
-        didSet { UserDefaults.standard.set(usesBlackFullscreenBackground, forKey: "usesBlackFullscreenBackground") }
+        didSet { defaults.set(usesBlackFullscreenBackground, forKey: Self.usesBlackFullscreenBackgroundKey) }
     }
 
-    init() {
-        pinsHUD = UserDefaults.standard.bool(forKey: "pinsHUD")
-        confirmsDelete = UserDefaults.standard.object(forKey: "confirmsDelete") as? Bool ?? true
-        usesBlackFullscreenBackground = UserDefaults.standard.object(forKey: "usesBlackFullscreenBackground") as? Bool ?? true
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        pinsHUD = defaults.bool(forKey: Self.pinsHUDKey)
+        showsFilmstrip = defaults.bool(forKey: Self.showsFilmstripKey)
+        confirmsDelete = defaults.object(forKey: Self.confirmsDeleteKey) as? Bool ?? true
+        usesBlackFullscreenBackground = defaults.object(forKey: Self.usesBlackFullscreenBackgroundKey) as? Bool ?? true
     }
+}
+
+private extension AppSettings {
+    static let pinsHUDKey = "pinsHUD"
+    static let showsFilmstripKey = "showsFilmstrip"
+    static let confirmsDeleteKey = "confirmsDelete"
+    static let usesBlackFullscreenBackgroundKey = "usesBlackFullscreenBackground"
 }

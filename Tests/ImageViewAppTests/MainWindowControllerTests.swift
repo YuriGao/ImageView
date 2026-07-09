@@ -124,4 +124,18 @@ final class MainWindowControllerTests: XCTestCase {
             .black
         )
     }
+
+    func testFilmstripMenuValidationReflectsSettingState() {
+        let defaults = UserDefaults(suiteName: "ImageViewAppTests.Filmstrip.\(UUID().uuidString)")!
+        let settings = AppSettings(defaults: defaults)
+        let controller = MainWindowController(window: nil, settings: settings)
+        let item = NSMenuItem(title: "Show Filmstrip", action: #selector(MainWindowController.toggleFilmstrip(_:)), keyEquivalent: "")
+
+        XCTAssertTrue(controller.validateMenuItem(item))
+        XCTAssertEqual(item.state, .off)
+
+        settings.showsFilmstrip = true
+        XCTAssertTrue(controller.validateMenuItem(item))
+        XCTAssertEqual(item.state, .on)
+    }
 }

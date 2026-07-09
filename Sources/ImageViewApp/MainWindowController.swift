@@ -34,7 +34,7 @@ final class MainWindowController: NSWindowController {
     }
 
     private let viewModel = ViewerViewModel()
-    private let settings = AppSettings()
+    private let settings: AppSettings
     private let rootView = NSView()
     private let canvas = ImageCanvasView()
     private let errorOverlay = ErrorOverlayView()
@@ -45,7 +45,7 @@ final class MainWindowController: NSWindowController {
     private var keyMonitor: Any?
     private var displayedItemURL: URL?
 
-    convenience init() {
+    convenience init(settings: AppSettings = .shared) {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1100, height: 760),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -53,8 +53,18 @@ final class MainWindowController: NSWindowController {
             defer: false
         )
         window.title = "ImageView"
-        self.init(window: window)
+        self.init(window: window, settings: settings)
         setup()
+    }
+
+    init(window: NSWindow?, settings: AppSettings = .shared) {
+        self.settings = settings
+        super.init(window: window)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        nil
     }
 
     func open(url: URL) {
@@ -224,6 +234,10 @@ final class MainWindowController: NSWindowController {
         _ = viewModel.discardCurrentEdits()
     }
 
+    @objc func toggleFilmstrip(_ sender: Any?) {
+        settings.showsFilmstrip.toggle()
+    }
+
     private func installKeyMonitor() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, self.window?.isKeyWindow == true else {
@@ -376,6 +390,7 @@ final class MainWindowController: NSWindowController {
             isFullScreen: window?.styleMask.contains(.fullScreen) == true,
             usesBlackFullscreenBackground: settings.usesBlackFullscreenBackground
         )
+        filmstripView.isHidden = !settings.showsFilmstrip
         updateHUD()
     }
 
@@ -450,6 +465,11 @@ final class MainWindowController: NSWindowController {
 
 extension MainWindowController: NSMenuItemValidation {
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(toggleFilmstrip(_:)) {
+            menuItem.state = settings.showsFilmstrip ? .on : .off
+            return true
+        }
+
         guard let command = Self.menuCommand(for: menuItem.action) else {
             return true
         }
