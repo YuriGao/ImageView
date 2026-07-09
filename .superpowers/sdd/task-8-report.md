@@ -17,3 +17,10 @@ Re-review discard semantics fix:
 - `MainWindowController` now only proceeds with discard-driven transitions when the restore succeeds, including window-close handling.
 - Updated `ViewerViewModelTests` so discard-in-place restores the original decoded image, and added a regression that discarding at the end-of-list boundary leaves the original image visible with `hasUnsavedEdits == false`.
 - Verification: `swift test --disable-sandbox --filter ViewerViewModelTests`, `swift test --disable-sandbox --filter MainWindowControllerTests`, `swift test --disable-sandbox`, and `swift build --disable-sandbox` all passed using workspace-local absolute module cache overrides.
+
+Reachability re-review fix:
+- Added a minimal `Edit` menu in `AppDelegate` with reachable commands for rotate clockwise, rotate counterclockwise, flip horizontal, flip vertical, save edits, and discard edits; all targets reconnect to `MainWindowController` when the main window is created.
+- Added focused `@objc` menu actions in `MainWindowController` that route edit commands into the existing `ViewerViewModel` editing APIs, while keeping the existing unsaved-changes guard for destructive transitions like open/navigation/rename/trash/close.
+- Tightened menu validation by mapping selectors to explicit menu-command cases, enabling edit commands only when an image is displayed and enabling save/discard only when there are unsaved edits.
+- Expanded `MainWindowControllerTests` to cover selector-to-operation routing and menu-command availability seams without disturbing the existing controller and view-model coverage.
+- Verification: `swift test --disable-sandbox` passed (48 tests) and `swift build --disable-sandbox` passed in the worktree after rerunning outside the managed sandbox so SwiftPM could access its module cache.

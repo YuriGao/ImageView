@@ -47,4 +47,66 @@ final class MainWindowControllerTests: XCTestCase {
             .stayOnCurrentImage
         )
     }
+
+    func testMenuCommandMapsEditSelectorsToExpectedOperations() {
+        XCTAssertEqual(
+            MainWindowController.menuCommand(for: #selector(MainWindowController.rotateClockwise(_:))),
+            .editOperation(.rotateClockwise)
+        )
+        XCTAssertEqual(
+            MainWindowController.menuCommand(for: #selector(MainWindowController.rotateCounterClockwise(_:))),
+            .editOperation(.rotateCounterClockwise)
+        )
+        XCTAssertEqual(
+            MainWindowController.menuCommand(for: #selector(MainWindowController.mirrorHorizontal(_:))),
+            .editOperation(.mirrorHorizontal)
+        )
+        XCTAssertEqual(
+            MainWindowController.menuCommand(for: #selector(MainWindowController.mirrorVertical(_:))),
+            .editOperation(.mirrorVertical)
+        )
+        XCTAssertEqual(
+            MainWindowController.menuCommand(for: #selector(MainWindowController.saveEdits(_:))),
+            .saveEdits
+        )
+        XCTAssertEqual(
+            MainWindowController.menuCommand(for: #selector(MainWindowController.discardEdits(_:))),
+            .discardEdits
+        )
+    }
+
+    func testMenuCommandAvailabilityRequiresImageAndUnsavedStateWhereAppropriate() {
+        XCTAssertFalse(
+            MainWindowController.isMenuCommandEnabled(
+                .editOperation(.rotateClockwise),
+                hasCurrentItem: true,
+                hasCurrentImage: false,
+                hasUnsavedEdits: false
+            )
+        )
+        XCTAssertTrue(
+            MainWindowController.isMenuCommandEnabled(
+                .editOperation(.mirrorHorizontal),
+                hasCurrentItem: false,
+                hasCurrentImage: true,
+                hasUnsavedEdits: false
+            )
+        )
+        XCTAssertFalse(
+            MainWindowController.isMenuCommandEnabled(
+                .saveEdits,
+                hasCurrentItem: true,
+                hasCurrentImage: true,
+                hasUnsavedEdits: false
+            )
+        )
+        XCTAssertTrue(
+            MainWindowController.isMenuCommandEnabled(
+                .discardEdits,
+                hasCurrentItem: true,
+                hasCurrentImage: true,
+                hasUnsavedEdits: true
+            )
+        )
+    }
 }

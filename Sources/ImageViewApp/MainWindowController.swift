@@ -5,6 +5,13 @@ import SwiftUI
 
 @MainActor
 final class MainWindowController: NSWindowController {
+    enum MenuCommand: Equatable {
+        case fileOperationRequiringCurrentItem
+        case editOperation(EditOperation)
+        case saveEdits
+        case discardEdits
+    }
+
     enum KeyAction: Equatable {
         case showPrevious
         case showNext
@@ -175,6 +182,38 @@ final class MainWindowController: NSWindowController {
         }
     }
 
+    @objc func rotateClockwise(_ sender: Any?) {
+        performEdit(.rotateClockwise)
+    }
+
+    @objc func rotateCounterClockwise(_ sender: Any?) {
+        performEdit(.rotateCounterClockwise)
+    }
+
+    @objc func mirrorHorizontal(_ sender: Any?) {
+        performEdit(.mirrorHorizontal)
+    }
+
+    @objc func mirrorVertical(_ sender: Any?) {
+        performEdit(.mirrorVertical)
+    }
+
+    @objc func saveEdits(_ sender: Any?) {
+        guard viewModel.currentImage != nil else {
+            NSSound.beep()
+            return
+        }
+        _ = viewModel.saveCurrentEdits()
+    }
+
+    @objc func discardEdits(_ sender: Any?) {
+        guard viewModel.currentImage != nil else {
+            NSSound.beep()
+            return
+        }
+        _ = viewModel.discardCurrentEdits()
+    }
+
     private func installKeyMonitor() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, self.window?.isKeyWindow == true else {
@@ -256,6 +295,46 @@ final class MainWindowController: NSWindowController {
         }
     }
 
+    static func menuCommand(for action: Selector?) -> MenuCommand? {
+        switch action {
+        case #selector(renameCurrentImage(_:)),
+             #selector(revealCurrentImageInFinder(_:)),
+             #selector(copyCurrentImagePath(_:)),
+             #selector(moveCurrentImageToTrash(_:)):
+            return .fileOperationRequiringCurrentItem
+        case #selector(rotateClockwise(_:)):
+            return .editOperation(.rotateClockwise)
+        case #selector(rotateCounterClockwise(_:)):
+            return .editOperation(.rotateCounterClockwise)
+        case #selector(mirrorHorizontal(_:)):
+            return .editOperation(.mirrorHorizontal)
+        case #selector(mirrorVertical(_:)):
+            return .editOperation(.mirrorVertical)
+        case #selector(saveEdits(_:)):
+            return .saveEdits
+        case #selector(discardEdits(_:)):
+            return .discardEdits
+        default:
+            return nil
+        }
+    }
+
+    static func isMenuCommandEnabled(
+        _ command: MenuCommand,
+        hasCurrentItem: Bool,
+        hasCurrentImage: Bool,
+        hasUnsavedEdits: Bool
+    ) -> Bool {
+        switch command {
+        case .fileOperationRequiringCurrentItem:
+            return hasCurrentItem
+        case .editOperation:
+            return hasCurrentImage
+        case .saveEdits, .discardEdits:
+            return hasCurrentImage && hasUnsavedEdits
+        }
+    }
+
     private func updateHUD(zoomScale: CGFloat? = nil) {
         let scale = zoomScale ?? canvas.scale
         hudView.rootView = HUDView(
@@ -299,6 +378,14 @@ final class MainWindowController: NSWindowController {
         }
     }
 
+    private func performEdit(_ operation: EditOperation) {
+        guard viewModel.currentImage != nil else {
+            NSSound.beep()
+            return
+        }
+        viewModel.applyEdit(operation)
+    }
+
     private func confirmUnsavedEditsIfNeeded(
         for transition: UnsavedChangesTransition,
         perform action: () -> Void
@@ -340,15 +427,16 @@ final class MainWindowController: NSWindowController {
 
 extension MainWindowController: NSMenuItemValidation {
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        switch menuItem.action {
-        case #selector(renameCurrentImage(_:)),
-             #selector(revealCurrentImageInFinder(_:)),
-             #selector(copyCurrentImagePath(_:)),
-             #selector(moveCurrentImageToTrash(_:)):
-            return viewModel.navigationState?.currentItem != nil
-        default:
+        guard let command = Self.menuCommand(for: menuItem.action) else {
             return true
         }
+
+        return Self.isMenuCommandEnabled(
+            command,
+            hasCurrentItem: viewModel.navigationState?.currentItem != nil,
+            hasCurrentImage: viewModel.currentImage != nil,
+            hasUnsavedEdits: viewModel.hasUnsavedEdits
+        )
     }
 }
 
