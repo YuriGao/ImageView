@@ -34,6 +34,7 @@ final class MainWindowController: NSWindowController {
     }
 
     private let viewModel = ViewerViewModel()
+    private let settings = AppSettings()
     private let rootView = NSView()
     private let canvas = ImageCanvasView()
     private let errorOverlay = ErrorOverlayView()
@@ -136,7 +137,16 @@ final class MainWindowController: NSWindowController {
             }
             .store(in: &cancellables)
 
+        settings.objectWillChange
+            .sink { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.applySettings()
+                }
+            }
+            .store(in: &cancellables)
+
         installKeyMonitor()
+        applySettings()
         updateHUD()
     }
 
@@ -341,7 +351,7 @@ final class MainWindowController: NSWindowController {
             filename: viewModel.currentFilename,
             positionText: viewModel.positionText,
             zoomText: "\(Int((scale * 100).rounded()))%",
-            isPinned: true
+            isPinned: settings.pinsHUD
         )
     }
 
@@ -350,6 +360,7 @@ final class MainWindowController: NSWindowController {
             NSSound.beep()
             return false
         }
+        guard settings.confirmsDelete else { return true }
 
         let alert = NSAlert()
         alert.messageText = "Move to Trash?"
@@ -358,6 +369,18 @@ final class MainWindowController: NSWindowController {
         alert.addButton(withTitle: "Cancel")
 
         return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    private func applySettings() {
+        canvas.backgroundColor = Self.canvasBackgroundColor(
+            isFullScreen: window?.styleMask.contains(.fullScreen) == true,
+            usesBlackFullscreenBackground: settings.usesBlackFullscreenBackground
+        )
+        updateHUD()
+    }
+
+    static func canvasBackgroundColor(isFullScreen: Bool, usesBlackFullscreenBackground: Bool) -> NSColor {
+        isFullScreen && !usesBlackFullscreenBackground ? .windowBackgroundColor : .black
     }
 
     private func navigateToNextImage() {
@@ -441,6 +464,14 @@ extension MainWindowController: NSMenuItemValidation {
 }
 
 extension MainWindowController: NSWindowDelegate {
+    func windowDidEnterFullScreen(_ notification: Notification) {
+        applySettings()
+    }
+
+    func windowDidExitFullScreen(_ notification: Notification) {
+        applySettings()
+    }
+
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         guard viewModel.hasUnsavedEdits else { return true }
 

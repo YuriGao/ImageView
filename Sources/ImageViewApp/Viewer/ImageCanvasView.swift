@@ -6,6 +6,10 @@ final class ImageCanvasView: NSView {
     var onPrevious: (() -> Void)?
     var onTransformChanged: ((CGFloat) -> Void)?
 
+    var backgroundColor: NSColor = .black {
+        didSet { needsDisplay = true }
+    }
+
     var image: DecodedImage? {
         didSet { needsDisplay = true }
     }
@@ -52,7 +56,7 @@ final class ImageCanvasView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.black.setFill()
+        backgroundColor.setFill()
         bounds.fill()
         guard let image else { return }
 

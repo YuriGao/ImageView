@@ -109,4 +109,19 @@ final class MainWindowControllerTests: XCTestCase {
             )
         )
     }
+
+    func testFullscreenBackgroundSettingOnlyChangesFullscreenCanvasColor() {
+        XCTAssertEqual(
+            MainWindowController.canvasBackgroundColor(isFullScreen: true, usesBlackFullscreenBackground: true),
+            .black
+        )
+        XCTAssertEqual(
+            MainWindowController.canvasBackgroundColor(isFullScreen: true, usesBlackFullscreenBackground: false),
+            .windowBackgroundColor
+        )
+        XCTAssertEqual(
+            MainWindowController.canvasBackgroundColor(isFullScreen: false, usesBlackFullscreenBackground: false),
+            .black
+        )
+    }
 }
