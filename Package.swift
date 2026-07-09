@@ -22,6 +22,11 @@ let package = Package(
             name: "ImageViewCoreTests",
             dependencies: ["ImageViewCore"],
             path: "Tests/ImageViewCoreTests"
+        ),
+        .testTarget(
+            name: "ImageViewAppTests",
+            dependencies: ["ImageViewApp", "ImageViewCore"],
+            path: "Tests/ImageViewAppTests"
         )
     ]
 )

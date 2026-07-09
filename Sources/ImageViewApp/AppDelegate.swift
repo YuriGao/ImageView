@@ -1,19 +1,32 @@
 import AppKit
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private var window: NSWindow?
+    private var mainWindowController: MainWindowController?
+    private var pendingOpenURLs: [URL] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 960, height: 640),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = "ImageView"
-        window.center()
-        window.makeKeyAndOrderFront(nil)
-        self.window = window
+        showWindowIfNeeded()
+        for url in pendingOpenURLs {
+            mainWindowController?.open(url: url)
+        }
+        pendingOpenURLs.removeAll()
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        showWindowIfNeeded()
+        if mainWindowController == nil {
+            pendingOpenURLs.append(contentsOf: urls)
+        } else if let first = urls.first {
+            mainWindowController?.open(url: first)
+        }
+    }
+
+    private func showWindowIfNeeded() {
+        if mainWindowController == nil {
+            mainWindowController = MainWindowController()
+        }
+        mainWindowController?.showWindow(nil)
     }
 }

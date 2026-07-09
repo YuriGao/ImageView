@@ -1,0 +1,118 @@
+# Task 5 Report: App Window, View Model, and First Image Open
+
+## Implementation
+
+- Replaced the temporary single-window bootstrap in `Sources/ImageViewApp/AppDelegate.swift` with a `MainWindowController`-driven launch flow.
+- Added `Sources/ImageViewApp/MainWindowController.swift` to own the main `NSWindow`, bind the canvas and error overlay, and forward open requests to the view model.
+- Added `Sources/ImageViewApp/Viewer/ViewerViewModel.swift` as the app-facing state object for:
+  - opening an image URL,
+  - decoding the first image with `ImageDecodeService.decode(url:format:maxPixelSize:)`,
+  - initializing fallback navigation immediately,
+  - scanning the containing directory,
+  - replacing navigation with the scanned image sequence,
+  - preloading nearby images into `ImageCache`,
+  - exposing `currentImage` and localized error state.
+- Added `Sources/ImageViewApp/Viewer/ImageCanvasView.swift` to render the current `DecodedImage` against a black background with fit-to-window scaling plus extra `scale`/`offset` state.
+- Added `Sources/ImageViewApp/Viewer/ErrorOverlayView.swift` to display centered error text over the canvas.
+- Added an app test target in `Package.swift` and `Tests/ImageViewAppTests/ViewerViewModelTests.swift` so the task could be implemented test-first.
+
+## TDD Notes
+
+- Red: `swift test --disable-sandbox --filter ViewerViewModelTests` failed because `ViewerViewModel` did not exist yet.
+- Green: after implementing the task files, the same filtered test run passed.
+
+## Verification Commands and Output
+
+### Filtered TDD test
+
+Command:
+
+```sh
+SWIFTPM_MODULECACHE_OVERRIDE=$(pwd)/.build/ModuleCache \
+CLANG_MODULE_CACHE_PATH=$(pwd)/.build/ModuleCache \
+SWIFTPM_CUSTOM_CACHE_PATH=$(pwd)/.build/swiftpm-cache \
+SWIFTPM_SECURITY_DIRECTORY=$(pwd)/.build/swiftpm-security \
+swift test --disable-sandbox --filter ViewerViewModelTests
+```
+
+Result:
+
+- PASS
+- 2 tests executed, 0 failures
+
+### Full build
+
+Command:
+
+```sh
+SWIFTPM_MODULECACHE_OVERRIDE=$(pwd)/.build/ModuleCache \
+CLANG_MODULE_CACHE_PATH=$(pwd)/.build/ModuleCache \
+SWIFTPM_CUSTOM_CACHE_PATH=$(pwd)/.build/swiftpm-cache \
+SWIFTPM_SECURITY_DIRECTORY=$(pwd)/.build/swiftpm-security \
+swift build --disable-sandbox
+```
+
+Result:
+
+- PASS
+- `Build complete!`
+
+### Full test suite
+
+Command:
+
+```sh
+SWIFTPM_MODULECACHE_OVERRIDE=$(pwd)/.build/ModuleCache \
+CLANG_MODULE_CACHE_PATH=$(pwd)/.build/ModuleCache \
+SWIFTPM_CUSTOM_CACHE_PATH=$(pwd)/.build/swiftpm-cache \
+SWIFTPM_SECURITY_DIRECTORY=$(pwd)/.build/swiftpm-security \
+swift test --disable-sandbox
+```
+
+Result:
+
+- PASS
+- 15 tests executed, 0 failures
+
+### App launch check
+
+Command:
+
+```sh
+SWIFTPM_MODULECACHE_OVERRIDE=$(pwd)/.build/ModuleCache \
+CLANG_MODULE_CACHE_PATH=$(pwd)/.build/ModuleCache \
+SWIFTPM_CUSTOM_CACHE_PATH=$(pwd)/.build/swiftpm-cache \
+SWIFTPM_SECURITY_DIRECTORY=$(pwd)/.build/swiftpm-security \
+swift run --disable-sandbox ImageView
+```
+
+Observed result:
+
+- Build succeeded and the app entered its event loop until interrupted manually.
+- In this environment, launch emitted LaunchServices/XPC warnings:
+  - `Failure on line 688 in function id scheduleApplicationNotification...`
+  - `Connection Invalid error for service com.apple.hiservices-xpcservice.`
+- Because the process stayed running, startup appears successful, but I could not directly visually confirm the window contents from the shell-only run.
+
+## Files Changed
+
+- `Package.swift`
+- `Sources/ImageViewApp/AppDelegate.swift`
+- `Sources/ImageViewApp/MainWindowController.swift`
+- `Sources/ImageViewApp/Viewer/ViewerViewModel.swift`
+- `Sources/ImageViewApp/Viewer/ImageCanvasView.swift`
+- `Sources/ImageViewApp/Viewer/ErrorOverlayView.swift`
+- `Tests/ImageViewAppTests/ViewerViewModelTests.swift`
+
+## Self-Review
+
+- The implementation follows the task brief closely and uses the Task 4 decode API `decode(url:format:maxPixelSize:)`.
+- The new tests cover the primary behavior that matters for this task: first image open, initial decode, navigation state population from directory scan, and error handling for broken input.
+- `@MainActor` was added to `AppDelegate` to keep AppKit calls actor-correct and avoid compiler diagnostics.
+- I kept the app-surface changes scoped to `Sources/ImageViewApp` except for the minimal `Package.swift` and app test target additions needed for TDD.
+
+## Concerns
+
+- The task brief’s `application(_:open:)` logic calls `showWindowIfNeeded()` before checking whether `mainWindowController` is nil, which makes the `pendingOpenURLs` append branch effectively unreachable in the implemented flow. I preserved the requested structure instead of refactoring behavior beyond the brief.
+- The shell environment could not provide direct visual confirmation of the black window, only successful build/startup evidence plus a still-running app process before manual interruption.
+- SwiftPM still printed read-only user cache warnings even with workspace-local cache overrides, but build and test commands completed successfully with `--disable-sandbox`.
