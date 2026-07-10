@@ -7,6 +7,7 @@ import SwiftUI
 final class MainWindowController: NSWindowController {
     enum MenuCommand: Equatable {
         case fileOperationRequiringCurrentItem
+        case startCropping
         case editOperation(EditOperation)
         case saveEdits
         case discardEdits
@@ -18,6 +19,9 @@ final class MainWindowController: NSWindowController {
         case moveToTrash
         case toggleZoom
         case toggleFullscreen
+        case startCropping
+        case applyCrop
+        case cancelCrop
         case endEditing
         case passThrough
     }
@@ -37,6 +41,7 @@ final class MainWindowController: NSWindowController {
     private let settings: AppSettings
     private let rootView = NSView()
     private let canvas = ImageCanvasView()
+    private let cropOverlay = CropOverlayView()
     private let errorOverlay = ErrorOverlayView()
     private let hudView = NSHostingView(rootView: HUDView(filename: "ImageView", positionText: "0 / 0", zoomText: "100%", hasUnsavedEdits: false, isPinned: true))
     private let inspectorView = NSHostingView(rootView: InspectorView(metadata: nil))
@@ -69,6 +74,7 @@ final class MainWindowController: NSWindowController {
     }
 
     func open(url: URL) {
+        cancelCrop(nil)
         confirmUnsavedEditsIfNeeded(for: .opening) { [weak self] in
             guard let self else { return }
             Task { await self.viewModel.open(url: url) }
@@ -88,10 +94,13 @@ final class MainWindowController: NSWindowController {
         rootView.addSubview(hudView)
         rootView.addSubview(inspectorView)
         rootView.addSubview(filmstripView)
+        rootView.addSubview(cropOverlay)
         errorOverlay.translatesAutoresizingMaskIntoConstraints = false
         hudView.translatesAutoresizingMaskIntoConstraints = false
         inspectorView.translatesAutoresizingMaskIntoConstraints = false
         filmstripView.translatesAutoresizingMaskIntoConstraints = false
+        cropOverlay.translatesAutoresizingMaskIntoConstraints = false
+        cropOverlay.isHidden = true
         NSLayoutConstraint.activate([
             canvas.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
             canvas.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
@@ -109,7 +118,11 @@ final class MainWindowController: NSWindowController {
             filmstripView.leadingAnchor.constraint(equalTo: rootView.leadingAnchor, constant: 16),
             filmstripView.trailingAnchor.constraint(equalTo: rootView.trailingAnchor, constant: -16),
             filmstripView.bottomAnchor.constraint(equalTo: rootView.bottomAnchor, constant: -16),
-            filmstripView.heightAnchor.constraint(equalToConstant: 36)
+            filmstripView.heightAnchor.constraint(equalToConstant: 36),
+            cropOverlay.leadingAnchor.constraint(equalTo: canvas.leadingAnchor),
+            cropOverlay.trailingAnchor.constraint(equalTo: canvas.trailingAnchor),
+            cropOverlay.topAnchor.constraint(equalTo: canvas.topAnchor),
+            cropOverlay.bottomAnchor.constraint(equalTo: canvas.bottomAnchor)
         ])
 
         canvas.onNext = { [weak self] in self?.navigateToNextImage() }
@@ -184,6 +197,7 @@ final class MainWindowController: NSWindowController {
     }
 
     @objc func renameCurrentImage(_ sender: Any?) {
+        cancelCrop(nil)
         guard let item = viewModel.navigationState?.currentItem else {
             NSSound.beep()
             return
@@ -214,6 +228,7 @@ final class MainWindowController: NSWindowController {
     }
 
     @objc func moveCurrentImageToTrash(_ sender: Any?) {
+        cancelCrop(nil)
         guard confirmMoveCurrentImageToTrash() else { return }
         confirmUnsavedEditsIfNeeded(for: .movingToTrash) { [weak self] in
             self?.viewModel.moveCurrentToTrash()
@@ -234,6 +249,33 @@ final class MainWindowController: NSWindowController {
 
     @objc func mirrorVertical(_ sender: Any?) {
         performEdit(.mirrorVertical)
+    }
+
+    @objc func startCropping(_ sender: Any?) {
+        guard viewModel.currentImage != nil,
+              let imageDrawRect = canvas.imageDrawRect else {
+            NSSound.beep()
+            return
+        }
+
+        cropOverlay.beginCropping(in: imageDrawRect)
+        window?.makeFirstResponder(cropOverlay)
+    }
+
+    @objc func applyCrop(_ sender: Any?) {
+        guard cropOverlay.isCropping,
+              let pixelCropRect = canvas.pixelCropRect(for: cropOverlay.cropRect) else {
+            NSSound.beep()
+            return
+        }
+
+        performEdit(.crop(pixelCropRect))
+        cancelCrop(nil)
+    }
+
+    @objc func cancelCrop(_ sender: Any?) {
+        cropOverlay.endCropping()
+        window?.makeFirstResponder(canvas)
     }
 
     @objc func saveEdits(_ sender: Any?) {
@@ -270,7 +312,12 @@ final class MainWindowController: NSWindowController {
     }
 
     private func handleKeyDown(_ event: NSEvent) -> Bool {
-        switch Self.keyAction(for: event.keyCode, shouldEndEditing: shouldEndEditing(for: event)) {
+        switch Self.keyAction(
+            for: event.keyCode,
+            shouldEndEditing: shouldEndEditing(for: event),
+            isCropping: cropOverlay.isCropping,
+            modifierFlags: event.modifierFlags
+        ) {
         case .showPrevious:
             navigateToPreviousImage()
             return true
@@ -288,6 +335,15 @@ final class MainWindowController: NSWindowController {
             return true
         case .toggleFullscreen:
             window?.toggleFullScreen(nil)
+            return true
+        case .startCropping:
+            startCropping(nil)
+            return true
+        case .applyCrop:
+            applyCrop(nil)
+            return true
+        case .cancelCrop:
+            cancelCrop(nil)
             return true
         case .endEditing:
             window?.endEditing(for: nil)
@@ -307,7 +363,23 @@ final class MainWindowController: NSWindowController {
         return responder is NSText || responder is NSTextView
     }
 
-    static func keyAction(for keyCode: UInt16, shouldEndEditing: Bool) -> KeyAction {
+    static func keyAction(
+        for keyCode: UInt16,
+        shouldEndEditing: Bool,
+        isCropping: Bool = false,
+        modifierFlags: NSEvent.ModifierFlags = []
+    ) -> KeyAction {
+        if isCropping {
+            switch keyCode {
+            case 36:
+                return .applyCrop
+            case 53:
+                return .cancelCrop
+            default:
+                break
+            }
+        }
+
         switch keyCode {
         case 123:
             return .showPrevious
@@ -317,6 +389,8 @@ final class MainWindowController: NSWindowController {
             return .moveToTrash
         case 49:
             return .toggleZoom
+        case 40 where modifierFlags.contains(.command):
+            return .startCropping
         case 36:
             return .toggleFullscreen
         case 53:
@@ -348,6 +422,8 @@ final class MainWindowController: NSWindowController {
              #selector(copyCurrentImagePath(_:)),
              #selector(moveCurrentImageToTrash(_:)):
             return .fileOperationRequiringCurrentItem
+        case #selector(startCropping(_:)):
+            return .startCropping
         case #selector(rotateClockwise(_:)):
             return .editOperation(.rotateClockwise)
         case #selector(rotateCounterClockwise(_:)):
@@ -374,6 +450,8 @@ final class MainWindowController: NSWindowController {
         switch command {
         case .fileOperationRequiringCurrentItem:
             return hasCurrentItem
+        case .startCropping:
+            return hasCurrentImage
         case .editOperation:
             return hasCurrentImage
         case .saveEdits, .discardEdits:
@@ -423,18 +501,21 @@ final class MainWindowController: NSWindowController {
     }
 
     private func navigateToNextImage() {
+        cancelCrop(nil)
         confirmUnsavedEditsIfNeeded(for: .navigating) { [weak self] in
             self?.viewModel.showNext()
         }
     }
 
     private func navigateToPreviousImage() {
+        cancelCrop(nil)
         confirmUnsavedEditsIfNeeded(for: .navigating) { [weak self] in
             self?.viewModel.showPrevious()
         }
     }
 
     private func selectImage(_ item: ImageItem) {
+        cancelCrop(nil)
         confirmUnsavedEditsIfNeeded(for: .navigating) { [weak self] in
             self?.viewModel.show(item: item)
         }
@@ -521,6 +602,7 @@ extension MainWindowController: NSWindowDelegate {
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
+        cancelCrop(nil)
         guard viewModel.hasUnsavedEdits else { return true }
 
         let choice = promptForUnsavedChanges(transition: .closing)

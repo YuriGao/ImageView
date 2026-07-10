@@ -29,6 +29,26 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertEqual(MainWindowController.keyAction(for: 53, shouldEndEditing: false), .passThrough)
     }
 
+    func testCropKeyActionsOverrideNormalWindowActionsWhileCropping() {
+        XCTAssertEqual(
+            MainWindowController.keyAction(
+                for: 40,
+                shouldEndEditing: false,
+                isCropping: false,
+                modifierFlags: [.command]
+            ),
+            .startCropping
+        )
+        XCTAssertEqual(
+            MainWindowController.keyAction(for: 36, shouldEndEditing: false, isCropping: true),
+            .applyCrop
+        )
+        XCTAssertEqual(
+            MainWindowController.keyAction(for: 53, shouldEndEditing: false, isCropping: true),
+            .cancelCrop
+        )
+    }
+
     func testResolveUnsavedChangesProceedsOnlyForDiscardOrSuccessfulSave() {
         XCTAssertEqual(
             MainWindowController.resolveUnsavedChanges(choice: .save, saveSucceeded: true),
@@ -49,6 +69,10 @@ final class MainWindowControllerTests: XCTestCase {
     }
 
     func testMenuCommandMapsEditSelectorsToExpectedOperations() {
+        XCTAssertEqual(
+            MainWindowController.menuCommand(for: #selector(MainWindowController.startCropping(_:))),
+            .startCropping
+        )
         XCTAssertEqual(
             MainWindowController.menuCommand(for: #selector(MainWindowController.rotateClockwise(_:))),
             .editOperation(.rotateClockwise)
@@ -76,6 +100,22 @@ final class MainWindowControllerTests: XCTestCase {
     }
 
     func testMenuCommandAvailabilityRequiresImageAndUnsavedStateWhereAppropriate() {
+        XCTAssertFalse(
+            MainWindowController.isMenuCommandEnabled(
+                .startCropping,
+                hasCurrentItem: true,
+                hasCurrentImage: false,
+                hasUnsavedEdits: false
+            )
+        )
+        XCTAssertTrue(
+            MainWindowController.isMenuCommandEnabled(
+                .startCropping,
+                hasCurrentItem: true,
+                hasCurrentImage: true,
+                hasUnsavedEdits: false
+            )
+        )
         XCTAssertFalse(
             MainWindowController.isMenuCommandEnabled(
                 .editOperation(.rotateClockwise),

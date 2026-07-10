@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var rotateCounterClockwiseMenuItem: NSMenuItem?
     private var mirrorHorizontalMenuItem: NSMenuItem?
     private var mirrorVerticalMenuItem: NSMenuItem?
+    private var cropMenuItem: NSMenuItem?
     private var saveEditsMenuItem: NSMenuItem?
     private var discardEditsMenuItem: NSMenuItem?
 
@@ -134,6 +135,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mirrorVerticalMenuItem.keyEquivalentModifierMask = [.command, .option]
         editMenu.addItem(mirrorVerticalMenuItem)
 
+        let cropMenuItem = NSMenuItem(title: "Crop", action: #selector(MainWindowController.startCropping(_:)), keyEquivalent: "k")
+        cropMenuItem.keyEquivalentModifierMask = [.command]
+        editMenu.addItem(cropMenuItem)
+
         editMenu.addItem(.separator())
 
         let saveEditsMenuItem = NSMenuItem(title: "Save Edits", action: #selector(MainWindowController.saveEdits(_:)), keyEquivalent: "s")
@@ -154,6 +159,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.rotateCounterClockwiseMenuItem = rotateCounterClockwiseMenuItem
         self.mirrorHorizontalMenuItem = mirrorHorizontalMenuItem
         self.mirrorVerticalMenuItem = mirrorVerticalMenuItem
+        self.cropMenuItem = cropMenuItem
         self.saveEditsMenuItem = saveEditsMenuItem
         self.discardEditsMenuItem = discardEditsMenuItem
         NSApp.mainMenu = mainMenu
@@ -173,6 +179,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         rotateCounterClockwiseMenuItem?.target = target
         mirrorHorizontalMenuItem?.target = target
         mirrorVerticalMenuItem?.target = target
+        cropMenuItem?.target = target
         saveEditsMenuItem?.target = target
         discardEditsMenuItem?.target = target
     }
