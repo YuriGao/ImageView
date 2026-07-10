@@ -6,6 +6,8 @@
   <string>ImageView</string>
   <key>CFBundleIdentifier</key>
   <string>local.imageview.app</string>
+  <key>CFBundleIconFile</key>
+  <string>ImageView.icns</string>
   <key>CFBundleName</key>
   <string>ImageView</string>
   <key>CFBundlePackageType</key>
