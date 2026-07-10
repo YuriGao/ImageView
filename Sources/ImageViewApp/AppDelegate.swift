@@ -49,6 +49,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainWindowController?.open(url: url)
     }
 
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        true
+    }
+
     private func showWindowIfNeeded() {
         if mainWindowController == nil {
             mainWindowController = MainWindowController(settings: settings)
@@ -70,99 +74,121 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func installMainMenuIfNeeded() {
-        guard NSApp.mainMenu == nil else {
-            connectMenuTargets()
-            return
-        }
+        NSApp.mainMenu = makeMainMenu()
+        configureHelpMenuSearchSuppression()
+        connectMenuTargets()
+    }
+
+    func configureHelpMenuSearchSuppression() {
+        NSApp.helpMenu = NSMenu(title: "ImageViewHelpSearch")
+    }
+
+    func makeMainMenu(preferredLanguages: [String] = Locale.preferredLanguages) -> NSMenu {
+        let text: (String) -> String = { AppStrings.text($0, preferredLanguages: preferredLanguages) }
 
         let mainMenu = NSMenu()
 
-        let appMenuItem = NSMenuItem()
+        let appMenuItem = NSMenuItem(title: "ImageView", action: nil, keyEquivalent: "")
         mainMenu.addItem(appMenuItem)
-        let appMenu = NSMenu()
+        let appMenu = NSMenu(title: "ImageView")
         appMenuItem.submenu = appMenu
-        let preferencesMenuItem = NSMenuItem(title: "Settings…", action: #selector(showPreferences(_:)), keyEquivalent: ",")
+        let preferencesMenuItem = NSMenuItem(title: text("menu.app.settings"), action: #selector(showPreferences(_:)), keyEquivalent: ",")
         preferencesMenuItem.target = self
         appMenu.addItem(preferencesMenuItem)
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Quit \(ProcessInfo.processInfo.processName)", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: "\(text("menu.app.quit")) \(ProcessInfo.processInfo.processName)", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 
-        let fileMenuItem = NSMenuItem()
+        let fileMenuItem = NSMenuItem(title: text("menu.file"), action: nil, keyEquivalent: "")
         mainMenu.addItem(fileMenuItem)
-        let fileMenu = NSMenu(title: "File")
+        let fileMenu = NSMenu(title: text("menu.file"))
         fileMenuItem.submenu = fileMenu
 
-        let openRecentItem = NSMenuItem(title: "Open Recent", action: nil, keyEquivalent: "")
-        let openRecentMenu = NSMenu(title: "Open Recent")
+        let openMenuItem = NSMenuItem(title: text("menu.file.open"), action: #selector(openImage(_:)), keyEquivalent: "o")
+        openMenuItem.target = self
+        fileMenu.addItem(openMenuItem)
+
+        let openRecentItem = NSMenuItem(title: text("menu.file.openRecent"), action: nil, keyEquivalent: "")
+        let openRecentMenu = NSMenu(title: text("menu.file.openRecent"))
         openRecentItem.submenu = openRecentMenu
         fileMenu.addItem(openRecentItem)
         fileMenu.addItem(.separator())
         self.openRecentMenu = openRecentMenu
         rebuildOpenRecentMenu()
 
-        let renameMenuItem = NSMenuItem(title: "Rename…", action: #selector(MainWindowController.renameCurrentImage(_:)), keyEquivalent: "R")
+        let renameMenuItem = NSMenuItem(title: text("menu.file.rename"), action: #selector(MainWindowController.renameCurrentImage(_:)), keyEquivalent: "R")
         renameMenuItem.keyEquivalentModifierMask = [.command, .shift]
         fileMenu.addItem(renameMenuItem)
 
-        let revealMenuItem = NSMenuItem(title: "Reveal in Finder", action: #selector(MainWindowController.revealCurrentImageInFinder(_:)), keyEquivalent: "r")
+        let revealMenuItem = NSMenuItem(title: text("menu.file.reveal"), action: #selector(MainWindowController.revealCurrentImageInFinder(_:)), keyEquivalent: "r")
         revealMenuItem.keyEquivalentModifierMask = [.command, .option]
         fileMenu.addItem(revealMenuItem)
 
-        let copyPathMenuItem = NSMenuItem(title: "Copy Path", action: #selector(MainWindowController.copyCurrentImagePath(_:)), keyEquivalent: "c")
+        let copyPathMenuItem = NSMenuItem(title: text("menu.file.copyPath"), action: #selector(MainWindowController.copyCurrentImagePath(_:)), keyEquivalent: "c")
         copyPathMenuItem.keyEquivalentModifierMask = [.command, .option]
         fileMenu.addItem(copyPathMenuItem)
 
         fileMenu.addItem(.separator())
 
-        let moveToTrashMenuItem = NSMenuItem(title: "Move to Trash", action: #selector(MainWindowController.moveCurrentImageToTrash(_:)), keyEquivalent: "\u{8}")
+        let moveToTrashMenuItem = NSMenuItem(title: text("menu.file.moveToTrash"), action: #selector(MainWindowController.moveCurrentImageToTrash(_:)), keyEquivalent: "\u{8}")
         fileMenu.addItem(moveToTrashMenuItem)
+        fileMenu.addItem(.separator())
+        fileMenu.addItem(NSMenuItem(title: text("menu.file.close"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
 
-        let viewMenuItem = NSMenuItem()
+        let viewMenuItem = NSMenuItem(title: text("menu.view"), action: nil, keyEquivalent: "")
         mainMenu.addItem(viewMenuItem)
-        let viewMenu = NSMenu(title: "View")
+        let viewMenu = NSMenu(title: text("menu.view"))
         viewMenuItem.submenu = viewMenu
 
-        let toggleFilmstripMenuItem = NSMenuItem(title: "Show Filmstrip", action: #selector(MainWindowController.toggleFilmstrip(_:)), keyEquivalent: "f")
+        viewMenu.addItem(NSMenuItem(title: text("menu.view.previousImage"), action: #selector(MainWindowController.showPreviousImage(_:)), keyEquivalent: "\u{F702}"))
+        viewMenu.addItem(NSMenuItem(title: text("menu.view.nextImage"), action: #selector(MainWindowController.showNextImage(_:)), keyEquivalent: "\u{F703}"))
+        viewMenu.addItem(.separator())
+        viewMenu.addItem(NSMenuItem(title: text("menu.view.actualSize"), action: #selector(MainWindowController.actualSize(_:)), keyEquivalent: "0"))
+        viewMenu.addItem(NSMenuItem(title: text("menu.view.zoomToFit"), action: #selector(MainWindowController.zoomToFit(_:)), keyEquivalent: "9"))
+        viewMenu.addItem(.separator())
+
+        let toggleFilmstripMenuItem = NSMenuItem(title: text("menu.view.showFilmstrip"), action: #selector(MainWindowController.toggleFilmstrip(_:)), keyEquivalent: "f")
         toggleFilmstripMenuItem.keyEquivalentModifierMask = [.command, .option]
         viewMenu.addItem(toggleFilmstripMenuItem)
 
-        let toggleInspectorMenuItem = NSMenuItem(title: "Show Info", action: #selector(MainWindowController.toggleInspector(_:)), keyEquivalent: "i")
+        let toggleInspectorMenuItem = NSMenuItem(title: text("menu.view.showInfo"), action: #selector(MainWindowController.toggleInspector(_:)), keyEquivalent: "i")
         toggleInspectorMenuItem.keyEquivalentModifierMask = [.command, .option]
         viewMenu.addItem(toggleInspectorMenuItem)
+        viewMenu.addItem(.separator())
+        viewMenu.addItem(NSMenuItem(title: text("menu.view.enterFullScreen"), action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f"))
 
-        let editMenuItem = NSMenuItem()
+        let editMenuItem = NSMenuItem(title: text("menu.image"), action: nil, keyEquivalent: "")
         mainMenu.addItem(editMenuItem)
-        let editMenu = NSMenu(title: "Edit")
+        let editMenu = NSMenu(title: text("menu.image"))
         editMenuItem.submenu = editMenu
 
-        let rotateClockwiseMenuItem = NSMenuItem(title: "Rotate Clockwise", action: #selector(MainWindowController.rotateClockwise(_:)), keyEquivalent: "]")
+        let rotateClockwiseMenuItem = NSMenuItem(title: text("menu.image.rotateClockwise"), action: #selector(MainWindowController.rotateClockwise(_:)), keyEquivalent: "]")
         editMenu.addItem(rotateClockwiseMenuItem)
 
-        let rotateCounterClockwiseMenuItem = NSMenuItem(title: "Rotate Counterclockwise", action: #selector(MainWindowController.rotateCounterClockwise(_:)), keyEquivalent: "[")
+        let rotateCounterClockwiseMenuItem = NSMenuItem(title: text("menu.image.rotateCounterclockwise"), action: #selector(MainWindowController.rotateCounterClockwise(_:)), keyEquivalent: "[")
         editMenu.addItem(rotateCounterClockwiseMenuItem)
 
-        let mirrorHorizontalMenuItem = NSMenuItem(title: "Flip Horizontal", action: #selector(MainWindowController.mirrorHorizontal(_:)), keyEquivalent: "h")
+        let mirrorHorizontalMenuItem = NSMenuItem(title: text("menu.image.flipHorizontal"), action: #selector(MainWindowController.mirrorHorizontal(_:)), keyEquivalent: "h")
         mirrorHorizontalMenuItem.keyEquivalentModifierMask = [.command, .option]
         editMenu.addItem(mirrorHorizontalMenuItem)
 
-        let mirrorVerticalMenuItem = NSMenuItem(title: "Flip Vertical", action: #selector(MainWindowController.mirrorVertical(_:)), keyEquivalent: "v")
+        let mirrorVerticalMenuItem = NSMenuItem(title: text("menu.image.flipVertical"), action: #selector(MainWindowController.mirrorVertical(_:)), keyEquivalent: "v")
         mirrorVerticalMenuItem.keyEquivalentModifierMask = [.command, .option]
         editMenu.addItem(mirrorVerticalMenuItem)
 
-        let cropMenuItem = NSMenuItem(title: "Crop", action: #selector(MainWindowController.startCropping(_:)), keyEquivalent: "k")
+        let cropMenuItem = NSMenuItem(title: text("menu.image.crop"), action: #selector(MainWindowController.startCropping(_:)), keyEquivalent: "k")
         cropMenuItem.keyEquivalentModifierMask = [.command]
         editMenu.addItem(cropMenuItem)
 
         editMenu.addItem(.separator())
 
-        let saveEditsMenuItem = NSMenuItem(title: "Save Edits", action: #selector(MainWindowController.saveEdits(_:)), keyEquivalent: "s")
+        let saveEditsMenuItem = NSMenuItem(title: text("menu.image.saveEdits"), action: #selector(MainWindowController.saveEdits(_:)), keyEquivalent: "s")
         editMenu.addItem(saveEditsMenuItem)
 
-        let saveEditsAsMenuItem = NSMenuItem(title: "Save As…", action: #selector(MainWindowController.saveEditsAs(_:)), keyEquivalent: "S")
+        let saveEditsAsMenuItem = NSMenuItem(title: text("menu.image.saveAs"), action: #selector(MainWindowController.saveEditsAs(_:)), keyEquivalent: "S")
         saveEditsAsMenuItem.keyEquivalentModifierMask = [.command, .shift]
         editMenu.addItem(saveEditsAsMenuItem)
 
-        let discardEditsMenuItem = NSMenuItem(title: "Discard Edits", action: #selector(MainWindowController.discardEdits(_:)), keyEquivalent: "z")
+        let discardEditsMenuItem = NSMenuItem(title: text("menu.image.discardEdits"), action: #selector(MainWindowController.discardEdits(_:)), keyEquivalent: "z")
         discardEditsMenuItem.keyEquivalentModifierMask = [.command, .shift]
         editMenu.addItem(discardEditsMenuItem)
 
@@ -181,8 +207,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.saveEditsMenuItem = saveEditsMenuItem
         self.saveEditsAsMenuItem = saveEditsAsMenuItem
         self.discardEditsMenuItem = discardEditsMenuItem
-        NSApp.mainMenu = mainMenu
-        connectMenuTargets()
+        let windowMenuItem = NSMenuItem(title: text("menu.window"), action: nil, keyEquivalent: "")
+        let windowMenu = NSMenu(title: text("menu.window"))
+        windowMenuItem.submenu = windowMenu
+        windowMenu.addItem(NSMenuItem(title: text("menu.window.minimize"), action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m"))
+        windowMenu.addItem(NSMenuItem(title: text("menu.window.zoom"), action: #selector(NSWindow.performZoom(_:)), keyEquivalent: ""))
+        windowMenu.addItem(NSMenuItem(title: text("menu.window.bringAllToFront"), action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: ""))
+        mainMenu.addItem(windowMenuItem)
+
+        let helpMenuItem = NSMenuItem(title: text("menu.help"), action: nil, keyEquivalent: "")
+        helpMenuItem.submenu = NSMenu(title: text("menu.help"))
+        let helpItem = NSMenuItem(title: text("menu.help.imageView"), action: #selector(showHelp(_:)), keyEquivalent: "?")
+        helpItem.target = self
+        helpMenuItem.submenu?.addItem(helpItem)
+        mainMenu.addItem(helpMenuItem)
+
+        return mainMenu
+    }
+
+    @objc private func openImage(_ sender: Any?) {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        showWindowIfNeeded()
+        mainWindowController?.open(url: url)
+    }
+
+    @objc private func showHelp(_ sender: Any?) {
+        let alert = NSAlert()
+        alert.messageText = AppStrings.text("menu.help.imageView")
+        alert.informativeText = "Open an image, use the View menu to browse and zoom, and use the Image menu to edit or save changes."
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 
     @objc private func openRecentImage(_ sender: NSMenuItem) {
@@ -196,7 +253,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         openRecentMenu.removeAllItems()
         let urls = NSDocumentController.shared.recentDocumentURLs.prefix(10)
         guard !urls.isEmpty else {
-            let emptyItem = NSMenuItem(title: "No Recent Images", action: nil, keyEquivalent: "")
+            let emptyItem = NSMenuItem(title: AppStrings.text("menu.file.noRecentImages"), action: nil, keyEquivalent: "")
             emptyItem.isEnabled = false
             openRecentMenu.addItem(emptyItem)
             return
@@ -227,5 +284,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         saveEditsMenuItem?.target = target
         saveEditsAsMenuItem?.target = target
         discardEditsMenuItem?.target = target
+        connectControllerActions(in: NSApp.mainMenu, target: target)
+    }
+
+    private func connectControllerActions(in menu: NSMenu?, target: MainWindowController?) {
+        guard let menu, let target else { return }
+        for item in menu.items {
+            if let action = item.action, target.responds(to: action) {
+                item.target = target
+            }
+            connectControllerActions(in: item.submenu, target: target)
+        }
     }
 }

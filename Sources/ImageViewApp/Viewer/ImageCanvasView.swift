@@ -2,10 +2,20 @@ import AppKit
 import ImageViewCore
 
 final class ImageCanvasView: NSView {
+    static let trackpadNavigationThreshold: CGFloat = 80
+
+    private enum TrackpadScrollAxis {
+        case horizontal
+        case vertical
+    }
+
     var onNext: (() -> Void)?
     var onPrevious: (() -> Void)?
     var onTransformChanged: ((CGFloat) -> Void)?
     private var lastDragLocation: CGPoint?
+    private var trackpadScrollAxis: TrackpadScrollAxis?
+    private var accumulatedTrackpadDeltaX: CGFloat = 0
+    private var didNavigateDuringTrackpadScroll = false
 
     var backgroundColor: NSColor = .black {
         didSet { needsDisplay = true }
@@ -84,6 +94,13 @@ final class ImageCanvasView: NSView {
         offset = .zero
     }
 
+    func zoomToActualSize() {
+        guard let image, bounds.width > 0, bounds.height > 0 else { return }
+        let fittedScale = min(bounds.width / CGFloat(image.cgImage.width), bounds.height / CGFloat(image.cgImage.height))
+        scale = min(max(1 / fittedScale, 0.1), 12)
+        offset = .zero
+    }
+
     func zoom(by delta: CGFloat, around point: CGPoint) {
         let previousScale = scale
         scale = min(max(scale * delta, 0.1), 12.0)
@@ -113,31 +130,63 @@ final class ImageCanvasView: NSView {
         )
     }
 
-    func handleScroll(deltaX: CGFloat, deltaY: CGFloat, at point: CGPoint, modifierFlags: NSEvent.ModifierFlags = []) {
-        if scale > 1.01, !modifierFlags.contains(.option), !modifierFlags.contains(.command) {
-            if abs(deltaX) > abs(deltaY), abs(deltaX) > 20, isAtHorizontalEdge(for: deltaX) {
-                deltaX < 0 ? onNext?() : onPrevious?()
-                return
-            }
+    func handleScroll(
+        deltaX: CGFloat,
+        deltaY: CGFloat,
+        at point: CGPoint,
+        modifierFlags: NSEvent.ModifierFlags = [],
+        phase: NSEvent.Phase = [],
+        momentumPhase: NSEvent.Phase = [],
+        hasPreciseScrollingDeltas: Bool = true
+    ) {
+        if modifierFlags.contains(.option) || modifierFlags.contains(.command) {
+            resetTrackpadScrollState()
+            guard abs(deltaY) > 0.1 else { return }
+            let zoomDelta = max(0.7, min(1.3, 1.0 - (deltaY * 0.01)))
+            zoom(by: zoomDelta, around: point)
+            return
+        }
+
+        if scale > 1.01 {
+            resetTrackpadScrollState()
             pan(by: CGPoint(x: -deltaX, y: -deltaY))
             return
         }
 
-        if abs(deltaX) > abs(deltaY), abs(deltaX) > 20, scale <= 1.01 {
-            deltaX < 0 ? onNext?() : onPrevious?()
+        if !momentumPhase.isEmpty {
+            resetTrackpadScrollState()
             return
         }
 
-        guard abs(deltaY) > 0.1 else { return }
-        let zoomDelta = max(0.7, min(1.3, 1.0 - (deltaY * 0.01)))
-        zoom(by: zoomDelta, around: point)
+        guard hasPreciseScrollingDeltas else { return }
+        if phase.contains(.began) {
+            resetTrackpadScrollState()
+        }
+        defer {
+            if phase.contains(.ended) || phase.contains(.cancelled) {
+                resetTrackpadScrollState()
+            }
+        }
+
+        if trackpadScrollAxis == nil, abs(deltaX) > 0.1 || abs(deltaY) > 0.1 {
+            trackpadScrollAxis = abs(deltaX) > abs(deltaY) ? .horizontal : .vertical
+        }
+        guard trackpadScrollAxis == .horizontal else { return }
+
+        accumulatedTrackpadDeltaX += deltaX
+        guard !didNavigateDuringTrackpadScroll,
+              abs(accumulatedTrackpadDeltaX) >= Self.trackpadNavigationThreshold else {
+            return
+        }
+
+        didNavigateDuringTrackpadScroll = true
+        accumulatedTrackpadDeltaX > 0 ? onNext?() : onPrevious?()
     }
 
-    private func isAtHorizontalEdge(for scrollDeltaX: CGFloat) -> Bool {
-        let limit = abs(clampedOffset(for: CGPoint(x: CGFloat.greatestFiniteMagnitude, y: 0)).x)
-        guard limit > 0 else { return true }
-        let tolerance: CGFloat = 1
-        return scrollDeltaX < 0 ? offset.x <= -limit + tolerance : offset.x >= limit - tolerance
+    private func resetTrackpadScrollState() {
+        trackpadScrollAxis = nil
+        accumulatedTrackpadDeltaX = 0
+        didNavigateDuringTrackpadScroll = false
     }
 
     func beginMouseDrag(at point: CGPoint) {
@@ -184,7 +233,10 @@ final class ImageCanvasView: NSView {
             deltaX: event.scrollingDeltaX,
             deltaY: event.scrollingDeltaY,
             at: convert(event.locationInWindow, from: nil),
-            modifierFlags: event.modifierFlags
+            modifierFlags: event.modifierFlags,
+            phase: event.phase,
+            momentumPhase: event.momentumPhase,
+            hasPreciseScrollingDeltas: event.hasPreciseScrollingDeltas
         )
     }
 

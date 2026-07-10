@@ -1,9 +1,47 @@
 import AppKit
+import ImageViewCore
 import XCTest
 @testable import ImageViewApp
 
 @MainActor
 final class MainWindowControllerTests: XCTestCase {
+    func testBottomBarInfoControlUsesStandardInfoSymbol() {
+        XCTAssertEqual(MainWindowController.bottomBarInfoSymbolName, "info.circle")
+    }
+
+    func testBottomBarStatusUsesCompactTrailingSpacing() {
+        XCTAssertEqual(MainWindowController.bottomBarStatusToInfoSpacing, 8)
+    }
+
+    func testStatusTextUsesIncomingNavigationState() {
+        let first = ImageItem(url: URL(fileURLWithPath: "/tmp/first.png"), format: .png)
+        let second = ImageItem(url: URL(fileURLWithPath: "/tmp/second.png"), format: .png)
+        let state = NavigationState(items: [first, second], currentURL: second.url)
+
+        XCTAssertEqual(MainWindowController.statusText(navigationState: state, zoomScale: 1), "2 / 2  ·  100%")
+    }
+
+    func testCustomTitleBarHidesNativeWindowTitle() {
+        let controller = MainWindowController()
+
+        XCTAssertEqual(controller.window?.titleVisibility, .hidden)
+    }
+
+    func testDoubleClickTitleBarTogglesWindowZoom() throws {
+        let controller = MainWindowController()
+        let window = try XCTUnwrap(controller.window)
+        let initialZoomState = window.isZoomed
+
+        controller.toggleWindowZoom(nil)
+
+        XCTAssertNotEqual(window.isZoomed, initialZoomState)
+    }
+
+    func testContentBarsReserveStableSpaceAroundCanvas() {
+        XCTAssertEqual(MainWindowController.titleBarHeight, 32)
+        XCTAssertEqual(MainWindowController.bottomBarHeight, 28)
+    }
+
     func testShouldResetCanvasTransformOnlyWhenDisplayedItemChanges() {
         let first = URL(fileURLWithPath: "/tmp/first.png")
         let firstDuplicate = URL(fileURLWithPath: "/tmp/./first.png")
@@ -22,6 +60,21 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertEqual(MainWindowController.keyAction(for: 51, shouldEndEditing: false), .moveToTrash)
         XCTAssertEqual(MainWindowController.keyAction(for: 49, shouldEndEditing: false), .toggleZoom)
         XCTAssertEqual(MainWindowController.keyAction(for: 36, shouldEndEditing: false), .toggleFullscreen)
+        XCTAssertEqual(
+            MainWindowController.keyAction(for: 13, shouldEndEditing: false, modifierFlags: [.command]),
+            .closeWindow
+        )
+    }
+
+    func testMenuCommandMapsViewSelectors() {
+        XCTAssertEqual(
+            MainWindowController.menuCommand(for: #selector(MainWindowController.showPreviousImage(_:))),
+            .navigation
+        )
+        XCTAssertEqual(
+            MainWindowController.menuCommand(for: #selector(MainWindowController.actualSize(_:))),
+            .canvasSizing
+        )
     }
 
     func testEscapeOnlyEndsEditingWhenDismissibleEditingStateExists() {
@@ -47,31 +100,6 @@ final class MainWindowControllerTests: XCTestCase {
             MainWindowController.keyAction(for: 53, shouldEndEditing: false, isCropping: true),
             .cancelCrop
         )
-    }
-
-    func testHUDVisibilityPolicyKeepsPinnedHUDVisibleAndTimesUnpinnedActivity() {
-        XCTAssertEqual(
-            MainWindowController.hudVisibilityAction(isPinned: true, isActivity: true),
-            .showIndefinitely
-        )
-        XCTAssertFalse(MainWindowController.shouldScheduleHUDHide(isPinned: true))
-
-        XCTAssertEqual(
-            MainWindowController.hudVisibilityAction(isPinned: false, isActivity: true),
-            .showTemporarily
-        )
-        XCTAssertTrue(MainWindowController.shouldScheduleHUDHide(isPinned: false))
-
-        XCTAssertEqual(
-            MainWindowController.hudVisibilityAction(isPinned: false, isActivity: false),
-            .hide
-        )
-    }
-
-    func testToolsToolbarVisibilityRequiresHUDAndInactiveCropMode() {
-        XCTAssertTrue(MainWindowController.shouldShowToolsToolbar(isHUDVisible: true, isCropping: false))
-        XCTAssertFalse(MainWindowController.shouldShowToolsToolbar(isHUDVisible: false, isCropping: false))
-        XCTAssertFalse(MainWindowController.shouldShowToolsToolbar(isHUDVisible: true, isCropping: true))
     }
 
     func testWindowActivationRequestsExternalFileRefresh() {
@@ -195,23 +223,8 @@ final class MainWindowControllerTests: XCTestCase {
         )
     }
 
-    func testFullscreenBackgroundSettingOnlyChangesFullscreenCanvasColor() {
-        XCTAssertEqual(
-            MainWindowController.canvasBackgroundColor(isFullScreen: true, usesBlackFullscreenBackground: true),
-            .black
-        )
-        XCTAssertEqual(
-            MainWindowController.canvasBackgroundColor(isFullScreen: true, usesBlackFullscreenBackground: false),
-            .windowBackgroundColor
-        )
-        XCTAssertEqual(
-            MainWindowController.canvasBackgroundColor(isFullScreen: false, usesBlackFullscreenBackground: false),
-            .windowBackgroundColor
-        )
-        XCTAssertEqual(
-            MainWindowController.canvasBackgroundColor(isFullScreen: false, usesBlackFullscreenBackground: true),
-            .windowBackgroundColor
-        )
+    func testCanvasBackgroundAlwaysUsesSystemAppearance() {
+        XCTAssertEqual(MainWindowController.canvasBackgroundColor(), .windowBackgroundColor)
     }
 
     func testFilmstripMenuValidationReflectsSettingState() {
@@ -226,6 +239,50 @@ final class MainWindowControllerTests: XCTestCase {
         settings.showsFilmstrip = true
         XCTAssertTrue(controller.validateMenuItem(item))
         XCTAssertEqual(item.state, .on)
+    }
+
+    func testFilmstripOverlayOnlyDisplaysWhenEnabledAndPointerIsActive() {
+        XCTAssertTrue(MainWindowController.shouldDisplayFilmstripOverlay(isEnabled: true, pointerIsActive: true))
+        XCTAssertFalse(MainWindowController.shouldDisplayFilmstripOverlay(isEnabled: true, pointerIsActive: false))
+        XCTAssertFalse(MainWindowController.shouldDisplayFilmstripOverlay(isEnabled: false, pointerIsActive: true))
+    }
+
+    func testFilmstripDoesNotScheduleAutoHideWhilePointerIsOverOverlay() {
+        XCTAssertFalse(MainWindowController.shouldAutoHideFilmstrip(isEnabled: true, pointerIsOverOverlay: true))
+        XCTAssertTrue(MainWindowController.shouldAutoHideFilmstrip(isEnabled: true, pointerIsOverOverlay: false))
+        XCTAssertFalse(MainWindowController.shouldAutoHideFilmstrip(isEnabled: false, pointerIsOverOverlay: false))
+    }
+
+    func testBottomStatusRemainsVisibleWhenFilmstripIsEnabled() {
+        XCTAssertTrue(MainWindowController.shouldShowBottomStatus(showsFilmstrip: true))
+    }
+
+    func testPageControlsRequireMultipleImagesAndNoCropSession() {
+        XCTAssertFalse(MainWindowController.shouldDisplayPageControls(itemCount: 0, isCropping: false))
+        XCTAssertFalse(MainWindowController.shouldDisplayPageControls(itemCount: 1, isCropping: false))
+        XCTAssertTrue(MainWindowController.shouldDisplayPageControls(itemCount: 2, isCropping: false))
+        XCTAssertFalse(MainWindowController.shouldDisplayPageControls(itemCount: 2, isCropping: true))
+    }
+
+    func testPageControlAvailabilityTracksSequenceBoundaries() {
+        let first = ImageItem(url: URL(fileURLWithPath: "/tmp/first.png"), format: .png)
+        let second = ImageItem(url: URL(fileURLWithPath: "/tmp/second.png"), format: .png)
+        let firstState = NavigationState(items: [first, second], currentURL: first.url)
+        let secondState = NavigationState(items: [first, second], currentURL: second.url)
+
+        XCTAssertEqual(
+            MainWindowController.pageControlAvailability(navigationState: firstState),
+            .init(previous: false, next: true)
+        )
+        XCTAssertEqual(
+            MainWindowController.pageControlAvailability(navigationState: secondState),
+            .init(previous: true, next: false)
+        )
+    }
+
+    func testPageControlsStayVisibleWhileHovered() {
+        XCTAssertFalse(MainWindowController.shouldAutoHidePageControls(pointerIsOverControls: true))
+        XCTAssertTrue(MainWindowController.shouldAutoHidePageControls(pointerIsOverControls: false))
     }
 
     func testInspectorMenuValidationReflectsSettingState() {

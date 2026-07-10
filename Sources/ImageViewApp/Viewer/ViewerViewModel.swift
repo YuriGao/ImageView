@@ -32,14 +32,6 @@ final class ViewerViewModel: ObservableObject {
         navigationState?.currentItem?.url.lastPathComponent ?? "ImageView"
     }
 
-    var positionText: String {
-        guard let state = navigationState,
-              let currentIndex = state.currentIndex else {
-            return "0 / 0"
-        }
-        return "\(currentIndex + 1) / \(state.items.count)"
-    }
-
     private let scanContainingDirectory: @Sendable (URL) async throws -> [ImageItem]
     private let decodeImageAtURL: @Sendable (URL, SupportedImageFormat) throws -> DecodedImage
     private let loadImageAtURL: @Sendable (URL, SupportedImageFormat) async throws -> DecodedImage

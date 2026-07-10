@@ -7,10 +7,6 @@ final class AppSettings: ObservableObject {
 
     private let defaults: UserDefaults
 
-    @Published var pinsHUD: Bool {
-        didSet { defaults.set(pinsHUD, forKey: Self.pinsHUDKey) }
-    }
-
     @Published var showsFilmstrip: Bool {
         didSet { defaults.set(showsFilmstrip, forKey: Self.showsFilmstripKey) }
     }
@@ -23,30 +19,22 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(confirmsDelete, forKey: Self.confirmsDeleteKey) }
     }
 
-    @Published var usesBlackFullscreenBackground: Bool {
-        didSet { defaults.set(usesBlackFullscreenBackground, forKey: Self.usesBlackFullscreenBackgroundKey) }
-    }
-
     @Published var animatesNavigationTransitions: Bool {
         didSet { defaults.set(animatesNavigationTransitions, forKey: Self.animatesNavigationTransitionsKey) }
     }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        pinsHUD = defaults.bool(forKey: Self.pinsHUDKey)
         showsFilmstrip = defaults.bool(forKey: Self.showsFilmstripKey)
         showsInspector = defaults.bool(forKey: Self.showsInspectorKey)
         confirmsDelete = defaults.object(forKey: Self.confirmsDeleteKey) as? Bool ?? true
-        usesBlackFullscreenBackground = defaults.object(forKey: Self.usesBlackFullscreenBackgroundKey) as? Bool ?? true
         animatesNavigationTransitions = defaults.object(forKey: Self.animatesNavigationTransitionsKey) as? Bool ?? true
     }
 }
 
 private extension AppSettings {
-    static let pinsHUDKey = "pinsHUD"
     static let showsFilmstripKey = "showsFilmstrip"
     static let showsInspectorKey = "showsInspector"
     static let confirmsDeleteKey = "confirmsDelete"
-    static let usesBlackFullscreenBackgroundKey = "usesBlackFullscreenBackground"
     static let animatesNavigationTransitionsKey = "animatesNavigationTransitions"
 }

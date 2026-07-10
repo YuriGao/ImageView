@@ -14,5 +14,7 @@ mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$ROOT_DIR/.build/release/ImageView" "$MACOS_DIR/ImageView"
 cp "$ROOT_DIR/Sources/ImageViewApp/Resources/Info.plist" "$CONTENTS_DIR/Info.plist"
 cp "$ROOT_DIR/Sources/ImageViewApp/Resources/ImageView.icns" "$RESOURCES_DIR/ImageView.icns"
+cp -R "$ROOT_DIR/Sources/ImageViewApp/Resources/en.lproj" "$RESOURCES_DIR/en.lproj"
+cp -R "$ROOT_DIR/Sources/ImageViewApp/Resources/zh-Hans.lproj" "$RESOURCES_DIR/zh-Hans.lproj"
 
 echo "$APP_DIR"

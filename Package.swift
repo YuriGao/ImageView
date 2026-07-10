@@ -3,6 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "ImageView",
+    defaultLocalization: "en",
     platforms: [.macOS(.v14)],
     products: [
         .library(name: "ImageViewCore", targets: ["ImageViewCore"]),
@@ -17,7 +18,10 @@ let package = Package(
             name: "ImageViewApp",
             dependencies: ["ImageViewCore"],
             path: "Sources/ImageViewApp",
-            exclude: ["Resources"]
+            resources: [
+                .process("Resources/en.lproj"),
+                .process("Resources/zh-Hans.lproj")
+            ]
         ),
         .testTarget(
             name: "ImageViewCoreTests",

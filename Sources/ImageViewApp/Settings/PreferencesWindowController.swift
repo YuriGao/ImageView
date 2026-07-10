@@ -5,17 +5,15 @@ import Combine
 final class PreferencesWindowController: NSWindowController {
     private let settings: AppSettings
     private var cancellables: Set<AnyCancellable> = []
-    private let pinsHUDButton = NSButton(checkboxWithTitle: "Pin HUD", target: nil, action: nil)
     private let showsFilmstripButton = NSButton(checkboxWithTitle: "Show filmstrip", target: nil, action: nil)
     private let showsInspectorButton = NSButton(checkboxWithTitle: "Show info panel", target: nil, action: nil)
     private let confirmsDeleteButton = NSButton(checkboxWithTitle: "Confirm before moving to Trash", target: nil, action: nil)
-    private let blackFullscreenBackgroundButton = NSButton(checkboxWithTitle: "Use black fullscreen background", target: nil, action: nil)
     private let navigationTransitionsButton = NSButton(checkboxWithTitle: "Animate image transitions", target: nil, action: nil)
 
     init(settings: AppSettings = .shared) {
         self.settings = settings
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 360, height: 240),
+            contentRect: NSRect(x: 0, y: 0, width: 360, height: 210),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -39,11 +37,9 @@ final class PreferencesWindowController: NSWindowController {
     private func setup() {
         guard let window else { return }
         let stack = NSStackView(views: [
-            pinsHUDButton,
             showsFilmstripButton,
             showsInspectorButton,
             confirmsDeleteButton,
-            blackFullscreenBackgroundButton,
             navigationTransitionsButton
         ])
         stack.orientation = .vertical
@@ -60,16 +56,12 @@ final class PreferencesWindowController: NSWindowController {
             stack.centerYAnchor.constraint(equalTo: contentView.centerYAnchor)
         ])
 
-        pinsHUDButton.target = self
-        pinsHUDButton.action = #selector(togglePinsHUD(_:))
         showsFilmstripButton.target = self
         showsFilmstripButton.action = #selector(toggleShowsFilmstrip(_:))
         showsInspectorButton.target = self
         showsInspectorButton.action = #selector(toggleShowsInspector(_:))
         confirmsDeleteButton.target = self
         confirmsDeleteButton.action = #selector(toggleConfirmsDelete(_:))
-        blackFullscreenBackgroundButton.target = self
-        blackFullscreenBackgroundButton.action = #selector(toggleBlackFullscreenBackground(_:))
         navigationTransitionsButton.target = self
         navigationTransitionsButton.action = #selector(toggleNavigationTransitions(_:))
 
@@ -84,16 +76,10 @@ final class PreferencesWindowController: NSWindowController {
     }
 
     private func syncControls() {
-        pinsHUDButton.state = settings.pinsHUD ? .on : .off
         showsFilmstripButton.state = settings.showsFilmstrip ? .on : .off
         showsInspectorButton.state = settings.showsInspector ? .on : .off
         confirmsDeleteButton.state = settings.confirmsDelete ? .on : .off
-        blackFullscreenBackgroundButton.state = settings.usesBlackFullscreenBackground ? .on : .off
         navigationTransitionsButton.state = settings.animatesNavigationTransitions ? .on : .off
-    }
-
-    @objc private func togglePinsHUD(_ sender: NSButton) {
-        settings.pinsHUD = sender.state == .on
     }
 
     @objc private func toggleShowsFilmstrip(_ sender: NSButton) {
@@ -106,10 +92,6 @@ final class PreferencesWindowController: NSWindowController {
 
     @objc private func toggleConfirmsDelete(_ sender: NSButton) {
         settings.confirmsDelete = sender.state == .on
-    }
-
-    @objc private func toggleBlackFullscreenBackground(_ sender: NSButton) {
-        settings.usesBlackFullscreenBackground = sender.state == .on
     }
 
     @objc private func toggleNavigationTransitions(_ sender: NSButton) {

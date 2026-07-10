@@ -297,7 +297,7 @@ final class ViewerViewModelTests: XCTestCase {
         )
     }
 
-    func testHUDMetadataTracksNavigationAndSelection() async throws {
+    func testNavigationTracksCurrentItemAndSelection() async throws {
         let firstURL = URL(fileURLWithPath: "/tmp/first.png")
         let secondURL = URL(fileURLWithPath: "/tmp/second.png")
         let image = try makeDecodedImage(width: 4, height: 3)
@@ -314,19 +314,20 @@ final class ViewerViewModelTests: XCTestCase {
             decodeImageAtURL: decoder.decode(url:format:)
         )
 
-        XCTAssertEqual(viewModel.positionText, "0 / 0")
+        XCTAssertNil(viewModel.navigationState)
 
         await viewModel.open(url: firstURL)
         XCTAssertEqual(viewModel.currentFilename, "first.png")
-        XCTAssertEqual(viewModel.positionText, "1 / 2")
+        XCTAssertEqual(viewModel.navigationState?.currentIndex, 0)
+        XCTAssertEqual(viewModel.navigationState?.items.count, 2)
 
         viewModel.showNext()
-        await waitUntil { viewModel.positionText == "2 / 2" }
+        await waitUntil { viewModel.navigationState?.currentItem?.url == secondURL }
         XCTAssertEqual(viewModel.currentFilename, "second.png")
 
         let selected = try XCTUnwrap(viewModel.navigationState?.items.first)
         viewModel.show(item: selected)
-        await waitUntil { viewModel.positionText == "1 / 2" }
+        await waitUntil { viewModel.navigationState?.currentItem?.url == firstURL }
         XCTAssertEqual(viewModel.currentFilename, "first.png")
     }
 
@@ -618,11 +619,11 @@ final class ViewerViewModelTests: XCTestCase {
 
         viewModel.applyEdit(.rotateClockwise)
         XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 5, height: 8))
-        XCTAssertEqual(viewModel.positionText, "2 / 2")
+        XCTAssertEqual(viewModel.navigationState?.currentItem?.url, secondURL)
 
         XCTAssertTrue(viewModel.discardCurrentEdits())
         viewModel.showNext()
-        await waitUntil { viewModel.hasUnsavedEdits == false && viewModel.positionText == "2 / 2" }
+        await waitUntil { viewModel.hasUnsavedEdits == false && viewModel.navigationState?.currentItem?.url == secondURL }
 
         XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 8, height: 5))
         XCTAssertFalse(viewModel.hasUnsavedEdits)
