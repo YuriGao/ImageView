@@ -50,6 +50,10 @@ final class MainWindowController: NSWindowController {
     private let cropOverlay = CropOverlayView()
     private let errorOverlay = ErrorOverlayView()
     private let hudView = NSHostingView(rootView: HUDView(filename: "ImageView", positionText: "0 / 0", zoomText: "100%", hasUnsavedEdits: false, isPinned: true))
+    private let toolsToolbarView = NSHostingView(rootView: ImageToolsToolbarView(
+        state: ImageToolsToolbarState.state(hasImage: false, position: nil, itemCount: 0, isCropping: false),
+        onPrevious: {}, onNext: {}, onRotate: {}, onCrop: {}, onMirror: {}, onTrash: {}
+    ))
     private let inspectorView = NSHostingView(rootView: InspectorView(metadata: nil))
     private let filmstripView = FilmstripView()
     private var cancellables: Set<AnyCancellable> = []
@@ -104,11 +108,13 @@ final class MainWindowController: NSWindowController {
         rootView.addSubview(canvas)
         canvas.addSubview(errorOverlay)
         rootView.addSubview(hudView)
+        rootView.addSubview(toolsToolbarView)
         rootView.addSubview(inspectorView)
         rootView.addSubview(filmstripView)
         rootView.addSubview(cropOverlay)
         errorOverlay.translatesAutoresizingMaskIntoConstraints = false
         hudView.translatesAutoresizingMaskIntoConstraints = false
+        toolsToolbarView.translatesAutoresizingMaskIntoConstraints = false
         inspectorView.translatesAutoresizingMaskIntoConstraints = false
         filmstripView.translatesAutoresizingMaskIntoConstraints = false
         cropOverlay.translatesAutoresizingMaskIntoConstraints = false
@@ -124,6 +130,10 @@ final class MainWindowController: NSWindowController {
             hudView.centerXAnchor.constraint(equalTo: rootView.centerXAnchor),
             hudView.leadingAnchor.constraint(greaterThanOrEqualTo: rootView.leadingAnchor, constant: 16),
             hudView.trailingAnchor.constraint(lessThanOrEqualTo: rootView.trailingAnchor, constant: -16),
+            toolsToolbarView.topAnchor.constraint(equalTo: hudView.bottomAnchor, constant: 8),
+            toolsToolbarView.centerXAnchor.constraint(equalTo: rootView.centerXAnchor),
+            toolsToolbarView.leadingAnchor.constraint(greaterThanOrEqualTo: rootView.leadingAnchor, constant: 16),
+            toolsToolbarView.trailingAnchor.constraint(lessThanOrEqualTo: rootView.trailingAnchor, constant: -16),
             inspectorView.trailingAnchor.constraint(equalTo: rootView.trailingAnchor, constant: -16),
             inspectorView.topAnchor.constraint(equalTo: rootView.topAnchor, constant: 64),
             inspectorView.bottomAnchor.constraint(lessThanOrEqualTo: filmstripView.topAnchor, constant: -16),
@@ -272,6 +282,7 @@ final class MainWindowController: NSWindowController {
         }
 
         cropOverlay.beginCropping(in: imageDrawRect)
+        updateToolsToolbar()
         window?.makeFirstResponder(cropOverlay)
     }
 
@@ -288,6 +299,7 @@ final class MainWindowController: NSWindowController {
 
     @objc func cancelCrop(_ sender: Any?) {
         cropOverlay.endCropping()
+        updateToolsToolbar()
         window?.makeFirstResponder(canvas)
     }
 
@@ -424,6 +436,10 @@ final class MainWindowController: NSWindowController {
         !isPinned
     }
 
+    static func shouldShowToolsToolbar(isHUDVisible: Bool, isCropping: Bool) -> Bool {
+        isHUDVisible && !isCropping
+    }
+
     static func shouldResetCanvasTransform(from previousURL: URL?, to newURL: URL?) -> Bool {
         previousURL?.standardizedFileURL != newURL?.standardizedFileURL
     }
@@ -513,6 +529,7 @@ final class MainWindowController: NSWindowController {
         hudHideWorkItem = nil
         hudView.isHidden = false
         hudView.alphaValue = 1
+        updateToolsToolbar(isHUDVisible: true)
     }
 
     private func showHUDTemporarily() {
@@ -521,6 +538,7 @@ final class MainWindowController: NSWindowController {
         hudHideWorkItem?.cancel()
         hudView.isHidden = false
         hudView.alphaValue = 1
+        updateToolsToolbar(isHUDVisible: true)
 
         let workItem = DispatchWorkItem { [weak self] in
             self?.hideHUDIfUnpinned(generation: generation)
@@ -539,6 +557,7 @@ final class MainWindowController: NSWindowController {
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.15
             hudView.animator().alphaValue = 0
+            toolsToolbarView.animator().alphaValue = 0
         } completionHandler: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self,
@@ -547,8 +566,35 @@ final class MainWindowController: NSWindowController {
                     return
                 }
                 self.hudView.isHidden = true
+                self.toolsToolbarView.isHidden = true
             }
         }
+    }
+
+    private func updateToolsToolbar(isHUDVisible: Bool? = nil) {
+        let navigationState = viewModel.navigationState
+        let toolbarState = ImageToolsToolbarState.state(
+            hasImage: viewModel.currentImage != nil,
+            position: navigationState?.currentIndex,
+            itemCount: navigationState?.items.count ?? 0,
+            isCropping: cropOverlay.isCropping
+        )
+        toolsToolbarView.rootView = ImageToolsToolbarView(
+            state: toolbarState,
+            onPrevious: { [weak self] in self?.navigateToPreviousImage() },
+            onNext: { [weak self] in self?.navigateToNextImage() },
+            onRotate: { [weak self] in self?.rotateClockwise(nil) },
+            onCrop: { [weak self] in self?.startCropping(nil) },
+            onMirror: { [weak self] in self?.mirrorHorizontal(nil) },
+            onTrash: { [weak self] in self?.moveCurrentImageToTrash(nil) }
+        )
+
+        let shouldShow = Self.shouldShowToolsToolbar(
+            isHUDVisible: isHUDVisible ?? !hudView.isHidden,
+            isCropping: cropOverlay.isCropping
+        )
+        toolsToolbarView.isHidden = !shouldShow
+        toolsToolbarView.alphaValue = shouldShow ? 1 : 0
     }
 
     private func confirmMoveCurrentImageToTrash() -> Bool {

@@ -68,6 +68,12 @@ final class MainWindowControllerTests: XCTestCase {
         )
     }
 
+    func testToolsToolbarVisibilityRequiresHUDAndInactiveCropMode() {
+        XCTAssertTrue(MainWindowController.shouldShowToolsToolbar(isHUDVisible: true, isCropping: false))
+        XCTAssertFalse(MainWindowController.shouldShowToolsToolbar(isHUDVisible: false, isCropping: false))
+        XCTAssertFalse(MainWindowController.shouldShowToolsToolbar(isHUDVisible: true, isCropping: true))
+    }
+
     func testResolveUnsavedChangesProceedsOnlyForDiscardOrSuccessfulSave() {
         XCTAssertEqual(
             MainWindowController.resolveUnsavedChanges(choice: .save, saveSucceeded: true),
