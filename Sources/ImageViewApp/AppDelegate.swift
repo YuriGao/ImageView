@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var saveEditsMenuItem: NSMenuItem?
     private var saveEditsAsMenuItem: NSMenuItem?
     private var discardEditsMenuItem: NSMenuItem?
+    private var openRecentMenu: NSMenu?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         didFinishLaunching = true
@@ -51,6 +52,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showWindowIfNeeded() {
         if mainWindowController == nil {
             mainWindowController = MainWindowController(settings: settings)
+            mainWindowController?.onSuccessfulOpen = { [weak self] url in
+                NSDocumentController.shared.noteNewRecentDocumentURL(url)
+                self?.rebuildOpenRecentMenu()
+            }
         }
         connectMenuTargets()
         mainWindowController?.showWindow(nil)
@@ -86,6 +91,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(fileMenuItem)
         let fileMenu = NSMenu(title: "File")
         fileMenuItem.submenu = fileMenu
+
+        let openRecentItem = NSMenuItem(title: "Open Recent", action: nil, keyEquivalent: "")
+        let openRecentMenu = NSMenu(title: "Open Recent")
+        openRecentItem.submenu = openRecentMenu
+        fileMenu.addItem(openRecentItem)
+        fileMenu.addItem(.separator())
+        self.openRecentMenu = openRecentMenu
+        rebuildOpenRecentMenu()
 
         let renameMenuItem = NSMenuItem(title: "Rename…", action: #selector(MainWindowController.renameCurrentImage(_:)), keyEquivalent: "R")
         renameMenuItem.keyEquivalentModifierMask = [.command, .shift]
@@ -170,6 +183,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.discardEditsMenuItem = discardEditsMenuItem
         NSApp.mainMenu = mainMenu
         connectMenuTargets()
+    }
+
+    @objc private func openRecentImage(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else { return }
+        showWindowIfNeeded()
+        mainWindowController?.open(url: url)
+    }
+
+    private func rebuildOpenRecentMenu() {
+        guard let openRecentMenu else { return }
+        openRecentMenu.removeAllItems()
+        let urls = NSDocumentController.shared.recentDocumentURLs.prefix(10)
+        guard !urls.isEmpty else {
+            let emptyItem = NSMenuItem(title: "No Recent Images", action: nil, keyEquivalent: "")
+            emptyItem.isEnabled = false
+            openRecentMenu.addItem(emptyItem)
+            return
+        }
+        for url in urls {
+            let item = NSMenuItem(title: url.lastPathComponent, action: #selector(openRecentImage(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = url
+            item.toolTip = url.path
+            openRecentMenu.addItem(item)
+        }
     }
 
     private func connectMenuTargets() {

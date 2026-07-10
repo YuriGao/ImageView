@@ -5,6 +5,9 @@ import SwiftUI
 
 @MainActor
 final class MainWindowController: NSWindowController {
+    var onSuccessfulOpen: ((URL) -> Void)? {
+        didSet { viewModel.onSuccessfulOpen = onSuccessfulOpen }
+    }
     enum MenuCommand: Equatable {
         case fileOperationRequiringCurrentItem
         case startCropping

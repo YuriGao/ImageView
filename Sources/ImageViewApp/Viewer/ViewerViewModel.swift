@@ -20,6 +20,7 @@ struct CurrentFileVersion: Equatable, Sendable {
 
 @MainActor
 final class ViewerViewModel: ObservableObject {
+    var onSuccessfulOpen: ((URL) -> Void)?
     @Published private(set) var navigationState: NavigationState?
     @Published private(set) var currentImage: DecodedImage?
     @Published private(set) var currentMetadata: ImageMetadata?
@@ -154,6 +155,7 @@ final class ViewerViewModel: ObservableObject {
             }
 
             preloadNeighbors()
+            onSuccessfulOpen?(url)
         } catch {
             guard generation == openGeneration else { return }
             navigationState = nil
