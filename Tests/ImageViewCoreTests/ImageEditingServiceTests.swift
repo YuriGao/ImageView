@@ -29,6 +29,23 @@ final class ImageEditingServiceTests: XCTestCase {
         XCTAssertEqual(try pixelRows(in: result), [[.green, .blue]])
     }
 
+    func testCropProducesRequestedDimensions() throws {
+        let image = try makeImage(rows: [
+            [.red, .green, .blue, .yellow, .magenta],
+            [.cyan, .red, .green, .blue, .yellow],
+            [.magenta, .cyan, .red, .green, .blue],
+            [.yellow, .magenta, .cyan, .red, .green]
+        ])
+
+        let result = try ImageEditingService().apply(
+            [.crop(CGRect(x: 1, y: 1, width: 3, height: 2))],
+            to: image
+        )
+
+        XCTAssertEqual(result.width, 3)
+        XCTAssertEqual(result.height, 2)
+    }
+
     func testRotateClockwiseMovesPixelsIntoClockwiseOrientation() throws {
         let image = try makeImage(rows: [
             [.red, .green],

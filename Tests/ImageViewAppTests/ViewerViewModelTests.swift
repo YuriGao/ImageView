@@ -318,6 +318,22 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.errorMessage)
     }
 
+    func testCropMarksEditsAndDiscardRestoresOriginalSize() async throws {
+        let imageURL = try makeTemporaryPNG(width: 5, height: 3, name: "crop-source")
+        defer { try? FileManager.default.removeItem(at: imageURL.deletingLastPathComponent()) }
+
+        let viewModel = ViewerViewModel()
+        await viewModel.open(url: imageURL)
+
+        viewModel.applyEdit(.crop(CGRect(x: 1, y: 1, width: 3, height: 2)))
+
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 3, height: 2))
+        XCTAssertTrue(viewModel.hasUnsavedEdits)
+        XCTAssertTrue(viewModel.discardCurrentEdits())
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 5, height: 3))
+        XCTAssertFalse(viewModel.hasUnsavedEdits)
+    }
+
     func testDiscardCurrentEditsReloadsCachedOriginalAndClearsUnsavedState() async throws {
         let imageURL = try makeTemporaryPNG(width: 7, height: 5, name: "discard-source")
         defer { try? FileManager.default.removeItem(at: imageURL.deletingLastPathComponent()) }
