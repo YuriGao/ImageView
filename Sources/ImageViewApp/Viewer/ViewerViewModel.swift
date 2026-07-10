@@ -245,6 +245,30 @@ final class ViewerViewModel: ObservableObject {
     }
 
     @discardableResult
+    func saveCurrentEdits(to targetURL: URL, format: SupportedImageFormat) -> Bool {
+        guard let image = currentImage else { return false }
+
+        do {
+            try editingService.save(image.cgImage, to: targetURL, format: format)
+            let decoded = DecodedImage(cgImage: image.cgImage, pixelSize: image.pixelSize, isAnimated: false)
+            Task { [cache] in
+                await cache.insert(decoded, for: targetURL, cost: decoded.cgImage.bytesPerRow * decoded.cgImage.height)
+            }
+            navigationState?.replaceCurrentURL(targetURL, format: format)
+            persistedCurrentImage = decoded
+            updateMetadata(url: targetURL, format: format, image: decoded)
+            pendingOperations.removeAll()
+            hasUnsavedEdits = false
+            errorMessage = nil
+            updateDisplayTitle()
+            return true
+        } catch {
+            errorMessage = "无法另存编辑结果"
+            return false
+        }
+    }
+
+    @discardableResult
     func discardCurrentEdits() -> Bool {
         guard hasUnsavedEdits else {
             errorMessage = nil

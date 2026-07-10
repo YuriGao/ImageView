@@ -369,6 +369,22 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.errorMessage)
     }
 
+    func testSaveCurrentEditsToNewURLUpdatesCurrentItem() async throws {
+        let imageURL = try makeTemporaryPNG(width: 8, height: 3, name: "save-as-source")
+        let targetURL = imageURL.deletingLastPathComponent().appendingPathComponent("save-as-target.png")
+        defer { try? FileManager.default.removeItem(at: imageURL.deletingLastPathComponent()) }
+
+        let viewModel = ViewerViewModel()
+        await viewModel.open(url: imageURL)
+        viewModel.applyEdit(.rotateClockwise)
+
+        XCTAssertTrue(viewModel.saveCurrentEdits(to: targetURL, format: .png))
+        XCTAssertEqual(viewModel.navigationState?.currentItem?.url, targetURL)
+        XCTAssertFalse(viewModel.hasUnsavedEdits)
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 3, height: 8))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: targetURL.path))
+    }
+
     func testSaveCurrentEditsShowsErrorForUnsupportedFormats() async throws {
         let svgURL = URL(fileURLWithPath: "/tmp/vector.svg")
         let image = try makeDecodedImage(width: 4, height: 2)
