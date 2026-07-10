@@ -73,4 +73,13 @@ public enum SupportedImageFormat: String, CaseIterable, Sendable {
             return UTType.svg
         }
     }
+
+    public var imageIOTypeIdentifier: String? {
+        switch self {
+        case .avif:
+            return "public.avif"
+        default:
+            return contentType?.identifier
+        }
+    }
 }
