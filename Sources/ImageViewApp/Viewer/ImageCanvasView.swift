@@ -80,14 +80,29 @@ final class ImageCanvasView: NSView {
         let previousScale = scale
         scale = min(max(scale * delta, 0.1), 12.0)
         let ratio = scale / previousScale
-        offset = CGPoint(
+        offset = clampedOffset(for: CGPoint(
             x: point.x - (point.x - offset.x) * ratio,
             y: point.y - (point.y - offset.y) * ratio
-        )
+        ))
     }
 
     func pan(by delta: CGPoint) {
-        offset = CGPoint(x: offset.x + delta.x, y: offset.y + delta.y)
+        offset = clampedOffset(for: CGPoint(x: offset.x + delta.x, y: offset.y + delta.y))
+    }
+
+    func clampedOffset(for proposedOffset: CGPoint) -> CGPoint {
+        guard let image,
+              bounds.width > 0,
+              bounds.height > 0 else { return proposedOffset }
+        let imageSize = CGSize(width: image.cgImage.width, height: image.cgImage.height)
+        let fittedScale = min(bounds.width / imageSize.width, bounds.height / imageSize.height)
+        let drawSize = CGSize(width: imageSize.width * fittedScale * scale, height: imageSize.height * fittedScale * scale)
+        let horizontalLimit = max(0, (drawSize.width - bounds.width) / 2)
+        let verticalLimit = max(0, (drawSize.height - bounds.height) / 2)
+        return CGPoint(
+            x: min(max(proposedOffset.x, -horizontalLimit), horizontalLimit),
+            y: min(max(proposedOffset.y, -verticalLimit), verticalLimit)
+        )
     }
 
     func handleScroll(deltaX: CGFloat, deltaY: CGFloat, at point: CGPoint, modifierFlags: NSEvent.ModifierFlags = []) {

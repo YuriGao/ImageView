@@ -99,6 +99,14 @@ final class ImageCanvasViewTests: XCTestCase {
         XCTAssertEqual(result, CGRect(x: 0, y: 0, width: 30, height: 20))
     }
 
+    func testClampedOffsetKeepsZoomedImageCoveringCanvas() {
+        let canvas = ImageCanvasView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+        canvas.image = makeDecodedImage(width: 400, height: 300)
+        canvas.scale = 2
+
+        XCTAssertEqual(canvas.clampedOffset(for: CGPoint(x: 1_000, y: -1_000)), CGPoint(x: 200, y: -150))
+    }
+
     private func makeDecodedImage(width: Int, height: Int) -> DecodedImage {
         let context = CGContext(
             data: nil,
