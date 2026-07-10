@@ -66,6 +66,26 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.navigationState)
     }
 
+    func testOpenReportsOnlySuccessfullyDecodedURL() async throws {
+        let goodURL = URL(fileURLWithPath: "/tmp/good.png")
+        let badURL = URL(fileURLWithPath: "/tmp/bad.png")
+        let image = try makeDecodedImage(width: 4, height: 3)
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: { url in [ImageItem(url: url, format: .png)] },
+            decodeImageAtURL: { url, _ in
+                guard url == goodURL else { throw ImageDecodeError.cannotDecodeImage }
+                return image
+            }
+        )
+        var openedURLs: [URL] = []
+        viewModel.onSuccessfulOpen = { openedURLs.append($0) }
+
+        await viewModel.open(url: goodURL)
+        await viewModel.open(url: badURL)
+
+        XCTAssertEqual(openedURLs, [goodURL])
+    }
+
     func testOpenFailureClearsPreviouslyDisplayedImageAndNavigationState() async throws {
         let goodURL = URL(fileURLWithPath: "/tmp/good.png")
         let brokenURL = URL(fileURLWithPath: "/tmp/broken.png")
