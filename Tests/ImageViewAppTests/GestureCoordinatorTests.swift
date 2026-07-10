@@ -22,4 +22,15 @@ final class GestureCoordinatorTests: XCTestCase {
         XCTAssertEqual(nextCount, 1)
         XCTAssertEqual(previousCount, 1)
     }
+
+    func testTwoFingerTapTogglesFitAndActualSize() {
+        let canvas = ImageCanvasView()
+        let coordinator = GestureCoordinator(canvas: canvas)
+
+        coordinator.applyTwoFingerTap()
+        XCTAssertEqual(canvas.scale, 2, accuracy: 0.001)
+
+        coordinator.applyTwoFingerTap()
+        XCTAssertEqual(canvas.scale, 1, accuracy: 0.001)
+    }
 }
