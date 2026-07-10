@@ -13,6 +13,12 @@ final class MainWindowController: NSWindowController {
         case discardEdits
     }
 
+    enum HUDVisibilityAction: Equatable {
+        case showIndefinitely
+        case showTemporarily
+        case hide
+    }
+
     enum KeyAction: Equatable {
         case showPrevious
         case showNext
@@ -39,7 +45,7 @@ final class MainWindowController: NSWindowController {
 
     private let viewModel = ViewerViewModel()
     private let settings: AppSettings
-    private let rootView = NSView()
+    private let rootView = HUDTrackingView()
     private let canvas = ImageCanvasView()
     private let cropOverlay = CropOverlayView()
     private let errorOverlay = ErrorOverlayView()
@@ -50,6 +56,9 @@ final class MainWindowController: NSWindowController {
     private var gestureCoordinator: GestureCoordinator?
     private var keyMonitor: Any?
     private var displayedItemURL: URL?
+    private var hudHideWorkItem: DispatchWorkItem?
+    private var hudVisibilityGeneration: UInt64 = 0
+    private let hudAutoHideDelay: TimeInterval = 1.8
 
     convenience init(settings: AppSettings = .shared) {
         let window = NSWindow(
@@ -86,6 +95,9 @@ final class MainWindowController: NSWindowController {
         window?.titlebarAppearsTransparent = true
         window?.center()
         rootView.wantsLayer = true
+        rootView.onMouseMoved = { [weak self] in
+            self?.refreshHUDForActivity()
+        }
         canvas.autoresizingMask = [.width, .height]
         canvas.translatesAutoresizingMaskIntoConstraints = false
         window?.contentView = rootView
@@ -128,7 +140,7 @@ final class MainWindowController: NSWindowController {
         canvas.onNext = { [weak self] in self?.navigateToNextImage() }
         canvas.onPrevious = { [weak self] in self?.navigateToPreviousImage() }
         canvas.onTransformChanged = { [weak self] scale in
-            self?.updateHUD(zoomScale: scale)
+            self?.refreshHUDForActivity(zoomScale: scale)
         }
         gestureCoordinator = GestureCoordinator(canvas: canvas)
         filmstripView.onSelect = { [weak self] item in
@@ -149,13 +161,14 @@ final class MainWindowController: NSWindowController {
 
         viewModel.$hasUnsavedEdits
             .sink { [weak self] _ in
-                self?.updateHUD()
+                self?.refreshHUDForActivity()
             }
             .store(in: &cancellables)
 
         viewModel.$errorMessage
             .sink { [weak self] message in
                 self?.errorOverlay.stringValue = message ?? ""
+                self?.refreshHUDForActivity()
             }
             .store(in: &cancellables)
 
@@ -174,7 +187,7 @@ final class MainWindowController: NSWindowController {
                 }
                 self.displayedItemURL = newURL?.standardizedFileURL
                 self.filmstripView.apply(items: state?.items ?? [], current: state?.currentItem)
-                self.updateHUD()
+                self.refreshHUDForActivity()
             }
             .store(in: &cancellables)
 
@@ -188,7 +201,7 @@ final class MainWindowController: NSWindowController {
 
         installKeyMonitor()
         applySettings()
-        updateHUD()
+        refreshHUDForActivity()
     }
 
     override func keyDown(with event: NSEvent) {
@@ -400,6 +413,17 @@ final class MainWindowController: NSWindowController {
         }
     }
 
+    static func hudVisibilityAction(isPinned: Bool, isActivity: Bool) -> HUDVisibilityAction {
+        if isPinned {
+            return .showIndefinitely
+        }
+        return isActivity ? .showTemporarily : .hide
+    }
+
+    static func shouldScheduleHUDHide(isPinned: Bool) -> Bool {
+        !isPinned
+    }
+
     static func shouldResetCanvasTransform(from previousURL: URL?, to newURL: URL?) -> Bool {
         previousURL?.standardizedFileURL != newURL?.standardizedFileURL
     }
@@ -470,6 +494,63 @@ final class MainWindowController: NSWindowController {
         )
     }
 
+    private func refreshHUDForActivity(zoomScale: CGFloat? = nil) {
+        updateHUD(zoomScale: zoomScale)
+
+        switch Self.hudVisibilityAction(isPinned: settings.pinsHUD, isActivity: true) {
+        case .showIndefinitely:
+            showPinnedHUD()
+        case .showTemporarily:
+            showHUDTemporarily()
+        case .hide:
+            hideHUDIfUnpinned(generation: hudVisibilityGeneration)
+        }
+    }
+
+    private func showPinnedHUD() {
+        hudVisibilityGeneration += 1
+        hudHideWorkItem?.cancel()
+        hudHideWorkItem = nil
+        hudView.isHidden = false
+        hudView.alphaValue = 1
+    }
+
+    private func showHUDTemporarily() {
+        hudVisibilityGeneration += 1
+        let generation = hudVisibilityGeneration
+        hudHideWorkItem?.cancel()
+        hudView.isHidden = false
+        hudView.alphaValue = 1
+
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.hideHUDIfUnpinned(generation: generation)
+        }
+        hudHideWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + hudAutoHideDelay, execute: workItem)
+    }
+
+    private func hideHUDIfUnpinned(generation: UInt64) {
+        guard !settings.pinsHUD,
+              generation == hudVisibilityGeneration else {
+            return
+        }
+
+        hudHideWorkItem = nil
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.15
+            hudView.animator().alphaValue = 0
+        } completionHandler: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self,
+                      !self.settings.pinsHUD,
+                      generation == self.hudVisibilityGeneration else {
+                    return
+                }
+                self.hudView.isHidden = true
+            }
+        }
+    }
+
     private func confirmMoveCurrentImageToTrash() -> Bool {
         guard let item = viewModel.navigationState?.currentItem else {
             NSSound.beep()
@@ -493,7 +574,7 @@ final class MainWindowController: NSWindowController {
         )
         filmstripView.isHidden = !settings.showsFilmstrip
         inspectorView.isHidden = !settings.showsInspector
-        updateHUD()
+        refreshHUDForActivity()
     }
 
     static func canvasBackgroundColor(isFullScreen: Bool, usesBlackFullscreenBackground: Bool) -> NSColor {

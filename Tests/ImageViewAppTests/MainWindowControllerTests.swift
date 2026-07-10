@@ -49,6 +49,25 @@ final class MainWindowControllerTests: XCTestCase {
         )
     }
 
+    func testHUDVisibilityPolicyKeepsPinnedHUDVisibleAndTimesUnpinnedActivity() {
+        XCTAssertEqual(
+            MainWindowController.hudVisibilityAction(isPinned: true, isActivity: true),
+            .showIndefinitely
+        )
+        XCTAssertFalse(MainWindowController.shouldScheduleHUDHide(isPinned: true))
+
+        XCTAssertEqual(
+            MainWindowController.hudVisibilityAction(isPinned: false, isActivity: true),
+            .showTemporarily
+        )
+        XCTAssertTrue(MainWindowController.shouldScheduleHUDHide(isPinned: false))
+
+        XCTAssertEqual(
+            MainWindowController.hudVisibilityAction(isPinned: false, isActivity: false),
+            .hide
+        )
+    }
+
     func testResolveUnsavedChangesProceedsOnlyForDiscardOrSuccessfulSave() {
         XCTAssertEqual(
             MainWindowController.resolveUnsavedChanges(choice: .save, saveSucceeded: true),
