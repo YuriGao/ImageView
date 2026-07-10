@@ -73,6 +73,19 @@ final class ImageEditingServiceTests: XCTestCase {
         )
     }
 
+    func testWritableSaveFormatsIncludePortableFormatsAndExcludeUnsupportedFormats() {
+        let formats = ImageEditingService.writableSaveFormats()
+
+        XCTAssertTrue(formats.contains(.png))
+        XCTAssertTrue(formats.contains(.jpeg))
+        XCTAssertTrue(formats.contains(.tiff))
+        XCTAssertTrue(formats.contains(.bmp))
+        XCTAssertFalse(formats.contains(.gif))
+        XCTAssertFalse(formats.contains(.webp))
+        XCTAssertFalse(formats.contains(.avif))
+        XCTAssertFalse(formats.contains(.svg))
+    }
+
     func testHEIFSaveThrowsWhenNoHEIFDestinationWriterExists() throws {
         let image = try makeImage(rows: [[.red]])
         let destinationTypes = CGImageDestinationCopyTypeIdentifiers() as? [String] ?? []
