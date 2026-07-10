@@ -57,12 +57,20 @@ public final class ImageDecodeService: @unchecked Sendable {
                 kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
             ]
         } else {
-            options = [kCGImageSourceShouldCache: false]
+            let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+            let pixelWidth = properties?[kCGImagePropertyPixelWidth] as? NSNumber
+            let pixelHeight = properties?[kCGImagePropertyPixelHeight] as? NSNumber
+            let originalMaxPixelSize = max(pixelWidth?.doubleValue ?? 1, pixelHeight?.doubleValue ?? 1)
+            options = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: originalMaxPixelSize
+            ]
         }
 
         let image: CGImage?
         if maxPixelSize == nil {
-            image = CGImageSourceCreateImageAtIndex(source, 0, options as CFDictionary)
+            image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
         } else {
             image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
         }

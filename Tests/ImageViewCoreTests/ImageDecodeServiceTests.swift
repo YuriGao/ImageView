@@ -21,6 +21,18 @@ final class ImageDecodeServiceTests: XCTestCase {
         XCTAssertFalse(decoded.isAnimated)
     }
 
+    func testDecodeAppliesExifOrientationForFullResolutionImages() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("oriented.jpg")
+        try writeOrientedJPEG(to: url, width: 4, height: 3)
+
+        let decoded = try ImageDecodeService().decode(url: url, format: .jpeg)
+
+        XCTAssertEqual(decoded.pixelSize, CGSize(width: 3, height: 4))
+    }
+
     func testDecodeSvgThroughSystemFallback() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -143,6 +155,17 @@ final class ImageDecodeServiceTests: XCTestCase {
             throw TestError.cannotEncodeImage
         }
         CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else {
+            throw TestError.cannotEncodeImage
+        }
+    }
+
+    private func writeOrientedJPEG(to url: URL, width: Int, height: Int) throws {
+        let image = try makeImage(width: width, height: height)
+        guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.jpeg.identifier as CFString, 1, nil) else {
+            throw TestError.cannotEncodeImage
+        }
+        CGImageDestinationAddImage(destination, image, [kCGImagePropertyOrientation: 6] as CFDictionary)
         guard CGImageDestinationFinalize(destination) else {
             throw TestError.cannotEncodeImage
         }

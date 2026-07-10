@@ -206,7 +206,11 @@ final class MainWindowControllerTests: XCTestCase {
         )
         XCTAssertEqual(
             MainWindowController.canvasBackgroundColor(isFullScreen: false, usesBlackFullscreenBackground: false),
-            .black
+            .windowBackgroundColor
+        )
+        XCTAssertEqual(
+            MainWindowController.canvasBackgroundColor(isFullScreen: false, usesBlackFullscreenBackground: true),
+            .windowBackgroundColor
         )
     }
 
