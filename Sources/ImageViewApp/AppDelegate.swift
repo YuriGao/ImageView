@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var mirrorVerticalMenuItem: NSMenuItem?
     private var cropMenuItem: NSMenuItem?
     private var saveEditsMenuItem: NSMenuItem?
+    private var saveEditsAsMenuItem: NSMenuItem?
     private var discardEditsMenuItem: NSMenuItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -144,6 +145,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let saveEditsMenuItem = NSMenuItem(title: "Save Edits", action: #selector(MainWindowController.saveEdits(_:)), keyEquivalent: "s")
         editMenu.addItem(saveEditsMenuItem)
 
+        let saveEditsAsMenuItem = NSMenuItem(title: "Save As…", action: #selector(MainWindowController.saveEditsAs(_:)), keyEquivalent: "S")
+        saveEditsAsMenuItem.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(saveEditsAsMenuItem)
+
         let discardEditsMenuItem = NSMenuItem(title: "Discard Edits", action: #selector(MainWindowController.discardEdits(_:)), keyEquivalent: "z")
         discardEditsMenuItem.keyEquivalentModifierMask = [.command, .shift]
         editMenu.addItem(discardEditsMenuItem)
@@ -161,6 +166,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.mirrorVerticalMenuItem = mirrorVerticalMenuItem
         self.cropMenuItem = cropMenuItem
         self.saveEditsMenuItem = saveEditsMenuItem
+        self.saveEditsAsMenuItem = saveEditsAsMenuItem
         self.discardEditsMenuItem = discardEditsMenuItem
         NSApp.mainMenu = mainMenu
         connectMenuTargets()
@@ -181,6 +187,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mirrorVerticalMenuItem?.target = target
         cropMenuItem?.target = target
         saveEditsMenuItem?.target = target
+        saveEditsAsMenuItem?.target = target
         discardEditsMenuItem?.target = target
     }
 }

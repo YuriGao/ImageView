@@ -119,6 +119,10 @@ final class MainWindowControllerTests: XCTestCase {
             .saveEdits
         )
         XCTAssertEqual(
+            MainWindowController.menuCommand(for: #selector(MainWindowController.saveEditsAs(_:))),
+            .saveEditsAs
+        )
+        XCTAssertEqual(
             MainWindowController.menuCommand(for: #selector(MainWindowController.discardEdits(_:))),
             .discardEdits
         )
@@ -168,6 +172,14 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertTrue(
             MainWindowController.isMenuCommandEnabled(
                 .discardEdits,
+                hasCurrentItem: true,
+                hasCurrentImage: true,
+                hasUnsavedEdits: true
+            )
+        )
+        XCTAssertTrue(
+            MainWindowController.isMenuCommandEnabled(
+                .saveEditsAs,
                 hasCurrentItem: true,
                 hasCurrentImage: true,
                 hasUnsavedEdits: true

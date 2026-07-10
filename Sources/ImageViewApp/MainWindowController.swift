@@ -10,6 +10,7 @@ final class MainWindowController: NSWindowController {
         case startCropping
         case editOperation(EditOperation)
         case saveEdits
+        case saveEditsAs
         case discardEdits
     }
 
@@ -311,6 +312,25 @@ final class MainWindowController: NSWindowController {
         _ = viewModel.saveCurrentEdits()
     }
 
+    @objc func saveEditsAs(_ sender: Any?) {
+        guard viewModel.currentImage != nil, viewModel.hasUnsavedEdits else {
+            NSSound.beep()
+            return
+        }
+
+        let formats = ImageEditingService.writableSaveFormats()
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = formats.compactMap(\.contentType)
+        let baseName = URL(fileURLWithPath: viewModel.currentFilename).deletingPathExtension().lastPathComponent
+        panel.nameFieldStringValue = "\(baseName)-edited.png"
+        guard panel.runModal() == .OK,
+              let url = panel.url,
+              let format = SupportedImageFormat(fileExtension: url.pathExtension) else {
+            return
+        }
+        _ = viewModel.saveCurrentEdits(to: url, format: format)
+    }
+
     @objc func discardEdits(_ sender: Any?) {
         guard viewModel.currentImage != nil else {
             NSSound.beep()
@@ -474,6 +494,8 @@ final class MainWindowController: NSWindowController {
             return .editOperation(.mirrorVertical)
         case #selector(saveEdits(_:)):
             return .saveEdits
+        case #selector(saveEditsAs(_:)):
+            return .saveEditsAs
         case #selector(discardEdits(_:)):
             return .discardEdits
         default:
@@ -494,7 +516,7 @@ final class MainWindowController: NSWindowController {
             return hasCurrentImage
         case .editOperation:
             return hasCurrentImage
-        case .saveEdits, .discardEdits:
+        case .saveEdits, .saveEditsAs, .discardEdits:
             return hasCurrentImage && hasUnsavedEdits
         }
     }
