@@ -107,6 +107,10 @@ final class ImageCanvasView: NSView {
 
     func handleScroll(deltaX: CGFloat, deltaY: CGFloat, at point: CGPoint, modifierFlags: NSEvent.ModifierFlags = []) {
         if scale > 1.01, !modifierFlags.contains(.option), !modifierFlags.contains(.command) {
+            if abs(deltaX) > abs(deltaY), abs(deltaX) > 20, isAtHorizontalEdge(for: deltaX) {
+                deltaX < 0 ? onNext?() : onPrevious?()
+                return
+            }
             pan(by: CGPoint(x: -deltaX, y: -deltaY))
             return
         }
@@ -119,6 +123,13 @@ final class ImageCanvasView: NSView {
         guard abs(deltaY) > 0.1 else { return }
         let zoomDelta = max(0.7, min(1.3, 1.0 - (deltaY * 0.01)))
         zoom(by: zoomDelta, around: point)
+    }
+
+    private func isAtHorizontalEdge(for scrollDeltaX: CGFloat) -> Bool {
+        let limit = abs(clampedOffset(for: CGPoint(x: CGFloat.greatestFiniteMagnitude, y: 0)).x)
+        guard limit > 0 else { return true }
+        let tolerance: CGFloat = 1
+        return scrollDeltaX < 0 ? offset.x <= -limit + tolerance : offset.x >= limit - tolerance
     }
 
     func beginMouseDrag(at point: CGPoint) {

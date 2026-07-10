@@ -65,6 +65,19 @@ final class ImageCanvasViewTests: XCTestCase {
         XCTAssertEqual(previousCount, 1)
     }
 
+    func testHorizontalScrollNavigatesAtZoomedHorizontalEdge() {
+        let canvas = ImageCanvasView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+        canvas.image = makeDecodedImage(width: 400, height: 300)
+        canvas.scale = 2
+        canvas.offset = CGPoint(x: -200, y: 0)
+        var nextCount = 0
+        canvas.onNext = { nextCount += 1 }
+
+        canvas.handleScroll(deltaX: -25, deltaY: 0, at: .zero)
+
+        XCTAssertEqual(nextCount, 1)
+    }
+
     func testMouseDragPansOnlyWhenZoomed() {
         let canvas = ImageCanvasView()
 
