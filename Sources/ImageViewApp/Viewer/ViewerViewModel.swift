@@ -208,6 +208,7 @@ final class ViewerViewModel: ObservableObject {
             pendingOperations.append(operation)
             hasUnsavedEdits = true
             errorMessage = nil
+            updateDisplayTitle()
         } catch {
             errorMessage = "无法应用编辑"
         }
@@ -235,6 +236,7 @@ final class ViewerViewModel: ObservableObject {
             pendingOperations.removeAll()
             hasUnsavedEdits = false
             errorMessage = nil
+            updateDisplayTitle()
             return true
         } catch {
             errorMessage = "无法保存该格式的编辑结果"
@@ -259,6 +261,7 @@ final class ViewerViewModel: ObservableObject {
             pendingOperations.removeAll()
             hasUnsavedEdits = false
             errorMessage = nil
+            updateDisplayTitle()
             return true
         } catch {
             errorMessage = "无法还原原始图片"
@@ -328,7 +331,11 @@ final class ViewerViewModel: ObservableObject {
     }
 
     private func updateDisplayTitle() {
-        displayTitle = currentFilename
+        displayTitle = Self.displayTitle(filename: currentFilename, hasUnsavedEdits: hasUnsavedEdits)
+    }
+
+    static func displayTitle(filename: String, hasUnsavedEdits: Bool) -> String {
+        hasUnsavedEdits ? "\(filename) - Edited" : filename
     }
 
     private func updateMetadata(url: URL, format: SupportedImageFormat, image: DecodedImage) {

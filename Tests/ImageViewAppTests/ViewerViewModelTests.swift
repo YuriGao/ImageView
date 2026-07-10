@@ -190,6 +190,36 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.displayTitle, "ImageView")
     }
 
+    func testDisplayTitleMarksUnsavedEdits() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let imageURL = root.appendingPathComponent("editable.png")
+        try makePNGData(width: 5, height: 3).write(to: imageURL)
+        let viewModel = ViewerViewModel()
+
+        await viewModel.open(url: imageURL)
+        XCTAssertEqual(viewModel.displayTitle, "editable.png")
+
+        viewModel.applyEdit(.mirrorHorizontal)
+        XCTAssertEqual(viewModel.displayTitle, "editable.png - Edited")
+
+        XCTAssertTrue(viewModel.discardCurrentEdits())
+        XCTAssertEqual(viewModel.displayTitle, "editable.png")
+    }
+
+    func testDisplayTitleFormattingAddsEditedMarkerOnlyWhenNeeded() {
+        XCTAssertEqual(
+            ViewerViewModel.displayTitle(filename: "image.png", hasUnsavedEdits: false),
+            "image.png"
+        )
+        XCTAssertEqual(
+            ViewerViewModel.displayTitle(filename: "image.png", hasUnsavedEdits: true),
+            "image.png - Edited"
+        )
+    }
+
     func testHUDMetadataTracksNavigationAndSelection() async throws {
         let firstURL = URL(fileURLWithPath: "/tmp/first.png")
         let secondURL = URL(fileURLWithPath: "/tmp/second.png")

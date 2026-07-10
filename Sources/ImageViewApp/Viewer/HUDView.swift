@@ -4,6 +4,7 @@ struct HUDView: View {
     let filename: String
     let positionText: String
     let zoomText: String
+    let hasUnsavedEdits: Bool
     let isPinned: Bool
 
     var body: some View {
@@ -13,6 +14,14 @@ struct HUDView: View {
                 .truncationMode(.middle)
             Text(positionText)
             Text(zoomText)
+            if hasUnsavedEdits {
+                Text("Unsaved")
+                    .font(.system(size: 10, weight: .semibold))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(.quaternary)
+                    .clipShape(RoundedRectangle(cornerRadius: 5))
+            }
         }
         .font(.system(size: 12, weight: .medium))
         .foregroundStyle(.primary)

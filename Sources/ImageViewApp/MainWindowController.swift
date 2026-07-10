@@ -38,7 +38,7 @@ final class MainWindowController: NSWindowController {
     private let rootView = NSView()
     private let canvas = ImageCanvasView()
     private let errorOverlay = ErrorOverlayView()
-    private let hudView = NSHostingView(rootView: HUDView(filename: "ImageView", positionText: "0 / 0", zoomText: "100%", isPinned: true))
+    private let hudView = NSHostingView(rootView: HUDView(filename: "ImageView", positionText: "0 / 0", zoomText: "100%", hasUnsavedEdits: false, isPinned: true))
     private let inspectorView = NSHostingView(rootView: InspectorView(metadata: nil))
     private let filmstripView = FilmstripView()
     private var cancellables: Set<AnyCancellable> = []
@@ -131,6 +131,12 @@ final class MainWindowController: NSWindowController {
         viewModel.$displayTitle
             .sink { [weak self] title in
                 self?.window?.title = title
+            }
+            .store(in: &cancellables)
+
+        viewModel.$hasUnsavedEdits
+            .sink { [weak self] _ in
+                self?.updateHUD()
             }
             .store(in: &cancellables)
 
@@ -381,6 +387,7 @@ final class MainWindowController: NSWindowController {
             filename: viewModel.currentFilename,
             positionText: viewModel.positionText,
             zoomText: "\(Int((scale * 100).rounded()))%",
+            hasUnsavedEdits: viewModel.hasUnsavedEdits,
             isPinned: settings.pinsHUD
         )
     }
