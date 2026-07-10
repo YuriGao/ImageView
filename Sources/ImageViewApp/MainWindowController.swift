@@ -172,7 +172,15 @@ final class MainWindowController: NSWindowController {
 
         viewModel.$currentImage
             .sink { [weak self] image in
-                self?.canvas.image = image
+                guard let self else { return }
+                self.canvas.image = image
+                guard self.settings.animatesNavigationTransitions,
+                      image != nil else { return }
+                self.canvas.alphaValue = 0
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0.12
+                    self.canvas.animator().alphaValue = 1
+                }
             }
             .store(in: &cancellables)
 

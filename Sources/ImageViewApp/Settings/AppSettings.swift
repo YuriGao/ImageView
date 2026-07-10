@@ -27,6 +27,10 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(usesBlackFullscreenBackground, forKey: Self.usesBlackFullscreenBackgroundKey) }
     }
 
+    @Published var animatesNavigationTransitions: Bool {
+        didSet { defaults.set(animatesNavigationTransitions, forKey: Self.animatesNavigationTransitionsKey) }
+    }
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         pinsHUD = defaults.bool(forKey: Self.pinsHUDKey)
@@ -34,6 +38,7 @@ final class AppSettings: ObservableObject {
         showsInspector = defaults.bool(forKey: Self.showsInspectorKey)
         confirmsDelete = defaults.object(forKey: Self.confirmsDeleteKey) as? Bool ?? true
         usesBlackFullscreenBackground = defaults.object(forKey: Self.usesBlackFullscreenBackgroundKey) as? Bool ?? true
+        animatesNavigationTransitions = defaults.object(forKey: Self.animatesNavigationTransitionsKey) as? Bool ?? true
     }
 }
 
@@ -43,4 +48,5 @@ private extension AppSettings {
     static let showsInspectorKey = "showsInspector"
     static let confirmsDeleteKey = "confirmsDelete"
     static let usesBlackFullscreenBackgroundKey = "usesBlackFullscreenBackground"
+    static let animatesNavigationTransitionsKey = "animatesNavigationTransitions"
 }

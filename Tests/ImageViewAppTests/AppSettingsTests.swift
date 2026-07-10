@@ -12,6 +12,7 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertFalse(settings.showsInspector)
         XCTAssertTrue(settings.confirmsDelete)
         XCTAssertTrue(settings.usesBlackFullscreenBackground)
+        XCTAssertTrue(settings.animatesNavigationTransitions)
     }
 
     func testSettingsPersistAcrossInstances() {
@@ -22,6 +23,7 @@ final class AppSettingsTests: XCTestCase {
         first.showsInspector = true
         first.confirmsDelete = false
         first.usesBlackFullscreenBackground = false
+        first.animatesNavigationTransitions = false
 
         let second = AppSettings(defaults: defaults)
         XCTAssertTrue(second.pinsHUD)
@@ -29,6 +31,7 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertTrue(second.showsInspector)
         XCTAssertFalse(second.confirmsDelete)
         XCTAssertFalse(second.usesBlackFullscreenBackground)
+        XCTAssertFalse(second.animatesNavigationTransitions)
     }
 
     private func makeIsolatedDefaults() -> UserDefaults {
