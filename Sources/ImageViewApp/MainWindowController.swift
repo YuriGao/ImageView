@@ -49,6 +49,7 @@ final class MainWindowController: NSWindowController {
     private let rootView = HUDTrackingView()
     private let canvas = ImageCanvasView()
     private let cropOverlay = CropOverlayView()
+    private let cropControlsView = NSHostingView(rootView: CropControlsView(onCancel: {}, onApply: {}))
     private let errorOverlay = ErrorOverlayView()
     private let hudView = NSHostingView(rootView: HUDView(filename: "ImageView", positionText: "0 / 0", zoomText: "100%", hasUnsavedEdits: false, isPinned: true))
     private let toolsToolbarView = NSHostingView(rootView: ImageToolsToolbarView(
@@ -116,13 +117,16 @@ final class MainWindowController: NSWindowController {
         rootView.addSubview(inspectorView)
         rootView.addSubview(filmstripView)
         rootView.addSubview(cropOverlay)
+        rootView.addSubview(cropControlsView)
         errorOverlay.translatesAutoresizingMaskIntoConstraints = false
         hudView.translatesAutoresizingMaskIntoConstraints = false
         toolsToolbarView.translatesAutoresizingMaskIntoConstraints = false
         inspectorView.translatesAutoresizingMaskIntoConstraints = false
         filmstripView.translatesAutoresizingMaskIntoConstraints = false
         cropOverlay.translatesAutoresizingMaskIntoConstraints = false
+        cropControlsView.translatesAutoresizingMaskIntoConstraints = false
         cropOverlay.isHidden = true
+        cropControlsView.isHidden = true
         NSLayoutConstraint.activate([
             canvas.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
             canvas.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
@@ -149,6 +153,8 @@ final class MainWindowController: NSWindowController {
             cropOverlay.trailingAnchor.constraint(equalTo: canvas.trailingAnchor),
             cropOverlay.topAnchor.constraint(equalTo: canvas.topAnchor),
             cropOverlay.bottomAnchor.constraint(equalTo: canvas.bottomAnchor)
+            ,cropControlsView.centerXAnchor.constraint(equalTo: rootView.centerXAnchor)
+            ,cropControlsView.bottomAnchor.constraint(equalTo: rootView.bottomAnchor, constant: -24)
         ])
 
         canvas.onNext = { [weak self] in self?.navigateToNextImage() }
@@ -286,6 +292,7 @@ final class MainWindowController: NSWindowController {
         }
 
         cropOverlay.beginCropping(in: imageDrawRect)
+        updateCropControls()
         updateToolsToolbar()
         window?.makeFirstResponder(cropOverlay)
     }
@@ -303,6 +310,7 @@ final class MainWindowController: NSWindowController {
 
     @objc func cancelCrop(_ sender: Any?) {
         cropOverlay.endCropping()
+        updateCropControls()
         updateToolsToolbar()
         window?.makeFirstResponder(canvas)
     }
@@ -624,6 +632,14 @@ final class MainWindowController: NSWindowController {
         )
         toolsToolbarView.isHidden = !shouldShow
         toolsToolbarView.alphaValue = shouldShow ? 1 : 0
+    }
+
+    private func updateCropControls() {
+        cropControlsView.rootView = CropControlsView(
+            onCancel: { [weak self] in self?.cancelCrop(nil) },
+            onApply: { [weak self] in self?.applyCrop(nil) }
+        )
+        cropControlsView.isHidden = !cropOverlay.isCropping
     }
 
     private func confirmMoveCurrentImageToTrash() -> Bool {
