@@ -13,12 +13,22 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertEqual(MainWindowController.bottomBarStatusToInfoSpacing, 8)
     }
 
-    func testStatusTextUsesIncomingNavigationState() {
+    func testStatusBarFormatsDimensionsPageAndZoomIndependently() {
         let first = ImageItem(url: URL(fileURLWithPath: "/tmp/first.png"), format: .png)
         let second = ImageItem(url: URL(fileURLWithPath: "/tmp/second.png"), format: .png)
         let state = NavigationState(items: [first, second], currentURL: second.url)
 
-        XCTAssertEqual(MainWindowController.statusText(navigationState: state, zoomScale: 1), "2 / 2  ·  100%")
+        XCTAssertEqual(
+            MainWindowController.dimensionText(pixelWidth: 6000, pixelHeight: 4000),
+            "6000 × 4000 px"
+        )
+        XCTAssertEqual(
+            MainWindowController.dimensionText(pixelWidth: nil, pixelHeight: nil),
+            "— × — px"
+        )
+        XCTAssertEqual(MainWindowController.pageText(navigationState: state), "2 / 2")
+        XCTAssertEqual(MainWindowController.pageText(navigationState: nil), "0 / 0")
+        XCTAssertEqual(MainWindowController.zoomText(zoomScale: 1.25), "125%")
     }
 
     func testCustomTitleBarHidesNativeWindowTitle() {
@@ -251,10 +261,6 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertFalse(MainWindowController.shouldAutoHideFilmstrip(isEnabled: true, pointerIsOverOverlay: true))
         XCTAssertTrue(MainWindowController.shouldAutoHideFilmstrip(isEnabled: true, pointerIsOverOverlay: false))
         XCTAssertFalse(MainWindowController.shouldAutoHideFilmstrip(isEnabled: false, pointerIsOverOverlay: false))
-    }
-
-    func testBottomStatusRemainsVisibleWhenFilmstripIsEnabled() {
-        XCTAssertTrue(MainWindowController.shouldShowBottomStatus(showsFilmstrip: true))
     }
 
     func testPageControlsRequireMultipleImagesAndNoCropSession() {

@@ -70,7 +70,9 @@ final class MainWindowController: NSWindowController {
     private let inspectorView = NSHostingView(rootView: InspectorView(metadata: nil))
     private let bottomBarView = NSVisualEffectView()
     private let bottomBarDivider = NSBox()
-    private let bottomStatusLabel = NSTextField(labelWithString: "0 / 0  ·  100%")
+    private let bottomDimensionLabel = NSTextField(labelWithString: "— × — px")
+    private let bottomPageLabel = NSTextField(labelWithString: "0 / 0")
+    private let bottomZoomLabel = NSTextField(labelWithString: "100%")
     private let bottomInfoButton = NSButton()
     private let filmstripOverlayView = FilmstripOverlayView()
     private let filmstripView = FilmstripView()
@@ -166,7 +168,9 @@ final class MainWindowController: NSWindowController {
         rootView.addSubview(pageNavigationOverlayView)
         canvas.addSubview(errorOverlay)
         rootView.addSubview(inspectorView)
-        bottomBarView.addSubview(bottomStatusLabel)
+        bottomBarView.addSubview(bottomDimensionLabel)
+        bottomBarView.addSubview(bottomPageLabel)
+        bottomBarView.addSubview(bottomZoomLabel)
         bottomBarView.addSubview(bottomInfoButton)
         filmstripOverlayView.addSubview(filmstripView)
         rootView.addSubview(cropOverlay)
@@ -175,7 +179,9 @@ final class MainWindowController: NSWindowController {
         inspectorView.translatesAutoresizingMaskIntoConstraints = false
         titleBarDivider.translatesAutoresizingMaskIntoConstraints = false
         bottomBarDivider.translatesAutoresizingMaskIntoConstraints = false
-        bottomStatusLabel.translatesAutoresizingMaskIntoConstraints = false
+        for label in [bottomDimensionLabel, bottomPageLabel, bottomZoomLabel] {
+            label.translatesAutoresizingMaskIntoConstraints = false
+        }
         bottomInfoButton.translatesAutoresizingMaskIntoConstraints = false
         filmstripOverlayView.translatesAutoresizingMaskIntoConstraints = false
         filmstripView.translatesAutoresizingMaskIntoConstraints = false
@@ -214,9 +220,14 @@ final class MainWindowController: NSWindowController {
             inspectorView.trailingAnchor.constraint(equalTo: rootView.trailingAnchor, constant: -16),
             inspectorView.topAnchor.constraint(equalTo: canvas.topAnchor, constant: 16),
             inspectorView.bottomAnchor.constraint(lessThanOrEqualTo: canvas.bottomAnchor, constant: -16),
-            bottomStatusLabel.leadingAnchor.constraint(greaterThanOrEqualTo: bottomBarView.leadingAnchor, constant: 12),
-            bottomStatusLabel.trailingAnchor.constraint(equalTo: bottomInfoButton.leadingAnchor, constant: -Self.bottomBarStatusToInfoSpacing),
-            bottomStatusLabel.centerYAnchor.constraint(equalTo: bottomBarView.centerYAnchor),
+            bottomDimensionLabel.leadingAnchor.constraint(equalTo: bottomBarView.leadingAnchor, constant: 12),
+            bottomDimensionLabel.trailingAnchor.constraint(lessThanOrEqualTo: bottomPageLabel.leadingAnchor, constant: -12),
+            bottomDimensionLabel.centerYAnchor.constraint(equalTo: bottomBarView.centerYAnchor),
+            bottomPageLabel.centerXAnchor.constraint(equalTo: bottomBarView.centerXAnchor),
+            bottomPageLabel.centerYAnchor.constraint(equalTo: bottomBarView.centerYAnchor),
+            bottomPageLabel.trailingAnchor.constraint(lessThanOrEqualTo: bottomZoomLabel.leadingAnchor, constant: -12),
+            bottomZoomLabel.trailingAnchor.constraint(equalTo: bottomInfoButton.leadingAnchor, constant: -Self.bottomBarStatusToInfoSpacing),
+            bottomZoomLabel.centerYAnchor.constraint(equalTo: bottomBarView.centerYAnchor),
             bottomInfoButton.trailingAnchor.constraint(equalTo: bottomBarView.trailingAnchor, constant: -8),
             bottomInfoButton.centerYAnchor.constraint(equalTo: bottomBarView.centerYAnchor),
             bottomInfoButton.widthAnchor.constraint(equalToConstant: 22),
@@ -246,7 +257,7 @@ final class MainWindowController: NSWindowController {
         canvas.onNext = { [weak self] in self?.navigateToNextImage() }
         canvas.onPrevious = { [weak self] in self?.navigateToPreviousImage() }
         canvas.onTransformChanged = { [weak self] scale in
-            self?.updateStatus(zoomScale: scale)
+            self?.updateZoomStatus(zoomScale: scale)
         }
         gestureCoordinator = GestureCoordinator(canvas: canvas)
         filmstripView.onSelect = { [weak self] item in
@@ -274,22 +285,16 @@ final class MainWindowController: NSWindowController {
             }
             .store(in: &cancellables)
 
-        viewModel.$hasUnsavedEdits
-            .sink { [weak self] _ in
-                self?.updateStatus()
-            }
-            .store(in: &cancellables)
-
         viewModel.$errorMessage
             .sink { [weak self] message in
                 self?.errorOverlay.stringValue = message ?? ""
-                self?.updateStatus()
             }
             .store(in: &cancellables)
 
         viewModel.$currentMetadata
             .sink { [weak self] metadata in
                 self?.inspectorView.rootView = InspectorView(metadata: metadata)
+                self?.updateDimensionStatus(metadata: metadata)
             }
             .store(in: &cancellables)
 
@@ -319,7 +324,7 @@ final class MainWindowController: NSWindowController {
                 } else {
                     self.hidePageControls(immediately: true)
                 }
-                self.updateStatus(navigationState: state)
+                self.updatePageStatus(navigationState: state)
             }
             .store(in: &cancellables)
 
@@ -333,7 +338,9 @@ final class MainWindowController: NSWindowController {
 
         installKeyMonitor()
         applySettings()
-        updateStatus()
+        updateDimensionStatus(metadata: viewModel.currentMetadata)
+        updatePageStatus(navigationState: viewModel.navigationState)
+        updateZoomStatus()
     }
 
     override func keyDown(with event: NSEvent) {
@@ -671,13 +678,19 @@ final class MainWindowController: NSWindowController {
         }
     }
 
-    private func updateStatus(zoomScale: CGFloat? = nil) {
-        updateStatus(navigationState: viewModel.navigationState, zoomScale: zoomScale)
+    private func updateDimensionStatus(metadata: ImageMetadata?) {
+        bottomDimensionLabel.stringValue = Self.dimensionText(
+            pixelWidth: metadata?.pixelWidth,
+            pixelHeight: metadata?.pixelHeight
+        )
     }
 
-    private func updateStatus(navigationState: NavigationState?, zoomScale: CGFloat? = nil) {
-        let scale = zoomScale ?? canvas.scale
-        bottomStatusLabel.stringValue = Self.statusText(navigationState: navigationState, zoomScale: scale)
+    private func updatePageStatus(navigationState: NavigationState?) {
+        bottomPageLabel.stringValue = Self.pageText(navigationState: navigationState)
+    }
+
+    private func updateZoomStatus(zoomScale: CGFloat? = nil) {
+        bottomZoomLabel.stringValue = Self.zoomText(zoomScale: zoomScale ?? canvas.scale)
     }
 
     private func updateCropControls() {
@@ -709,13 +722,14 @@ final class MainWindowController: NSWindowController {
 
     private func applySettings() {
         canvas.backgroundColor = Self.canvasBackgroundColor()
-        bottomStatusLabel.isHidden = !Self.shouldShowBottomStatus(showsFilmstrip: settings.showsFilmstrip)
         if !settings.showsFilmstrip {
             hideFilmstripOverlay(immediately: true)
         }
         inspectorView.isHidden = !settings.showsInspector
         bottomInfoButton.state = settings.showsInspector ? .on : .off
-        updateStatus()
+        updateDimensionStatus(metadata: viewModel.currentMetadata)
+        updatePageStatus(navigationState: viewModel.navigationState)
+        updateZoomStatus()
     }
 
     private func revealFilmstripOverlay() {
@@ -862,10 +876,15 @@ final class MainWindowController: NSWindowController {
         titleBarDoubleClick.numberOfClicksRequired = 2
         titleBarView.addGestureRecognizer(titleBarDoubleClick)
 
-        bottomStatusLabel.font = .systemFont(ofSize: 10, weight: .medium)
-        bottomStatusLabel.textColor = .secondaryLabelColor
-        bottomStatusLabel.lineBreakMode = .byTruncatingMiddle
-        bottomStatusLabel.maximumNumberOfLines = 1
+        for label in [bottomDimensionLabel, bottomPageLabel, bottomZoomLabel] {
+            label.font = .systemFont(ofSize: 10, weight: .medium)
+            label.textColor = .secondaryLabelColor
+            label.maximumNumberOfLines = 1
+        }
+        bottomDimensionLabel.lineBreakMode = .byTruncatingTail
+        bottomDimensionLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        bottomPageLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        bottomZoomLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         bottomInfoButton.image = NSImage(systemSymbolName: Self.bottomBarInfoSymbolName, accessibilityDescription: "Show Info")
         bottomInfoButton.bezelStyle = .toolbar
         bottomInfoButton.isBordered = false
@@ -889,10 +908,6 @@ final class MainWindowController: NSWindowController {
         isEnabled && !pointerIsOverOverlay
     }
 
-    static func shouldShowBottomStatus(showsFilmstrip: Bool) -> Bool {
-        true
-    }
-
     static func shouldDisplayPageControls(itemCount: Int, isCropping: Bool) -> Bool {
         itemCount > 1 && !isCropping
     }
@@ -912,16 +927,19 @@ final class MainWindowController: NSWindowController {
         !pointerIsOverControls
     }
 
-    static func statusText(navigationState: NavigationState?, zoomScale: CGFloat) -> String {
-        let positionText: String
-        if let navigationState,
-           let currentIndex = navigationState.currentIndex {
-            positionText = "\(currentIndex + 1) / \(navigationState.items.count)"
-        } else {
-            positionText = "0 / 0"
-        }
-        let zoomText = "\(Int((zoomScale * 100).rounded()))%"
-        return "\(positionText)  ·  \(zoomText)"
+    static func dimensionText(pixelWidth: Int?, pixelHeight: Int?) -> String {
+        guard let pixelWidth, let pixelHeight else { return "— × — px" }
+        return "\(pixelWidth) × \(pixelHeight) px"
+    }
+
+    static func pageText(navigationState: NavigationState?) -> String {
+        guard let navigationState,
+              let currentIndex = navigationState.currentIndex else { return "0 / 0" }
+        return "\(currentIndex + 1) / \(navigationState.items.count)"
+    }
+
+    static func zoomText(zoomScale: CGFloat) -> String {
+        "\(Int((zoomScale * 100).rounded()))%"
     }
 
     private func navigateToNextImage() {
