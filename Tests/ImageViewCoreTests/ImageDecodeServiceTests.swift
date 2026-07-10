@@ -28,6 +28,15 @@ final class ImageDecodeServiceTests: XCTestCase {
         let url = root.appendingPathComponent("oriented.jpg")
         try writeOrientedJPEG(to: url, width: 4, height: 3)
 
+        let source = try XCTUnwrap(CGImageSourceCreateWithURL(url as CFURL, nil))
+        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        let tiff = properties?[kCGImagePropertyTIFFDictionary] as? [CFString: Any]
+        XCTAssertEqual(
+            (properties?[kCGImagePropertyOrientation] as? NSNumber)?.intValue
+                ?? (tiff?[kCGImagePropertyTIFFOrientation] as? NSNumber)?.intValue,
+            6
+        )
+
         let decoded = try ImageDecodeService().decode(url: url, format: .jpeg)
 
         XCTAssertEqual(decoded.pixelSize, CGSize(width: 3, height: 4))

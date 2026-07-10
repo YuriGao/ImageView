@@ -53,7 +53,6 @@ public final class ImageDecodeService: @unchecked Sendable {
         if let maxPixelSize {
             options = [
                 kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceCreateThumbnailWithTransform: true,
                 kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
             ]
         } else {
@@ -63,7 +62,6 @@ public final class ImageDecodeService: @unchecked Sendable {
             let originalMaxPixelSize = max(pixelWidth?.doubleValue ?? 1, pixelHeight?.doubleValue ?? 1)
             options = [
                 kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceCreateThumbnailWithTransform: true,
                 kCGImageSourceThumbnailMaxPixelSize: originalMaxPixelSize
             ]
         }
@@ -79,14 +77,75 @@ public final class ImageDecodeService: @unchecked Sendable {
             return nil
         }
 
+        let imageProperties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        let tiffProperties = imageProperties?[kCGImagePropertyTIFFDictionary] as? [CFString: Any]
+        let orientationRaw = (imageProperties?[kCGImagePropertyOrientation] as? NSNumber)
+            ?? (tiffProperties?[kCGImagePropertyTIFFOrientation] as? NSNumber)
+        let orientedImage = applyOrientation(
+            image,
+            orientation: CGImagePropertyOrientation(rawValue: orientationRaw?.uint32Value ?? 1) ?? .up
+        )
+
         let frameCount = CGImageSourceGetCount(source)
         let animationFrames = maxPixelSize == nil && frameCount > 1 ? decodeAnimationFrames(source: source, options: options) : []
         return DecodedImage(
-            cgImage: image,
-            pixelSize: CGSize(width: image.width, height: image.height),
+            cgImage: orientedImage,
+            pixelSize: CGSize(width: orientedImage.width, height: orientedImage.height),
             isAnimated: frameCount > 1,
             animationFrames: animationFrames
         )
+    }
+
+    private func applyOrientation(_ image: CGImage, orientation: CGImagePropertyOrientation) -> CGImage {
+        guard orientation != .up else { return image }
+        let swapsDimensions = [.left, .leftMirrored, .right, .rightMirrored].contains(orientation)
+        let width = swapsDimensions ? image.height : image.width
+        let height = swapsDimensions ? image.width : image.height
+        guard let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: image.colorSpace ?? CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
+            return image
+        }
+
+        let sourceWidth = CGFloat(image.width)
+        let sourceHeight = CGFloat(image.height)
+        switch orientation {
+        case .upMirrored:
+            context.translateBy(x: sourceWidth, y: 0)
+            context.scaleBy(x: -1, y: 1)
+        case .down:
+            context.translateBy(x: sourceWidth, y: sourceHeight)
+            context.rotate(by: .pi)
+        case .downMirrored:
+            context.translateBy(x: 0, y: sourceHeight)
+            context.scaleBy(x: 1, y: -1)
+        case .left:
+            context.translateBy(x: 0, y: sourceWidth)
+            context.rotate(by: -.pi / 2)
+        case .leftMirrored:
+            context.translateBy(x: sourceHeight, y: sourceWidth)
+            context.rotate(by: -.pi / 2)
+            context.scaleBy(x: -1, y: 1)
+        case .right:
+            context.translateBy(x: sourceHeight, y: 0)
+            context.rotate(by: .pi / 2)
+        case .rightMirrored:
+            context.translateBy(x: sourceHeight, y: 0)
+            context.rotate(by: .pi / 2)
+            context.scaleBy(x: -1, y: 1)
+        case .up:
+            break
+        @unknown default:
+            return image
+        }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: sourceWidth, height: sourceHeight))
+        return context.makeImage() ?? image
     }
 
     private func decodeAnimationFrames(source: CGImageSource, options: [CFString: Any]) -> [AnimatedFrame] {
