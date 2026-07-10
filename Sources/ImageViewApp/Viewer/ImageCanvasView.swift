@@ -29,6 +29,48 @@ final class ImageCanvasView: NSView {
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
 
+    var imageDrawRect: CGRect? {
+        guard let image,
+              bounds.width > 0,
+              bounds.height > 0 else {
+            return nil
+        }
+
+        let imageSize = CGSize(width: image.cgImage.width, height: image.cgImage.height)
+        let fittedScale = min(bounds.width / imageSize.width, bounds.height / imageSize.height)
+        let drawSize = CGSize(width: imageSize.width * fittedScale * scale, height: imageSize.height * fittedScale * scale)
+        return CGRect(
+            x: (bounds.width - drawSize.width) / 2 + offset.x,
+            y: (bounds.height - drawSize.height) / 2 + offset.y,
+            width: drawSize.width,
+            height: drawSize.height
+        )
+    }
+
+    func pixelCropRect(for canvasRect: CGRect) -> CGRect? {
+        guard let image,
+              let drawRect = imageDrawRect else {
+            return nil
+        }
+
+        let visibleRect = canvasRect.standardized.intersection(drawRect)
+        guard visibleRect.width > 0, visibleRect.height > 0 else {
+            return nil
+        }
+
+        let scaleX = CGFloat(image.cgImage.width) / drawRect.width
+        let scaleY = CGFloat(image.cgImage.height) / drawRect.height
+        let pixelRect = CGRect(
+            x: (visibleRect.minX - drawRect.minX) * scaleX,
+            y: (visibleRect.minY - drawRect.minY) * scaleY,
+            width: visibleRect.width * scaleX,
+            height: visibleRect.height * scaleY
+        ).integral
+        let sourceBounds = CGRect(x: 0, y: 0, width: image.cgImage.width, height: image.cgImage.height)
+        let clippedRect = pixelRect.intersection(sourceBounds)
+        return clippedRect.width > 0 && clippedRect.height > 0 ? clippedRect : nil
+    }
+
     func resetViewTransform() {
         scale = 1.0
         offset = .zero
@@ -117,16 +159,9 @@ final class ImageCanvasView: NSView {
         bounds.fill()
         guard let image else { return }
 
-        let imageSize = CGSize(width: image.cgImage.width, height: image.cgImage.height)
-        let fittedScale = min(bounds.width / imageSize.width, bounds.height / imageSize.height)
-        let drawScale = fittedScale * scale
-        let drawSize = CGSize(width: imageSize.width * drawScale, height: imageSize.height * drawScale)
-        let origin = CGPoint(
-            x: (bounds.width - drawSize.width) / 2 + offset.x,
-            y: (bounds.height - drawSize.height) / 2 + offset.y
-        )
+        guard let drawRect = imageDrawRect else { return }
 
         NSGraphicsContext.current?.cgContext.interpolationQuality = .high
-        NSGraphicsContext.current?.cgContext.draw(image.cgImage, in: CGRect(origin: origin, size: drawSize))
+        NSGraphicsContext.current?.cgContext.draw(image.cgImage, in: drawRect)
     }
 }

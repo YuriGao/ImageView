@@ -1,5 +1,6 @@
 import AppKit
 import XCTest
+import ImageViewCore
 @testable import ImageViewApp
 
 @MainActor
@@ -78,5 +79,40 @@ final class ImageCanvasViewTests: XCTestCase {
 
         XCTAssertEqual(canvas.offset.x, 20, accuracy: 0.001)
         XCTAssertEqual(canvas.offset.y, 10, accuracy: 0.001)
+    }
+
+    func testPixelCropRectConvertsCanvasCoordinatesToSourcePixels() {
+        let canvas = ImageCanvasView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+        canvas.image = makeDecodedImage(width: 200, height: 100)
+
+        let result = canvas.pixelCropRect(for: CGRect(x: 40, y: 90, width: 320, height: 160))
+
+        XCTAssertEqual(result, CGRect(x: 20, y: 20, width: 160, height: 80))
+    }
+
+    func testPixelCropRectClampsToVisibleSourceBounds() {
+        let canvas = ImageCanvasView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+        canvas.image = makeDecodedImage(width: 200, height: 100)
+
+        let result = canvas.pixelCropRect(for: CGRect(x: -10, y: 20, width: 70, height: 70))
+
+        XCTAssertEqual(result, CGRect(x: 0, y: 0, width: 30, height: 20))
+    }
+
+    private func makeDecodedImage(width: Int, height: Int) -> DecodedImage {
+        let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        return DecodedImage(
+            cgImage: context.makeImage()!,
+            pixelSize: CGSize(width: width, height: height),
+            isAnimated: false
+        )
     }
 }
