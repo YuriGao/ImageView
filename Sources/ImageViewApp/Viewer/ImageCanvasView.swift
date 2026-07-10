@@ -195,11 +195,11 @@ final class ImageCanvasView: NSView {
 
         guard let drawRect = imageDrawRect else { return }
 
-        NSGraphicsContext.current?.cgContext.interpolationQuality = .high
         let displayedImage = image.animationFrames.indices.contains(currentAnimationFrameIndex)
             ? image.animationFrames[currentAnimationFrameIndex].cgImage
             : image.cgImage
-        NSGraphicsContext.current?.cgContext.draw(displayedImage, in: drawRect)
+        let appKitImage = NSImage(cgImage: displayedImage, size: drawRect.size)
+        appKitImage.draw(in: drawRect)
     }
 
     func advanceAnimationFrame() {
