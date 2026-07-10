@@ -463,6 +463,10 @@ final class MainWindowController: NSWindowController {
         isHUDVisible && !isCropping
     }
 
+    static func shouldRefreshCurrentFileOnWindowActivation() -> Bool {
+        true
+    }
+
     static func shouldResetCanvasTransform(from previousURL: URL?, to newURL: URL?) -> Bool {
         previousURL?.standardizedFileURL != newURL?.standardizedFileURL
     }
@@ -745,6 +749,11 @@ extension MainWindowController: NSMenuItemValidation {
 }
 
 extension MainWindowController: NSWindowDelegate {
+    func windowDidBecomeKey(_ notification: Notification) {
+        guard Self.shouldRefreshCurrentFileOnWindowActivation() else { return }
+        Task { await viewModel.refreshCurrentFileIfNeeded() }
+    }
+
     func windowDidEnterFullScreen(_ notification: Notification) {
         applySettings()
     }

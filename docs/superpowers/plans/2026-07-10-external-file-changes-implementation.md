@@ -69,7 +69,7 @@ git add Sources/ImageViewApp/Viewer/ViewerViewModel.swift Tests/ImageViewAppTest
 git commit -m "feat: recover from external image changes"
 ```
 
-### Task 2: Trigger checks from window activity and navigation
+### Task 2: Trigger checks from window activity
 
 **Files:**
 - Modify: `Sources/ImageViewApp/MainWindowController.swift`
@@ -101,7 +101,7 @@ func windowDidBecomeKey(_ notification: Notification) {
 }
 ```
 
-Call the same helper before previous, next, and filmstrip selection actions.
+Keep navigation commands unchanged: after an externally deleted item is removed, the replacement current item is already the natural next image.
 
 - [ ] **Step 4: Run the full suite and build**
 

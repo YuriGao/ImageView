@@ -43,6 +43,11 @@ public actor ImageCache {
         evictIfNeeded()
     }
 
+    public func removeImage(for url: URL) {
+        guard let entry = entries.removeValue(forKey: url) else { return }
+        totalCost -= entry.cost
+    }
+
     private func evictIfNeeded() {
         while totalCost > costLimit,
               let victim = entries.min(by: { $0.value.lastAccess < $1.value.lastAccess }) {

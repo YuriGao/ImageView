@@ -304,6 +304,108 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertFalse(ViewerViewModel.canPreloadInBackground(.avif))
     }
 
+    func testRefreshRemovesExternallyDeletedCurrentItemAndDisplaysNextImage() async throws {
+        let deletedURL = URL(fileURLWithPath: "/tmp/a.png")
+        let nextURL = URL(fileURLWithPath: "/tmp/b.png")
+        let firstImage = try makeDecodedImage(width: 4, height: 3)
+        let nextImage = try makeDecodedImage(width: 7, height: 5)
+        let versions = FileVersionSequence(values: [
+            deletedURL: [FileVersionSequence.initial, nil],
+            nextURL: [FileVersionSequence.initial]
+        ])
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: { _ in [
+                ImageItem(url: deletedURL, format: .png),
+                ImageItem(url: nextURL, format: .png)
+            ] },
+            decodeImageAtURL: { url, _ in url == deletedURL ? firstImage : nextImage },
+            currentFileVersionAtURL: versions.value(for:)
+        )
+
+        await viewModel.open(url: deletedURL)
+        await viewModel.refreshCurrentFileIfNeeded()
+
+        XCTAssertEqual(viewModel.navigationState?.currentItem?.url, nextURL)
+        await waitUntil { viewModel.currentImage?.pixelSize == CGSize(width: 7, height: 5) }
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 7, height: 5))
+        XCTAssertEqual(viewModel.errorMessage, "文件已在外部移除：a.png")
+    }
+
+    func testRefreshReloadsCurrentImageWhenExternalVersionChanges() async throws {
+        let url = URL(fileURLWithPath: "/tmp/replaced.png")
+        let original = try makeDecodedImage(width: 4, height: 3)
+        let replacement = try makeDecodedImage(width: 9, height: 6)
+        let versions = FileVersionSequence(values: [url: [FileVersionSequence.initial, FileVersionSequence.replacement]])
+        let decoder = DecodeSequence(images: [original, replacement])
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: { _ in [ImageItem(url: url, format: .svg)] },
+            decodeImageAtURL: decoder.decode(url:format:),
+            currentFileVersionAtURL: versions.value(for:)
+        )
+
+        await viewModel.open(url: url)
+        await viewModel.refreshCurrentFileIfNeeded()
+
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 9, height: 6))
+        XCTAssertEqual(viewModel.currentMetadata?.pixelWidth, 9)
+        XCTAssertNil(viewModel.errorMessage)
+    }
+
+    func testRefreshShowsErrorAndKeepsNavigationWhenExternalReplacementCannotDecode() async throws {
+        let firstURL = URL(fileURLWithPath: "/tmp/a.png")
+        let secondURL = URL(fileURLWithPath: "/tmp/b.png")
+        let image = try makeDecodedImage(width: 4, height: 3)
+        let versions = FileVersionSequence(values: [
+            firstURL: [FileVersionSequence.initial, FileVersionSequence.replacement],
+            secondURL: [FileVersionSequence.initial]
+        ])
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: { _ in [
+                ImageItem(url: firstURL, format: .png),
+                ImageItem(url: secondURL, format: .png)
+            ] },
+            decodeImageAtURL: { url, _ in
+                if url == firstURL && versions.hasReadReplacement(for: url) {
+                    throw ImageDecodeError.cannotCreateSource
+                }
+                return image
+            },
+            currentFileVersionAtURL: versions.value(for:)
+        )
+
+        await viewModel.open(url: firstURL)
+        await viewModel.refreshCurrentFileIfNeeded()
+
+        XCTAssertEqual(viewModel.navigationState?.currentItem?.url, firstURL)
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 4, height: 3))
+        XCTAssertEqual(viewModel.errorMessage, "图片已在外部修改且无法解码：a.png")
+
+        viewModel.showNext()
+        await waitUntil { viewModel.navigationState?.currentItem?.url == secondURL }
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 4, height: 3))
+    }
+
+    func testRefreshDoesNotReplaceUnsavedEditsAfterExternalChange() async throws {
+        let url = URL(fileURLWithPath: "/tmp/edited.png")
+        let original = try makeDecodedImage(width: 4, height: 3)
+        let replacement = try makeDecodedImage(width: 9, height: 6)
+        let versions = FileVersionSequence(values: [url: [FileVersionSequence.initial, FileVersionSequence.replacement]])
+        let decoder = DecodeSequence(images: [original, replacement])
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: { _ in [ImageItem(url: url, format: .svg)] },
+            decodeImageAtURL: decoder.decode(url:format:),
+            currentFileVersionAtURL: versions.value(for:)
+        )
+
+        await viewModel.open(url: url)
+        viewModel.applyEdit(.rotateClockwise)
+        await viewModel.refreshCurrentFileIfNeeded()
+
+        XCTAssertTrue(viewModel.hasUnsavedEdits)
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 3, height: 4))
+        XCTAssertEqual(viewModel.errorMessage, "图片已在外部修改：edited.png")
+    }
+
     func testApplyEditMarksUnsavedAndUpdatesImageSize() async throws {
         let imageURL = try makeTemporaryPNG(width: 6, height: 4, name: "edit-source")
         defer { try? FileManager.default.removeItem(at: imageURL.deletingLastPathComponent()) }
@@ -578,6 +680,42 @@ private struct StubDecoder {
 
     func decode(url: URL, format: SupportedImageFormat) throws -> DecodedImage {
         try handler(url, format)
+    }
+}
+
+private final class FileVersionSequence: @unchecked Sendable {
+    static let initial = CurrentFileVersion(modificationDate: Date(timeIntervalSince1970: 1), fileSize: 1)
+    static let replacement = CurrentFileVersion(modificationDate: Date(timeIntervalSince1970: 2), fileSize: 2)
+
+    private var values: [URL: [CurrentFileVersion?]]
+    private var readCounts: [URL: Int] = [:]
+
+    init(values: [URL: [CurrentFileVersion?]]) {
+        self.values = values
+    }
+
+    func value(for url: URL) -> CurrentFileVersion? {
+        let index = readCounts[url, default: 0]
+        readCounts[url] = index + 1
+        let sequence = values[url] ?? []
+        return sequence.indices.contains(index) ? sequence[index] : sequence.last ?? nil
+    }
+
+    func hasReadReplacement(for url: URL) -> Bool {
+        readCounts[url, default: 0] >= 2
+    }
+}
+
+private final class DecodeSequence: @unchecked Sendable {
+    private var images: [DecodedImage]
+
+    init(images: [DecodedImage]) {
+        self.images = images
+    }
+
+    func decode(url _: URL, format _: SupportedImageFormat) throws -> DecodedImage {
+        guard !images.isEmpty else { throw ImageDecodeError.cannotCreateSource }
+        return images.removeFirst()
     }
 }
 

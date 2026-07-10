@@ -74,6 +74,10 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertFalse(MainWindowController.shouldShowToolsToolbar(isHUDVisible: true, isCropping: true))
     }
 
+    func testWindowActivationRequestsExternalFileRefresh() {
+        XCTAssertTrue(MainWindowController.shouldRefreshCurrentFileOnWindowActivation())
+    }
+
     func testResolveUnsavedChangesProceedsOnlyForDiscardOrSuccessfulSave() {
         XCTAssertEqual(
             MainWindowController.resolveUnsavedChanges(choice: .save, saveSucceeded: true),
