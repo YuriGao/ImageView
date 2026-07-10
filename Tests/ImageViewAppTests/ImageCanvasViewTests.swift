@@ -120,6 +120,28 @@ final class ImageCanvasViewTests: XCTestCase {
         XCTAssertEqual(canvas.clampedOffset(for: CGPoint(x: 1_000, y: -1_000)), CGPoint(x: 200, y: -150))
     }
 
+    func testAnimationRunsOnlyForAnimatedImages() {
+        let canvas = ImageCanvasView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+        let first = makeDecodedImage(width: 4, height: 3)
+        let second = makeDecodedImage(width: 4, height: 3)
+        canvas.image = DecodedImage(
+            cgImage: first.cgImage,
+            pixelSize: first.pixelSize,
+            isAnimated: true,
+            animationFrames: [
+                AnimatedFrame(cgImage: first.cgImage, duration: 1),
+                AnimatedFrame(cgImage: second.cgImage, duration: 1)
+            ]
+        )
+
+        XCTAssertTrue(canvas.isAnimating)
+        canvas.advanceAnimationFrame()
+        XCTAssertEqual(canvas.currentAnimationFrameIndex, 1)
+
+        canvas.image = first
+        XCTAssertFalse(canvas.isAnimating)
+    }
+
     private func makeDecodedImage(width: Int, height: Int) -> DecodedImage {
         let context = CGContext(
             data: nil,

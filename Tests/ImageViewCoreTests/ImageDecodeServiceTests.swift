@@ -73,6 +73,20 @@ final class ImageDecodeServiceTests: XCTestCase {
         }
     }
 
+    func testDecodeAnimatedGifReturnsFramesAndDelays() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("animated.gif")
+        try writeAnimatedGIF(to: url)
+
+        let decoded = try ImageDecodeService().decode(url: url, format: .gif)
+
+        XCTAssertTrue(decoded.isAnimated)
+        XCTAssertEqual(decoded.animationFrames.count, 2)
+        XCTAssertEqual(decoded.animationFrames.map(\.duration), [0.1, 0.2])
+    }
+
     private func makePNGData(width: Int, height: Int) throws -> Data {
         let image = try makeImage(width: width, height: height)
         guard let destinationData = CFDataCreateMutable(nil, 0),
@@ -116,6 +130,21 @@ final class ImageDecodeServiceTests: XCTestCase {
             throw TestError.cannotEncodeImage
         }
         CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else {
+            throw TestError.cannotEncodeImage
+        }
+    }
+
+    private func writeAnimatedGIF(to url: URL) throws {
+        let first = try makeImage(width: 4, height: 3)
+        let second = try makeImage(width: 4, height: 3)
+        guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.gif.identifier as CFString, 2, nil) else {
+            throw TestError.cannotEncodeImage
+        }
+        let firstProperties = [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: 0.1]] as CFDictionary
+        let secondProperties = [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: 0.2]] as CFDictionary
+        CGImageDestinationAddImage(destination, first, firstProperties)
+        CGImageDestinationAddImage(destination, second, secondProperties)
         guard CGImageDestinationFinalize(destination) else {
             throw TestError.cannotEncodeImage
         }

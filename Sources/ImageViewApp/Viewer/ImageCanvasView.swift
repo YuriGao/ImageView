@@ -12,8 +12,16 @@ final class ImageCanvasView: NSView {
     }
 
     var image: DecodedImage? {
-        didSet { needsDisplay = true }
+        didSet {
+            currentAnimationFrameIndex = 0
+            configureAnimation()
+            needsDisplay = true
+        }
     }
+
+    private var animationTimer: Timer?
+    private(set) var currentAnimationFrameIndex = 0
+    var isAnimating: Bool { animationTimer != nil }
 
     var scale: CGFloat = 1.0 {
         didSet {
@@ -188,6 +196,34 @@ final class ImageCanvasView: NSView {
         guard let drawRect = imageDrawRect else { return }
 
         NSGraphicsContext.current?.cgContext.interpolationQuality = .high
-        NSGraphicsContext.current?.cgContext.draw(image.cgImage, in: drawRect)
+        let displayedImage = image.animationFrames.indices.contains(currentAnimationFrameIndex)
+            ? image.animationFrames[currentAnimationFrameIndex].cgImage
+            : image.cgImage
+        NSGraphicsContext.current?.cgContext.draw(displayedImage, in: drawRect)
+    }
+
+    func advanceAnimationFrame() {
+        guard let image, !image.animationFrames.isEmpty else { return }
+        currentAnimationFrameIndex = (currentAnimationFrameIndex + 1) % image.animationFrames.count
+        needsDisplay = true
+        scheduleNextAnimationFrame()
+    }
+
+    private func configureAnimation() {
+        animationTimer?.invalidate()
+        animationTimer = nil
+        guard image?.animationFrames.isEmpty == false else { return }
+        scheduleNextAnimationFrame()
+    }
+
+    private func scheduleNextAnimationFrame() {
+        animationTimer?.invalidate()
+        guard let image,
+              image.animationFrames.indices.contains(currentAnimationFrameIndex) else { return }
+        animationTimer = Timer.scheduledTimer(withTimeInterval: image.animationFrames[currentAnimationFrameIndex].duration, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                self?.advanceAnimationFrame()
+            }
+        }
     }
 }
