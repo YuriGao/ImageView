@@ -10,6 +10,7 @@ final class PreferencesWindowController: NSWindowController {
     private let showsInspectorButton = NSButton(checkboxWithTitle: "Show info panel", target: nil, action: nil)
     private let confirmsDeleteButton = NSButton(checkboxWithTitle: "Confirm before moving to Trash", target: nil, action: nil)
     private let blackFullscreenBackgroundButton = NSButton(checkboxWithTitle: "Use black fullscreen background", target: nil, action: nil)
+    private let navigationTransitionsButton = NSButton(checkboxWithTitle: "Animate image transitions", target: nil, action: nil)
 
     init(settings: AppSettings = .shared) {
         self.settings = settings
@@ -42,7 +43,8 @@ final class PreferencesWindowController: NSWindowController {
             showsFilmstripButton,
             showsInspectorButton,
             confirmsDeleteButton,
-            blackFullscreenBackgroundButton
+            blackFullscreenBackgroundButton,
+            navigationTransitionsButton
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -68,6 +70,8 @@ final class PreferencesWindowController: NSWindowController {
         confirmsDeleteButton.action = #selector(toggleConfirmsDelete(_:))
         blackFullscreenBackgroundButton.target = self
         blackFullscreenBackgroundButton.action = #selector(toggleBlackFullscreenBackground(_:))
+        navigationTransitionsButton.target = self
+        navigationTransitionsButton.action = #selector(toggleNavigationTransitions(_:))
 
         settings.objectWillChange
             .sink { [weak self] _ in
@@ -85,6 +89,7 @@ final class PreferencesWindowController: NSWindowController {
         showsInspectorButton.state = settings.showsInspector ? .on : .off
         confirmsDeleteButton.state = settings.confirmsDelete ? .on : .off
         blackFullscreenBackgroundButton.state = settings.usesBlackFullscreenBackground ? .on : .off
+        navigationTransitionsButton.state = settings.animatesNavigationTransitions ? .on : .off
     }
 
     @objc private func togglePinsHUD(_ sender: NSButton) {
@@ -105,5 +110,9 @@ final class PreferencesWindowController: NSWindowController {
 
     @objc private func toggleBlackFullscreenBackground(_ sender: NSButton) {
         settings.usesBlackFullscreenBackground = sender.state == .on
+    }
+
+    @objc private func toggleNavigationTransitions(_ sender: NSButton) {
+        settings.animatesNavigationTransitions = sender.state == .on
     }
 }
