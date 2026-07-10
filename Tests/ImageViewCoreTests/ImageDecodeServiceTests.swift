@@ -87,6 +87,19 @@ final class ImageDecodeServiceTests: XCTestCase {
         XCTAssertEqual(decoded.animationFrames.map(\.duration), [0.1, 0.2])
     }
 
+    func testDecodeEmbeddedWebPSample() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("sample.webp")
+        let data = try XCTUnwrap(Data(base64Encoded: "UklGRiIAAABXRUJQVlA4IBYAAADQAQCdASoBAAEAAUAmJaQAA3AA/vuUAAA="))
+        try data.write(to: url)
+
+        let decoded = try ImageDecodeService().decode(url: url, format: .webp)
+
+        XCTAssertEqual(decoded.pixelSize, CGSize(width: 1, height: 1))
+    }
+
     private func makePNGData(width: Int, height: Int) throws -> Data {
         let image = try makeImage(width: width, height: height)
         guard let destinationData = CFDataCreateMutable(nil, 0),

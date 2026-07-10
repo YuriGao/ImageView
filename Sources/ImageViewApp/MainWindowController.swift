@@ -5,6 +5,7 @@ import SwiftUI
 
 @MainActor
 final class MainWindowController: NSWindowController {
+    static let externalFileCheckInterval: TimeInterval = 2
     var onSuccessfulOpen: ((URL) -> Void)? {
         didSet { viewModel.onSuccessfulOpen = onSuccessfulOpen }
     }
@@ -66,6 +67,7 @@ final class MainWindowController: NSWindowController {
     private var keyMonitor: Any?
     private var displayedItemURL: URL?
     private var hudHideWorkItem: DispatchWorkItem?
+    private var externalFileCheckTimer: Timer?
     private var hudVisibilityGeneration: UInt64 = 0
     private let hudAutoHideDelay: TimeInterval = 1.8
 
@@ -778,11 +780,30 @@ extension MainWindowController: NSMenuItemValidation {
 extension MainWindowController: NSWindowDelegate {
     func windowDidBecomeKey(_ notification: Notification) {
         guard Self.shouldRefreshCurrentFileOnWindowActivation() else { return }
-        Task { await viewModel.refreshCurrentFileIfNeeded() }
+        refreshCurrentFileForExternalChanges()
+        startExternalFileCheckTimer()
+    }
+
+    func windowDidResignKey(_ notification: Notification) {
+        externalFileCheckTimer?.invalidate()
+        externalFileCheckTimer = nil
     }
 
     func windowDidEnterFullScreen(_ notification: Notification) {
         applySettings()
+    }
+
+    private func startExternalFileCheckTimer() {
+        externalFileCheckTimer?.invalidate()
+        externalFileCheckTimer = Timer.scheduledTimer(withTimeInterval: Self.externalFileCheckInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.refreshCurrentFileForExternalChanges()
+            }
+        }
+    }
+
+    private func refreshCurrentFileForExternalChanges() {
+        Task { await viewModel.refreshCurrentFileIfNeeded() }
     }
 
     func windowDidExitFullScreen(_ notification: Notification) {

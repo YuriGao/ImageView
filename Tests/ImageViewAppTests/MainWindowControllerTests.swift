@@ -78,6 +78,10 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertTrue(MainWindowController.shouldRefreshCurrentFileOnWindowActivation())
     }
 
+    func testExternalFileCheckIntervalStaysLightweight() {
+        XCTAssertEqual(MainWindowController.externalFileCheckInterval, 2)
+    }
+
     func testResolveUnsavedChangesProceedsOnlyForDiscardOrSuccessfulSave() {
         XCTAssertEqual(
             MainWindowController.resolveUnsavedChanges(choice: .save, saveSucceeded: true),
