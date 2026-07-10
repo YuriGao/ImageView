@@ -7,6 +7,9 @@ public struct ImageMetadata: Equatable, Sendable {
     public let pixelHeight: Int
     public let fileSize: Int64?
     public let modifiedAt: Date?
+    public let capturedAt: Date?
+    public let cameraMake: String?
+    public let cameraModel: String?
 
     public init(
         url: URL,
@@ -14,7 +17,10 @@ public struct ImageMetadata: Equatable, Sendable {
         pixelWidth: Int,
         pixelHeight: Int,
         fileSize: Int64?,
-        modifiedAt: Date?
+        modifiedAt: Date?,
+        capturedAt: Date? = nil,
+        cameraMake: String? = nil,
+        cameraModel: String? = nil
     ) {
         self.url = url
         self.format = format
@@ -22,5 +28,8 @@ public struct ImageMetadata: Equatable, Sendable {
         self.pixelHeight = pixelHeight
         self.fileSize = fileSize
         self.modifiedAt = modifiedAt
+        self.capturedAt = capturedAt
+        self.cameraMake = cameraMake
+        self.cameraModel = cameraModel
     }
 }

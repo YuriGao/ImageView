@@ -14,6 +14,12 @@ struct InspectorView: View {
                 row("Pixels", "\(metadata.pixelWidth) x \(metadata.pixelHeight)")
                 row("Size", Self.fileSizeText(metadata.fileSize))
                 row("Modified", Self.dateText(metadata.modifiedAt))
+                if let capturedAt = metadata.capturedAt {
+                    row("Captured", Self.dateText(capturedAt))
+                }
+                if let camera = Self.cameraText(metadata) {
+                    row("Camera", camera)
+                }
                 row("File", metadata.url.lastPathComponent)
             } else {
                 Text("No image")
@@ -48,6 +54,18 @@ struct InspectorView: View {
         guard let date else { return "Unknown" }
         return date.formatted(date: .abbreviated, time: .shortened)
     }
+
+    static func cameraText(_ metadata: ImageMetadata) -> String? {
+        [metadata.cameraMake, metadata.cameraModel]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+            .nilIfEmpty
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }
 
 private extension SupportedImageFormat {
