@@ -682,7 +682,7 @@ final class MainWindowController: NSWindowController {
     }
 
     static func canvasBackgroundColor(isFullScreen: Bool, usesBlackFullscreenBackground: Bool) -> NSColor {
-        isFullScreen && !usesBlackFullscreenBackground ? .windowBackgroundColor : .black
+        isFullScreen && usesBlackFullscreenBackground ? .black : .windowBackgroundColor
     }
 
     private func navigateToNextImage() {
