@@ -103,6 +103,9 @@ final class MainWindowController: NSWindowController {
         rootView.onMouseMoved = { [weak self] in
             self?.refreshHUDForActivity()
         }
+        rootView.onFileDropped = { [weak self] url in
+            self?.open(url: url)
+        }
         canvas.autoresizingMask = [.width, .height]
         canvas.translatesAutoresizingMaskIntoConstraints = false
         window?.contentView = rootView
