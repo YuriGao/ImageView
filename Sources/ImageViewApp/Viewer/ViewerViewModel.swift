@@ -42,6 +42,7 @@ final class ViewerViewModel: ObservableObject {
     private let scanContainingDirectory: @Sendable (URL) async throws -> [ImageItem]
     private let decodeImageAtURL: @Sendable (URL, SupportedImageFormat) throws -> DecodedImage
     private let loadImageAtURL: @Sendable (URL, SupportedImageFormat) async throws -> DecodedImage
+    private let loadPreviewAtURL: @Sendable (URL, SupportedImageFormat) async throws -> DecodedImage
     private let moveToTrashAtURL: @Sendable (URL) throws -> Void
     private let currentFileVersionAtURL: @Sendable (URL) -> CurrentFileVersion?
     private let metadataService = ImageMetadataService()
@@ -66,12 +67,22 @@ final class ViewerViewModel: ObservableObject {
             try FileActions().moveToTrash($0)
         },
         currentFileVersionAtURL: @escaping @Sendable (URL) -> CurrentFileVersion? = CurrentFileVersion.read(at:),
-        loadImageAtURL: (@Sendable (URL, SupportedImageFormat) async throws -> DecodedImage)? = nil
+        loadImageAtURL: (@Sendable (URL, SupportedImageFormat) async throws -> DecodedImage)? = nil,
+        loadPreviewAtURL: (@Sendable (URL, SupportedImageFormat) async throws -> DecodedImage)? = nil
     ) {
         self.scanContainingDirectory = scanContainingDirectory
         self.decodeImageAtURL = decodeImageAtURL
         self.moveToTrashAtURL = moveToTrashAtURL
         self.currentFileVersionAtURL = currentFileVersionAtURL
+        if let loadPreviewAtURL {
+            self.loadPreviewAtURL = loadPreviewAtURL
+        } else {
+            self.loadPreviewAtURL = { url, format in
+                try await Task.detached(priority: .userInitiated) {
+                    try ImageDecodeService().decode(url: url, format: format, maxPixelSize: 2_048)
+                }.value
+            }
+        }
         if let loadImageAtURL {
             self.loadImageAtURL = loadImageAtURL
         } else {
@@ -81,7 +92,9 @@ final class ViewerViewModel: ObservableObject {
                     return cached
                 }
 
-                let decoded = try decodeImageAtURL(url, format)
+                let decoded = try await Task.detached(priority: .userInitiated) {
+                    try decodeImageAtURL(url, format)
+                }.value
                 await cache.insert(decoded, for: url, cost: decoded.cgImage.bytesPerRow * decoded.cgImage.height)
                 return decoded
             }
@@ -113,7 +126,13 @@ final class ViewerViewModel: ObservableObject {
         let fallbackItem = ImageItem(url: url, format: format)
 
         do {
-            let image = try await display(url: url, format: format)
+            async let preview = loadPreviewAtURL(url, format)
+            async let full = display(url: url, format: format)
+            if let previewImage = try? await preview,
+               generation == openGeneration {
+                currentImage = previewImage
+            }
+            let image = try await full
             guard generation == openGeneration else { return }
             currentImage = image
             persistedCurrentImage = image

@@ -151,6 +151,63 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.errorMessage)
     }
 
+    func testOpenDisplaysPreviewBeforeFullImageAndPublishesFullMetadata() async throws {
+        let url = URL(fileURLWithPath: "/tmp/large.png")
+        let preview = try makeDecodedImage(width: 2_048, height: 1_365)
+        let full = try makeDecodedImage(width: 6_000, height: 4_000)
+        let scanner = ControlledScanner { _ in [ImageItem(url: url, format: .png)] }
+        let previewLoader = ControlledImageLoader(images: [url: preview])
+        let fullLoader = ControlledImageLoader(images: [url: full])
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: scanner.scan(containing:),
+            loadImageAtURL: fullLoader.load(url:format:),
+            loadPreviewAtURL: previewLoader.load(url:format:)
+        )
+
+        await fullLoader.pauseNextLoad(for: url)
+        let opening = Task { await viewModel.open(url: url) }
+        await fullLoader.waitUntilPaused(url: url)
+        await waitUntil { viewModel.currentImage?.pixelSize == CGSize(width: 2_048, height: 1_365) }
+
+        XCTAssertNil(viewModel.currentMetadata)
+
+        try await fullLoader.resume(url: url)
+        _ = await opening.value
+
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 6_000, height: 4_000))
+        XCTAssertEqual(viewModel.currentMetadata?.pixelWidth, 6_000)
+    }
+
+    func testNewOpenIgnoresLatePreviewFromEarlierRequest() async throws {
+        let firstURL = URL(fileURLWithPath: "/tmp/first.png")
+        let secondURL = URL(fileURLWithPath: "/tmp/second.png")
+        let firstPreview = try makeDecodedImage(width: 800, height: 600)
+        let firstFull = try makeDecodedImage(width: 4_000, height: 3_000)
+        let secondPreview = try makeDecodedImage(width: 1_000, height: 750)
+        let secondFull = try makeDecodedImage(width: 5_000, height: 3_750)
+        let scanner = ControlledScanner { url in
+            [ImageItem(url: url, format: .png)]
+        }
+        let previewLoader = ControlledImageLoader(images: [firstURL: firstPreview, secondURL: secondPreview])
+        let fullLoader = ControlledImageLoader(images: [firstURL: firstFull, secondURL: secondFull])
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: scanner.scan(containing:),
+            loadImageAtURL: fullLoader.load(url:format:),
+            loadPreviewAtURL: previewLoader.load(url:format:)
+        )
+
+        await previewLoader.pauseNextLoad(for: firstURL)
+        let firstOpen = Task { await viewModel.open(url: firstURL) }
+        await previewLoader.waitUntilPaused(url: firstURL)
+
+        await viewModel.open(url: secondURL)
+        try await previewLoader.resume(url: firstURL)
+        _ = await firstOpen.value
+
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 5_000, height: 3_750))
+        XCTAssertEqual(viewModel.navigationState?.currentItem?.url, secondURL)
+    }
+
     func testDisplayTitleTracksCurrentItemAcrossNavigationAndErrors() async throws {
         let firstURL = URL(fileURLWithPath: "/tmp/first.png")
         let secondURL = URL(fileURLWithPath: "/tmp/second.png")
