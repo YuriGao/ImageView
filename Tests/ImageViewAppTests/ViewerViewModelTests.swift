@@ -25,6 +25,9 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.navigationState?.items.map(\.url.lastPathComponent), ["a.png", "b.png"])
         XCTAssertEqual(viewModel.navigationState?.currentItem?.url.lastPathComponent, "b.png")
         XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 6, height: 4))
+        XCTAssertEqual(viewModel.currentMetadata?.format, .png)
+        XCTAssertEqual(viewModel.currentMetadata?.pixelWidth, 6)
+        XCTAssertEqual(viewModel.currentMetadata?.pixelHeight, 4)
         XCTAssertNil(viewModel.errorMessage)
     }
 
@@ -42,6 +45,7 @@ final class ViewerViewModelTests: XCTestCase {
 
         XCTAssertEqual(viewModel.errorMessage, "图片损坏或无法解码：broken.png")
         XCTAssertNil(viewModel.currentImage)
+        XCTAssertNil(viewModel.currentMetadata)
     }
 
     func testOpenSetsErrorMessageWhenImageFormatIsUnsupported() async throws {
@@ -58,6 +62,7 @@ final class ViewerViewModelTests: XCTestCase {
 
         XCTAssertEqual(viewModel.errorMessage, "不支持的图片格式：txt")
         XCTAssertNil(viewModel.currentImage)
+        XCTAssertNil(viewModel.currentMetadata)
         XCTAssertNil(viewModel.navigationState)
     }
 
@@ -88,6 +93,7 @@ final class ViewerViewModelTests: XCTestCase {
 
         XCTAssertEqual(viewModel.errorMessage, "图片损坏或无法解码：broken.png")
         XCTAssertNil(viewModel.currentImage)
+        XCTAssertNil(viewModel.currentMetadata)
         XCTAssertNil(viewModel.navigationState)
     }
 
@@ -145,6 +151,63 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.errorMessage)
     }
 
+    func testOpenDisplaysPreviewBeforeFullImageAndPublishesFullMetadata() async throws {
+        let url = URL(fileURLWithPath: "/tmp/large.png")
+        let preview = try makeDecodedImage(width: 2_048, height: 1_365)
+        let full = try makeDecodedImage(width: 6_000, height: 4_000)
+        let scanner = ControlledScanner { _ in [ImageItem(url: url, format: .png)] }
+        let previewLoader = ControlledImageLoader(images: [url: preview])
+        let fullLoader = ControlledImageLoader(images: [url: full])
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: scanner.scan(containing:),
+            loadImageAtURL: fullLoader.load(url:format:),
+            loadPreviewAtURL: previewLoader.load(url:format:)
+        )
+
+        await fullLoader.pauseNextLoad(for: url)
+        let opening = Task { await viewModel.open(url: url) }
+        await fullLoader.waitUntilPaused(url: url)
+        await waitUntil { viewModel.currentImage?.pixelSize == CGSize(width: 2_048, height: 1_365) }
+
+        XCTAssertNil(viewModel.currentMetadata)
+
+        try await fullLoader.resume(url: url)
+        _ = await opening.value
+
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 6_000, height: 4_000))
+        XCTAssertEqual(viewModel.currentMetadata?.pixelWidth, 6_000)
+    }
+
+    func testNewOpenIgnoresLatePreviewFromEarlierRequest() async throws {
+        let firstURL = URL(fileURLWithPath: "/tmp/first.png")
+        let secondURL = URL(fileURLWithPath: "/tmp/second.png")
+        let firstPreview = try makeDecodedImage(width: 800, height: 600)
+        let firstFull = try makeDecodedImage(width: 4_000, height: 3_000)
+        let secondPreview = try makeDecodedImage(width: 1_000, height: 750)
+        let secondFull = try makeDecodedImage(width: 5_000, height: 3_750)
+        let scanner = ControlledScanner { url in
+            [ImageItem(url: url, format: .png)]
+        }
+        let previewLoader = ControlledImageLoader(images: [firstURL: firstPreview, secondURL: secondPreview])
+        let fullLoader = ControlledImageLoader(images: [firstURL: firstFull, secondURL: secondFull])
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: scanner.scan(containing:),
+            loadImageAtURL: fullLoader.load(url:format:),
+            loadPreviewAtURL: previewLoader.load(url:format:)
+        )
+
+        await previewLoader.pauseNextLoad(for: firstURL)
+        let firstOpen = Task { await viewModel.open(url: firstURL) }
+        await previewLoader.waitUntilPaused(url: firstURL)
+
+        await viewModel.open(url: secondURL)
+        try await previewLoader.resume(url: firstURL)
+        _ = await firstOpen.value
+
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 5_000, height: 3_750))
+        XCTAssertEqual(viewModel.navigationState?.currentItem?.url, secondURL)
+    }
+
     func testDisplayTitleTracksCurrentItemAcrossNavigationAndErrors() async throws {
         let firstURL = URL(fileURLWithPath: "/tmp/first.png")
         let secondURL = URL(fileURLWithPath: "/tmp/second.png")
@@ -182,6 +245,36 @@ final class ViewerViewModelTests: XCTestCase {
 
         await viewModel.open(url: brokenURL)
         XCTAssertEqual(viewModel.displayTitle, "ImageView")
+    }
+
+    func testDisplayTitleMarksUnsavedEdits() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let imageURL = root.appendingPathComponent("editable.png")
+        try makePNGData(width: 5, height: 3).write(to: imageURL)
+        let viewModel = ViewerViewModel()
+
+        await viewModel.open(url: imageURL)
+        XCTAssertEqual(viewModel.displayTitle, "editable.png")
+
+        viewModel.applyEdit(.mirrorHorizontal)
+        XCTAssertEqual(viewModel.displayTitle, "editable.png - Edited")
+
+        XCTAssertTrue(viewModel.discardCurrentEdits())
+        XCTAssertEqual(viewModel.displayTitle, "editable.png")
+    }
+
+    func testDisplayTitleFormattingAddsEditedMarkerOnlyWhenNeeded() {
+        XCTAssertEqual(
+            ViewerViewModel.displayTitle(filename: "image.png", hasUnsavedEdits: false),
+            "image.png"
+        )
+        XCTAssertEqual(
+            ViewerViewModel.displayTitle(filename: "image.png", hasUnsavedEdits: true),
+            "image.png - Edited"
+        )
     }
 
     func testHUDMetadataTracksNavigationAndSelection() async throws {
@@ -235,6 +328,7 @@ final class ViewerViewModelTests: XCTestCase {
         viewModel.moveCurrentToTrash()
 
         XCTAssertNil(viewModel.currentImage)
+        XCTAssertNil(viewModel.currentMetadata)
         XCTAssertNil(viewModel.navigationState)
         XCTAssertEqual(viewModel.displayTitle, "ImageView")
         XCTAssertEqual(viewModel.errorMessage, "没有可显示的图片")
@@ -267,6 +361,108 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertFalse(ViewerViewModel.canPreloadInBackground(.avif))
     }
 
+    func testRefreshRemovesExternallyDeletedCurrentItemAndDisplaysNextImage() async throws {
+        let deletedURL = URL(fileURLWithPath: "/tmp/a.png")
+        let nextURL = URL(fileURLWithPath: "/tmp/b.png")
+        let firstImage = try makeDecodedImage(width: 4, height: 3)
+        let nextImage = try makeDecodedImage(width: 7, height: 5)
+        let versions = FileVersionSequence(values: [
+            deletedURL: [FileVersionSequence.initial, nil],
+            nextURL: [FileVersionSequence.initial]
+        ])
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: { _ in [
+                ImageItem(url: deletedURL, format: .png),
+                ImageItem(url: nextURL, format: .png)
+            ] },
+            decodeImageAtURL: { url, _ in url == deletedURL ? firstImage : nextImage },
+            currentFileVersionAtURL: versions.value(for:)
+        )
+
+        await viewModel.open(url: deletedURL)
+        await viewModel.refreshCurrentFileIfNeeded()
+
+        XCTAssertEqual(viewModel.navigationState?.currentItem?.url, nextURL)
+        await waitUntil { viewModel.currentImage?.pixelSize == CGSize(width: 7, height: 5) }
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 7, height: 5))
+        XCTAssertEqual(viewModel.errorMessage, "文件已在外部移除：a.png")
+    }
+
+    func testRefreshReloadsCurrentImageWhenExternalVersionChanges() async throws {
+        let url = URL(fileURLWithPath: "/tmp/replaced.png")
+        let original = try makeDecodedImage(width: 4, height: 3)
+        let replacement = try makeDecodedImage(width: 9, height: 6)
+        let versions = FileVersionSequence(values: [url: [FileVersionSequence.initial, FileVersionSequence.replacement]])
+        let decoder = DecodeSequence(images: [original, replacement])
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: { _ in [ImageItem(url: url, format: .svg)] },
+            decodeImageAtURL: decoder.decode(url:format:),
+            currentFileVersionAtURL: versions.value(for:)
+        )
+
+        await viewModel.open(url: url)
+        await viewModel.refreshCurrentFileIfNeeded()
+
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 9, height: 6))
+        XCTAssertEqual(viewModel.currentMetadata?.pixelWidth, 9)
+        XCTAssertNil(viewModel.errorMessage)
+    }
+
+    func testRefreshShowsErrorAndKeepsNavigationWhenExternalReplacementCannotDecode() async throws {
+        let firstURL = URL(fileURLWithPath: "/tmp/a.png")
+        let secondURL = URL(fileURLWithPath: "/tmp/b.png")
+        let image = try makeDecodedImage(width: 4, height: 3)
+        let versions = FileVersionSequence(values: [
+            firstURL: [FileVersionSequence.initial, FileVersionSequence.replacement],
+            secondURL: [FileVersionSequence.initial]
+        ])
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: { _ in [
+                ImageItem(url: firstURL, format: .png),
+                ImageItem(url: secondURL, format: .png)
+            ] },
+            decodeImageAtURL: { url, _ in
+                if url == firstURL && versions.hasReadReplacement(for: url) {
+                    throw ImageDecodeError.cannotCreateSource
+                }
+                return image
+            },
+            currentFileVersionAtURL: versions.value(for:)
+        )
+
+        await viewModel.open(url: firstURL)
+        await viewModel.refreshCurrentFileIfNeeded()
+
+        XCTAssertEqual(viewModel.navigationState?.currentItem?.url, firstURL)
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 4, height: 3))
+        XCTAssertEqual(viewModel.errorMessage, "图片已在外部修改且无法解码：a.png")
+
+        viewModel.showNext()
+        await waitUntil { viewModel.navigationState?.currentItem?.url == secondURL }
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 4, height: 3))
+    }
+
+    func testRefreshDoesNotReplaceUnsavedEditsAfterExternalChange() async throws {
+        let url = URL(fileURLWithPath: "/tmp/edited.png")
+        let original = try makeDecodedImage(width: 4, height: 3)
+        let replacement = try makeDecodedImage(width: 9, height: 6)
+        let versions = FileVersionSequence(values: [url: [FileVersionSequence.initial, FileVersionSequence.replacement]])
+        let decoder = DecodeSequence(images: [original, replacement])
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: { _ in [ImageItem(url: url, format: .svg)] },
+            decodeImageAtURL: decoder.decode(url:format:),
+            currentFileVersionAtURL: versions.value(for:)
+        )
+
+        await viewModel.open(url: url)
+        viewModel.applyEdit(.rotateClockwise)
+        await viewModel.refreshCurrentFileIfNeeded()
+
+        XCTAssertTrue(viewModel.hasUnsavedEdits)
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 3, height: 4))
+        XCTAssertEqual(viewModel.errorMessage, "图片已在外部修改：edited.png")
+    }
+
     func testApplyEditMarksUnsavedAndUpdatesImageSize() async throws {
         let imageURL = try makeTemporaryPNG(width: 6, height: 4, name: "edit-source")
         defer { try? FileManager.default.removeItem(at: imageURL.deletingLastPathComponent()) }
@@ -279,6 +475,22 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.hasUnsavedEdits)
         XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 4, height: 6))
         XCTAssertNil(viewModel.errorMessage)
+    }
+
+    func testCropMarksEditsAndDiscardRestoresOriginalSize() async throws {
+        let imageURL = try makeTemporaryPNG(width: 5, height: 3, name: "crop-source")
+        defer { try? FileManager.default.removeItem(at: imageURL.deletingLastPathComponent()) }
+
+        let viewModel = ViewerViewModel()
+        await viewModel.open(url: imageURL)
+
+        viewModel.applyEdit(.crop(CGRect(x: 1, y: 1, width: 3, height: 2)))
+
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 3, height: 2))
+        XCTAssertTrue(viewModel.hasUnsavedEdits)
+        XCTAssertTrue(viewModel.discardCurrentEdits())
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 5, height: 3))
+        XCTAssertFalse(viewModel.hasUnsavedEdits)
     }
 
     func testDiscardCurrentEditsReloadsCachedOriginalAndClearsUnsavedState() async throws {
@@ -314,6 +526,22 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.hasUnsavedEdits)
         XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 3, height: 8))
         XCTAssertNil(viewModel.errorMessage)
+    }
+
+    func testSaveCurrentEditsToNewURLUpdatesCurrentItem() async throws {
+        let imageURL = try makeTemporaryPNG(width: 8, height: 3, name: "save-as-source")
+        let targetURL = imageURL.deletingLastPathComponent().appendingPathComponent("save-as-target.png")
+        defer { try? FileManager.default.removeItem(at: imageURL.deletingLastPathComponent()) }
+
+        let viewModel = ViewerViewModel()
+        await viewModel.open(url: imageURL)
+        viewModel.applyEdit(.rotateClockwise)
+
+        XCTAssertTrue(viewModel.saveCurrentEdits(to: targetURL, format: .png))
+        XCTAssertEqual(viewModel.navigationState?.currentItem?.url, targetURL)
+        XCTAssertFalse(viewModel.hasUnsavedEdits)
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 3, height: 8))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: targetURL.path))
     }
 
     func testSaveCurrentEditsShowsErrorForUnsupportedFormats() async throws {
@@ -509,6 +737,42 @@ private struct StubDecoder {
 
     func decode(url: URL, format: SupportedImageFormat) throws -> DecodedImage {
         try handler(url, format)
+    }
+}
+
+private final class FileVersionSequence: @unchecked Sendable {
+    static let initial = CurrentFileVersion(modificationDate: Date(timeIntervalSince1970: 1), fileSize: 1)
+    static let replacement = CurrentFileVersion(modificationDate: Date(timeIntervalSince1970: 2), fileSize: 2)
+
+    private var values: [URL: [CurrentFileVersion?]]
+    private var readCounts: [URL: Int] = [:]
+
+    init(values: [URL: [CurrentFileVersion?]]) {
+        self.values = values
+    }
+
+    func value(for url: URL) -> CurrentFileVersion? {
+        let index = readCounts[url, default: 0]
+        readCounts[url] = index + 1
+        let sequence = values[url] ?? []
+        return sequence.indices.contains(index) ? sequence[index] : sequence.last ?? nil
+    }
+
+    func hasReadReplacement(for url: URL) -> Bool {
+        readCounts[url, default: 0] >= 2
+    }
+}
+
+private final class DecodeSequence: @unchecked Sendable {
+    private var images: [DecodedImage]
+
+    init(images: [DecodedImage]) {
+        self.images = images
+    }
+
+    func decode(url _: URL, format _: SupportedImageFormat) throws -> DecodedImage {
+        guard !images.isEmpty else { throw ImageDecodeError.cannotCreateSource }
+        return images.removeFirst()
     }
 }
 

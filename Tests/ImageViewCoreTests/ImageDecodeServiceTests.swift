@@ -36,7 +36,73 @@ final class ImageDecodeServiceTests: XCTestCase {
         XCTAssertEqual(pixelColor(in: decoded.cgImage, x: 8, y: 8), .red)
     }
 
+    func testRequiredRasterFormatsHaveSystemDecoderRegistration() throws {
+        let sourceTypes = Set(CGImageSourceCopyTypeIdentifiers() as? [String] ?? [])
+        let formats: [SupportedImageFormat] = [.jpeg, .png, .gif, .tiff, .bmp, .heic, .heif, .webp, .avif]
+
+        for format in formats {
+            let identifier = try XCTUnwrap(format.imageIOTypeIdentifier, "Missing ImageIO type for \(format)")
+            XCTAssertTrue(sourceTypes.contains(identifier), "ImageIO has no decoder registered for \(identifier)")
+        }
+    }
+
+    func testDecodeGeneratedSystemWritableRequiredFormats() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let formats: [(SupportedImageFormat, String)] = [
+            (.jpeg, "jpg"), (.png, "png"), (.gif, "gif"), (.tiff, "tiff"), (.bmp, "bmp")
+        ]
+        let image = try makeImage(width: 4, height: 3)
+        let writableTypes = Set(CGImageDestinationCopyTypeIdentifiers() as? [String] ?? [])
+
+        for (format, fileExtension) in formats {
+            let type = try XCTUnwrap(format.contentType?.identifier)
+            XCTAssertTrue(writableTypes.contains(type), "ImageIO cannot generate \(type) for this regression test")
+            let url = root.appendingPathComponent("sample.\(fileExtension)")
+            do {
+                try write(image, to: url, type: type)
+            } catch {
+                XCTFail("ImageIO could not generate \(type): \(error)")
+                continue
+            }
+
+            let decoded = try ImageDecodeService().decode(url: url, format: format)
+            XCTAssertEqual(decoded.pixelSize, CGSize(width: 4, height: 3), "Failed for \(format)")
+        }
+    }
+
+    func testDecodeAnimatedGifReturnsFramesAndDelays() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("animated.gif")
+        try writeAnimatedGIF(to: url)
+
+        let decoded = try ImageDecodeService().decode(url: url, format: .gif)
+
+        XCTAssertTrue(decoded.isAnimated)
+        XCTAssertEqual(decoded.animationFrames.count, 2)
+        XCTAssertEqual(decoded.animationFrames.map(\.duration), [0.1, 0.2])
+    }
+
     private func makePNGData(width: Int, height: Int) throws -> Data {
+        let image = try makeImage(width: width, height: height)
+        guard let destinationData = CFDataCreateMutable(nil, 0),
+              let destination = CGImageDestinationCreateWithData(destinationData, UTType.png.identifier as CFString, 1, nil) else {
+            throw TestError.cannotEncodeImage
+        }
+
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else {
+            throw TestError.cannotEncodeImage
+        }
+
+        return destinationData as Data
+    }
+
+    private func makeImage(width: Int, height: Int) throws -> CGImage {
         let colorSpace = CGColorSpaceCreateDeviceRGB()
         guard let context = CGContext(
             data: nil,
@@ -53,18 +119,35 @@ final class ImageDecodeServiceTests: XCTestCase {
         context.setFillColor(red: 0.25, green: 0.5, blue: 0.75, alpha: 1)
         context.fill(CGRect(x: 0, y: 0, width: width, height: height))
 
-        guard let image = context.makeImage(),
-              let destinationData = CFDataCreateMutable(nil, 0),
-              let destination = CGImageDestinationCreateWithData(destinationData, UTType.png.identifier as CFString, 1, nil) else {
+        guard let image = context.makeImage() else {
+            throw TestError.cannotCreateContext
+        }
+        return image
+    }
+
+    private func write(_ image: CGImage, to url: URL, type: String) throws {
+        guard let destination = CGImageDestinationCreateWithURL(url as CFURL, type as CFString, 1, nil) else {
             throw TestError.cannotEncodeImage
         }
-
         CGImageDestinationAddImage(destination, image, nil)
         guard CGImageDestinationFinalize(destination) else {
             throw TestError.cannotEncodeImage
         }
+    }
 
-        return destinationData as Data
+    private func writeAnimatedGIF(to url: URL) throws {
+        let first = try makeImage(width: 4, height: 3)
+        let second = try makeImage(width: 4, height: 3)
+        guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.gif.identifier as CFString, 2, nil) else {
+            throw TestError.cannotEncodeImage
+        }
+        let firstProperties = [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: 0.1]] as CFDictionary
+        let secondProperties = [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: 0.2]] as CFDictionary
+        CGImageDestinationAddImage(destination, first, firstProperties)
+        CGImageDestinationAddImage(destination, second, secondProperties)
+        guard CGImageDestinationFinalize(destination) else {
+            throw TestError.cannotEncodeImage
+        }
     }
 
     private enum TestError: Error {

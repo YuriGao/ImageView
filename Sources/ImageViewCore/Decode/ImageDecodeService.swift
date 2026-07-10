@@ -3,15 +3,27 @@ import CoreGraphics
 import Foundation
 import ImageIO
 
+public struct AnimatedFrame: @unchecked Sendable {
+    public let cgImage: CGImage
+    public let duration: TimeInterval
+
+    public init(cgImage: CGImage, duration: TimeInterval) {
+        self.cgImage = cgImage
+        self.duration = duration
+    }
+}
+
 public struct DecodedImage: @unchecked Sendable {
     public let cgImage: CGImage
     public let pixelSize: CGSize
     public let isAnimated: Bool
+    public let animationFrames: [AnimatedFrame]
 
-    public init(cgImage: CGImage, pixelSize: CGSize, isAnimated: Bool) {
+    public init(cgImage: CGImage, pixelSize: CGSize, isAnimated: Bool, animationFrames: [AnimatedFrame] = []) {
         self.cgImage = cgImage
         self.pixelSize = pixelSize
         self.isAnimated = isAnimated
+        self.animationFrames = animationFrames
     }
 }
 
@@ -59,11 +71,32 @@ public final class ImageDecodeService: @unchecked Sendable {
             return nil
         }
 
+        let frameCount = CGImageSourceGetCount(source)
+        let animationFrames = maxPixelSize == nil && frameCount > 1 ? decodeAnimationFrames(source: source, options: options) : []
         return DecodedImage(
             cgImage: image,
             pixelSize: CGSize(width: image.width, height: image.height),
-            isAnimated: CGImageSourceGetCount(source) > 1
+            isAnimated: frameCount > 1,
+            animationFrames: animationFrames
         )
+    }
+
+    private func decodeAnimationFrames(source: CGImageSource, options: [CFString: Any]) -> [AnimatedFrame] {
+        (0..<CGImageSourceGetCount(source)).compactMap { index in
+            guard let image = CGImageSourceCreateImageAtIndex(source, index, options as CFDictionary) else { return nil }
+            return AnimatedFrame(cgImage: image, duration: animationDuration(source: source, index: index))
+        }
+    }
+
+    private func animationDuration(source: CGImageSource, index: Int) -> TimeInterval {
+        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any],
+              let gif = properties[kCGImagePropertyGIFDictionary] as? [CFString: Any] else {
+            return 0.1
+        }
+        let delay = (gif[kCGImagePropertyGIFUnclampedDelayTime] as? NSNumber)?.doubleValue
+            ?? (gif[kCGImagePropertyGIFDelayTime] as? NSNumber)?.doubleValue
+            ?? 0.1
+        return max(0.02, delay)
     }
 
     private func decodeWithFallback(url: URL, format: SupportedImageFormat, maxPixelSize: CGFloat?) throws -> DecodedImage {

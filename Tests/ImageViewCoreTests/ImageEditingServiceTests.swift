@@ -29,6 +29,23 @@ final class ImageEditingServiceTests: XCTestCase {
         XCTAssertEqual(try pixelRows(in: result), [[.green, .blue]])
     }
 
+    func testCropProducesRequestedDimensions() throws {
+        let image = try makeImage(rows: [
+            [.red, .green, .blue, .yellow, .magenta],
+            [.cyan, .red, .green, .blue, .yellow],
+            [.magenta, .cyan, .red, .green, .blue],
+            [.yellow, .magenta, .cyan, .red, .green]
+        ])
+
+        let result = try ImageEditingService().apply(
+            [.crop(CGRect(x: 1, y: 1, width: 3, height: 2))],
+            to: image
+        )
+
+        XCTAssertEqual(result.width, 3)
+        XCTAssertEqual(result.height, 2)
+    }
+
     func testRotateClockwiseMovesPixelsIntoClockwiseOrientation() throws {
         let image = try makeImage(rows: [
             [.red, .green],
@@ -54,6 +71,19 @@ final class ImageEditingServiceTests: XCTestCase {
                 format: .svg
             )
         )
+    }
+
+    func testWritableSaveFormatsIncludePortableFormatsAndExcludeUnsupportedFormats() {
+        let formats = ImageEditingService.writableSaveFormats()
+
+        XCTAssertTrue(formats.contains(.png))
+        XCTAssertTrue(formats.contains(.jpeg))
+        XCTAssertTrue(formats.contains(.tiff))
+        XCTAssertTrue(formats.contains(.bmp))
+        XCTAssertFalse(formats.contains(.gif))
+        XCTAssertFalse(formats.contains(.webp))
+        XCTAssertFalse(formats.contains(.avif))
+        XCTAssertFalse(formats.contains(.svg))
     }
 
     func testHEIFSaveThrowsWhenNoHEIFDestinationWriterExists() throws {

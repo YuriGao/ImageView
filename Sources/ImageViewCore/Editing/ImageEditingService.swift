@@ -14,6 +14,14 @@ public enum ImageEditingError: Error, Equatable {
 public final class ImageEditingService {
     public init() {}
 
+    public static func writableSaveFormats() -> [SupportedImageFormat] {
+        [.png, .jpeg, .tiff, .bmp, .heic, .heif].filter { format in
+            guard let uti = uti(for: format) else { return false }
+            let destinationTypes = CGImageDestinationCopyTypeIdentifiers() as? [String] ?? []
+            return destinationTypes.contains(uti)
+        }
+    }
+
     public func apply(_ operations: [EditOperation], to image: CGImage) throws -> CGImage {
         try operations.reduce(image) { current, operation in
             switch operation {
@@ -35,7 +43,7 @@ public final class ImageEditingService {
     }
 
     public func save(_ image: CGImage, to url: URL, format: SupportedImageFormat) throws {
-        guard format.canAttemptSafeWrite, let uti = uti(for: format) else {
+        guard format.canAttemptSafeWrite, let uti = Self.uti(for: format) else {
             throw ImageEditingError.unsupportedSaveFormat
         }
 
@@ -105,7 +113,7 @@ public final class ImageEditingService {
         return output
     }
 
-    private func uti(for format: SupportedImageFormat) -> String? {
+    private static func uti(for format: SupportedImageFormat) -> String? {
         switch format {
         case .jpeg:
             return UTType.jpeg.identifier
