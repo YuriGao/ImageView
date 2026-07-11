@@ -10,6 +10,11 @@ final class AppDelegateTests: XCTestCase {
         var recentURLs: [URL] = []
         var terminationCount = 0
         var showCounts: [ObjectIdentifier: Int] = [:]
+        private let chosenURLs: [URL]?
+
+        init(chosenURLs: [URL]? = nil) {
+            self.chosenURLs = chosenURLs
+        }
 
         func makeDelegate() -> AppDelegate {
             _ = NSApplication.shared
@@ -24,6 +29,7 @@ final class AppDelegateTests: XCTestCase {
                     self?.openRequests.append(url)
                     controller.open(url: url)
                 },
+                chooseImageURLs: { [weak self] in self?.chosenURLs },
                 terminateApplication: { [weak self] in self?.terminationCount += 1 },
                 noteRecentDocument: { [weak self] url in
                     guard let self else { return }
@@ -55,6 +61,29 @@ final class AppDelegateTests: XCTestCase {
         XCTAssertEqual(delegate.imageWindowCount, 1)
         XCTAssertFalse(delegate.imageWindowControllersForTesting[0].hasAssignedOpenRequest)
         XCTAssertEqual(harness.showCount(for: delegate.imageWindowControllersForTesting[0]), 1)
+    }
+
+    func testEmptyStateOpenRequestUsesExistingMultiURLPipeline() {
+        let urls = [URL(fileURLWithPath: "/a.png"), URL(fileURLWithPath: "/b.png")]
+        let harness = WindowHarness(chosenURLs: urls)
+        let delegate = harness.makeDelegate()
+        delegate.finishLaunchingForTesting()
+
+        delegate.imageWindowControllersForTesting[0].onOpenRequested?()
+
+        XCTAssertEqual(harness.openRequests, urls)
+        XCTAssertEqual(delegate.imageWindowCount, 2)
+    }
+
+    func testCancelledEmptyStateOpenRequestDoesNothing() {
+        let harness = WindowHarness(chosenURLs: nil)
+        let delegate = harness.makeDelegate()
+        delegate.finishLaunchingForTesting()
+
+        delegate.imageWindowControllersForTesting[0].onOpenRequested?()
+
+        XCTAssertTrue(harness.openRequests.isEmpty)
+        XCTAssertEqual(delegate.imageWindowCount, 1)
     }
 
     func testFirstURLReusesEmptyWindowAndLaterURLsCreateWindows() {

@@ -286,6 +286,55 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertEqual(MainWindowController.canvasBackgroundColor(), .windowBackgroundColor)
     }
 
+    func testEmptyStateOnlyAppearsForARealNonErrorEmptyWindow() {
+        XCTAssertTrue(MainWindowController.shouldDisplayEmptyState(
+            hasCurrentImage: false,
+            loadPhase: .empty,
+            hasError: false
+        ))
+
+        for phase in [ImageLoadPhase.loading, .preview, .full, .failed] {
+            XCTAssertFalse(MainWindowController.shouldDisplayEmptyState(
+                hasCurrentImage: false,
+                loadPhase: phase,
+                hasError: false
+            ))
+        }
+
+        XCTAssertFalse(MainWindowController.shouldDisplayEmptyState(
+            hasCurrentImage: true,
+            loadPhase: .empty,
+            hasError: false
+        ))
+        XCTAssertFalse(MainWindowController.shouldDisplayEmptyState(
+            hasCurrentImage: false,
+            loadPhase: .empty,
+            hasError: true
+        ))
+    }
+
+    func testNewWindowShowsEmptyStateAndHidesImageOnlyStatus() {
+        let controller = MainWindowController(settings: AppSettings(defaults: makeIsolatedDefaults()))
+
+        XCTAssertTrue(controller.isEmptyStateVisibleForTesting)
+        XCTAssertTrue(controller.isImageStatusContentHiddenForTesting)
+    }
+
+    func testImageStatusContentOnlyAppearsWhenAnImageExists() {
+        XCTAssertTrue(MainWindowController.shouldHideImageStatusContent(hasCurrentImage: false))
+        XCTAssertFalse(MainWindowController.shouldHideImageStatusContent(hasCurrentImage: true))
+    }
+
+    func testEmptyStateOpenRequestIsForwarded() {
+        let controller = MainWindowController(settings: AppSettings(defaults: makeIsolatedDefaults()))
+        var requestCount = 0
+        controller.onOpenRequested = { requestCount += 1 }
+
+        controller.requestOpenFromEmptyStateForTesting()
+
+        XCTAssertEqual(requestCount, 1)
+    }
+
     func testFilmstripMenuValidationReflectsSettingState() {
         let defaults = UserDefaults(suiteName: "ImageViewAppTests.Filmstrip.\(UUID().uuidString)")!
         let settings = AppSettings(defaults: defaults)

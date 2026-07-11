@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let makeImageWindowController: (AppSettings) -> MainWindowController
     private let showImageWindow: (MainWindowController) -> Void
     private let openImageURL: (MainWindowController, URL) -> Void
+    private let chooseImageURLs: () -> [URL]?
     private let terminateApplication: () -> Void
     private let noteRecentDocument: (URL) -> Void
     private let recentDocumentURLs: () -> [URL]
@@ -28,6 +29,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         makeImageWindowController: @escaping (AppSettings) -> MainWindowController = { MainWindowController(settings: $0) },
         showImageWindow: @escaping (MainWindowController) -> Void = { $0.showWindow(nil) },
         openImageURL: @escaping (MainWindowController, URL) -> Void = { $0.open(url: $1) },
+        chooseImageURLs: @escaping () -> [URL]? = {
+            let panel = NSOpenPanel()
+            panel.allowsMultipleSelection = true
+            panel.canChooseDirectories = false
+            return panel.runModal() == .OK ? panel.urls : nil
+        },
         terminateApplication: @escaping () -> Void = { NSApp.terminate(nil) },
         noteRecentDocument: @escaping (URL) -> Void = { NSDocumentController.shared.noteNewRecentDocumentURL($0) },
         recentDocumentURLs: @escaping () -> [URL] = { NSDocumentController.shared.recentDocumentURLs }
@@ -37,6 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.makeImageWindowController = makeImageWindowController
         self.showImageWindow = showImageWindow
         self.openImageURL = openImageURL
+        self.chooseImageURLs = chooseImageURLs
         self.terminateApplication = terminateApplication
         self.noteRecentDocument = noteRecentDocument
         self.recentDocumentURLs = recentDocumentURLs
@@ -80,6 +88,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.onSuccessfulOpen = { [weak self] url in
             self?.noteRecentDocument(url)
             self?.rebuildOpenRecentMenu()
+        }
+        controller.onOpenRequested = { [weak self] in
+            self?.requestOpenImages()
         }
         controller.onWindowDidBecomeKey = { [weak self] controller in
             self?.imageWindowDidBecomeKey(controller)
@@ -292,11 +303,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openImage(_ sender: Any?) {
-        let panel = NSOpenPanel()
-        panel.allowsMultipleSelection = true
-        panel.canChooseDirectories = false
-        guard panel.runModal() == .OK else { return }
-        openURLs(panel.urls)
+        requestOpenImages()
+    }
+
+    private func requestOpenImages() {
+        guard let urls = chooseImageURLs(), !urls.isEmpty else { return }
+        openURLs(urls)
     }
 
     @objc private func showHelp(_ sender: Any?) {
