@@ -51,6 +51,24 @@ final class PreferencesWindowControllerTests: XCTestCase {
         }.count, 10)
     }
 
+    func testFormatRowsStayDirectlyBelowAssociationActions() throws {
+        let controller = makeController(preferredLanguages: ["en"])
+        let content = try XCTUnwrap(controller.window?.contentView)
+        let showAllButton = try XCTUnwrap(content.viewWithIdentifier("fileAssociation.showAll") as? NSButton)
+        showAllButton.performClick(nil)
+        content.layoutSubtreeIfNeeded()
+        let jpegRow = try XCTUnwrap(content.viewWithIdentifier("fileAssociation.jpeg"))
+        let svgRow = try XCTUnwrap(content.viewWithIdentifier("fileAssociation.svg"))
+        let apply = try XCTUnwrap(content.viewWithIdentifier("fileAssociation.apply"))
+        let showAllFrame = showAllButton.convert(showAllButton.bounds, to: content)
+        let jpegFrame = jpegRow.convert(jpegRow.bounds, to: content)
+        let svgFrame = svgRow.convert(svgRow.bounds, to: content)
+        let applyFrame = apply.convert(apply.bounds, to: content)
+
+        XCTAssertLessThanOrEqual(showAllFrame.minY - jpegFrame.maxY, 24)
+        XCTAssertLessThanOrEqual(svgFrame.minY - applyFrame.maxY, 24)
+    }
+
     func testSelectingFormatEnablesApplyAndRendersExtensionAndDefaultStatus() throws {
         let previewURL = URL(fileURLWithPath: "/System/Applications/Preview.app")
         let controller = makeController(

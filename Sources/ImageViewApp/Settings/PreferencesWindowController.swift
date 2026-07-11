@@ -104,18 +104,6 @@ final class PreferencesWindowController: NSWindowController {
         rowsStack.alignment = .leading
         rowsStack.spacing = 8
 
-        let scrollView = NSScrollView()
-        scrollView.hasVerticalScroller = true
-        scrollView.drawsBackground = false
-        scrollView.documentView = rowsStack
-        rowsStack.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            rowsStack.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
-            rowsStack.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
-            rowsStack.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
-            rowsStack.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor)
-        ])
-
         applyButton.identifier = NSUserInterfaceItemIdentifier("fileAssociation.apply")
         applyButton.bezelStyle = .rounded
         applyButton.keyEquivalent = "\r"
@@ -135,7 +123,7 @@ final class PreferencesWindowController: NSWindowController {
         let contentStack = NSStackView(views: [
             heading(text("settings.general.title")), generalStack, separator,
             heading(text("settings.fileAssociations.title"), identifier: "fileAssociation.title"),
-            actions, scrollView, footer
+            actions, rowsStack, footer
         ])
         contentStack.orientation = .vertical
         contentStack.alignment = .leading
@@ -151,8 +139,7 @@ final class PreferencesWindowController: NSWindowController {
             contentStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 20),
             contentStack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -20),
             separator.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-            scrollView.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-            scrollView.heightAnchor.constraint(greaterThanOrEqualToConstant: 230),
+            rowsStack.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             footer.widthAnchor.constraint(equalTo: contentStack.widthAnchor)
         ])
 
