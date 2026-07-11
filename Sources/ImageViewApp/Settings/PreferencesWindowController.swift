@@ -25,13 +25,15 @@ final class PreferencesWindowController: NSWindowController {
         settings: AppSettings = .shared,
         defaultApplicationService: DefaultApplicationServicing = WorkspaceDefaultApplicationService(),
         applicationURL: @escaping () -> URL? = { Bundle.main.bundleURL },
+        bundleResolver: ApplicationBundleResolving = BundleApplicationResolver(),
         preferredLanguages: [String] = Locale.preferredLanguages
     ) {
         self.settings = settings
         self.preferredLanguages = preferredLanguages
         self.fileAssociationModel = FileAssociationSettingsModel(
             service: defaultApplicationService,
-            applicationURL: applicationURL
+            applicationURL: applicationURL,
+            bundleResolver: bundleResolver
         )
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 560, height: 620),
@@ -242,10 +244,6 @@ final class PreferencesWindowController: NSWindowController {
         }
         selectCommonButton.isEnabled = mutationsEnabled
         showAllButton.isEnabled = mutationsEnabled
-        showsFilmstripButton.isEnabled = mutationsEnabled
-        showsInspectorButton.isEnabled = mutationsEnabled
-        confirmsDeleteButton.isEnabled = mutationsEnabled
-        navigationTransitionsButton.isEnabled = mutationsEnabled
         showAllButton.title = text(fileAssociationModel.showsAllFormats ? "settings.fileAssociations.showLess" : "settings.fileAssociations.showAll")
         applyButton.isEnabled = fileAssociationModel.canApply
         applyButton.title = text(fileAssociationModel.isApplying ? "settings.fileAssociations.applying" : "settings.fileAssociations.apply")

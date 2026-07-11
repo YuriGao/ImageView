@@ -43,13 +43,16 @@ final class FileAssociationSettingsModel: ObservableObject {
 
     private let service: DefaultApplicationServicing
     private let applicationURL: () -> URL?
+    private let bundleResolver: ApplicationBundleResolving
 
     init(
         service: DefaultApplicationServicing,
-        applicationURL: @escaping () -> URL?
+        applicationURL: @escaping () -> URL?,
+        bundleResolver: ApplicationBundleResolving = BundleApplicationResolver()
     ) {
         self.service = service
         self.applicationURL = applicationURL
+        self.bundleResolver = bundleResolver
     }
 
     func toggleSelection(for format: SupportedImageFormat) {
@@ -71,27 +74,37 @@ final class FileAssociationSettingsModel: ObservableObject {
     }
 
     func refreshStatuses() {
-        let imageViewURL = applicationURL()?.standardizedFileURL
+        let imageView = bundleResolver.validatedRunningApplication(at: applicationURL())
         for format in Self.allFormats {
             guard let contentType = format.contentType else {
                 rows[format] = FileAssociationRowState()
                 continue
             }
-            let defaultURL = service.defaultApplicationURL(for: contentType)?.standardizedFileURL
+            let defaultApplication = service.defaultApplicationURL(for: contentType).flatMap(bundleResolver.application(at:))
             rows[format] = FileAssociationRowState(
-                defaultApplicationName: defaultURL?.deletingPathExtension().lastPathComponent,
-                isImageViewDefault: imageViewURL.map { defaultURL == $0 } ?? false,
+                defaultApplicationName: defaultApplication?.displayName,
+                isImageViewDefault: Self.isSameApplication(imageView, defaultApplication),
                 error: rows[format]?.error
             )
         }
     }
 
+    private static func isSameApplication(_ lhs: ApplicationBundleInfo?, _ rhs: ApplicationBundleInfo?) -> Bool {
+        guard let lhs, let rhs else { return false }
+        if let lhsIdentifier = lhs.bundleIdentifier, let rhsIdentifier = rhs.bundleIdentifier {
+            return lhsIdentifier == rhsIdentifier
+        }
+        return lhs.url.resolvingSymlinksInPath().standardizedFileURL
+            == rhs.url.resolvingSymlinksInPath().standardizedFileURL
+    }
+
     func applySelectedFormats() async {
         guard canApply else { return }
-        guard let appURL = applicationURL(), appURL.pathExtension.lowercased() == "app" else {
+        guard let application = bundleResolver.validatedRunningApplication(at: applicationURL()) else {
             summary = .invalidApplicationBundle
             return
         }
+        let appURL = application.url
 
         isApplying = true
         summary = nil

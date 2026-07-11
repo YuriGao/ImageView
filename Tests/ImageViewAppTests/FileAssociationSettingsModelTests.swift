@@ -45,13 +45,37 @@ final class FileAssociationSettingsModelTests: XCTestCase {
             UTType.jpeg: imageViewURL,
             UTType.png: previewURL
         ])
-        let model = makeModel(service: service, appURL: imageViewURL)
+        let resolver = ApplicationBundleResolverFake(
+            validated: ApplicationBundleInfo(url: imageViewURL, bundleIdentifier: "com.example.ImageView", displayName: "ImageView"),
+            bundles: [previewURL: ApplicationBundleInfo(url: previewURL, bundleIdentifier: "com.apple.Preview", displayName: "Preview")]
+        )
+        let model = makeModel(service: service, appURL: imageViewURL, resolver: resolver)
 
         model.refreshStatuses()
 
         XCTAssertEqual(model.rows[.jpeg]?.defaultApplicationName, "ImageView")
         XCTAssertTrue(model.rows[.jpeg]?.isImageViewDefault == true)
         XCTAssertEqual(model.rows[.png]?.defaultApplicationName, "Preview")
+    }
+
+    func testRefreshUsesLocalizedBundleNameAndBundleIdentifierForIdentity() {
+        let imageView = ApplicationBundleInfo(
+            url: URL(fileURLWithPath: "/Applications/Renamed.app"),
+            bundleIdentifier: "com.example.ImageView",
+            displayName: "Localized ImageView"
+        )
+        let otherCopy = URL(fileURLWithPath: "/Volumes/Other/ImageView.app")
+        let service = DefaultApplicationServiceFake(defaults: [.jpeg: otherCopy])
+        let resolver = ApplicationBundleResolverFake(
+            validated: imageView,
+            bundles: [otherCopy: ApplicationBundleInfo(url: otherCopy, bundleIdentifier: "com.example.ImageView", displayName: "另一份 ImageView")]
+        )
+        let model = makeModel(service: service, resolver: resolver)
+
+        model.refreshStatuses()
+
+        XCTAssertEqual(model.rows[.jpeg]?.defaultApplicationName, "另一份 ImageView")
+        XCTAssertTrue(model.rows[.jpeg]?.isImageViewDefault == true)
     }
 
     func testRefreshDoesNotTreatMissingApplicationURLsAsImageViewDefault() {
@@ -86,6 +110,43 @@ final class FileAssociationSettingsModelTests: XCTestCase {
         XCTAssertEqual(model.selectedFormats, [.png])
         XCTAssertEqual(model.summary, .partialSuccess(succeeded: 1, failed: 1))
         XCTAssertEqual(model.rows[.png]?.error, .service("Denied"))
+    }
+
+    func testAllFailureSummaryAndSecondApplyRetriesSuccessfully() async {
+        let service = DefaultApplicationServiceFake(failingTypes: [.jpeg, .png])
+        let model = makeModel(service: service)
+        model.toggleSelection(for: .jpeg)
+        model.toggleSelection(for: .png)
+
+        await model.applySelectedFormats()
+        XCTAssertEqual(model.summary, .failure(count: 2))
+        XCTAssertEqual(model.selectedFormats, [.jpeg, .png])
+
+        service.failingTypes = []
+        await model.applySelectedFormats()
+        XCTAssertEqual(service.setTypes, [.jpeg, .png, .jpeg, .png])
+        XCTAssertEqual(model.summary, .success(count: 2))
+        XCTAssertTrue(model.selectedFormats.isEmpty)
+    }
+
+    func testApplyRefreshesStatuses() async {
+        let service = DefaultApplicationServiceFake()
+        let model = makeModel(service: service)
+        model.toggleSelection(for: .jpeg)
+
+        await model.applySelectedFormats()
+
+        XCTAssertTrue(model.rows[.jpeg]?.isImageViewDefault == true)
+    }
+
+    func testHiddenUnselectedFormatsAreNotMutated() async {
+        let service = DefaultApplicationServiceFake()
+        let model = makeModel(service: service)
+        model.toggleSelection(for: .jpeg)
+
+        await model.applySelectedFormats()
+
+        XCTAssertEqual(service.setTypes, [.jpeg])
     }
 
     func testInvalidApplicationBundlePreventsMutation() async {
@@ -131,7 +192,26 @@ private enum TestFailure: LocalizedError {
 @MainActor
 private func makeModel(
     service: DefaultApplicationServicing = DefaultApplicationServiceFake(),
-    appURL: URL? = URL(fileURLWithPath: "/Applications/ImageView.app")
+    appURL: URL? = URL(fileURLWithPath: "/Applications/ImageView.app"),
+    resolver: ApplicationBundleResolving? = nil
 ) -> FileAssociationSettingsModel {
-    FileAssociationSettingsModel(service: service, applicationURL: { appURL })
+    let info = appURL.map { ApplicationBundleInfo(url: $0, bundleIdentifier: "com.example.ImageView", displayName: "ImageView") }
+    return FileAssociationSettingsModel(
+        service: service,
+        applicationURL: { appURL },
+        bundleResolver: resolver ?? ApplicationBundleResolverFake(validated: info)
+    )
+}
+
+private final class ApplicationBundleResolverFake: ApplicationBundleResolving {
+    let validated: ApplicationBundleInfo?
+    let bundles: [URL: ApplicationBundleInfo]
+
+    init(validated: ApplicationBundleInfo?, bundles: [URL: ApplicationBundleInfo] = [:]) {
+        self.validated = validated
+        self.bundles = bundles
+    }
+
+    func validatedRunningApplication(at url: URL?) -> ApplicationBundleInfo? { validated }
+    func application(at url: URL) -> ApplicationBundleInfo? { bundles[url] ?? (validated?.url == url ? validated : nil) }
 }

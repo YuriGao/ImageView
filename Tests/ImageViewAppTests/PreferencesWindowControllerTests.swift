@@ -79,6 +79,7 @@ final class PreferencesWindowControllerTests: XCTestCase {
         let checkbox = try XCTUnwrap(content.viewWithIdentifier("fileAssociation.jpeg.checkbox") as? NSButton)
         let apply = try XCTUnwrap(content.viewWithIdentifier("fileAssociation.apply") as? NSButton)
         let showAll = try XCTUnwrap(content.viewWithIdentifier("fileAssociation.showAll") as? NSButton)
+        let general = try XCTUnwrap(content.viewWithIdentifier("settings.showsFilmstrip") as? NSButton)
         checkbox.performClick(nil)
 
         apply.performClick(nil)
@@ -88,6 +89,7 @@ final class PreferencesWindowControllerTests: XCTestCase {
         XCTAssertFalse(apply.isEnabled)
         XCTAssertFalse(checkbox.isEnabled)
         XCTAssertFalse(showAll.isEnabled)
+        XCTAssertTrue(general.isEnabled)
         service.resumeSet()
     }
 
@@ -123,8 +125,22 @@ private func makeController(
         settings: AppSettings(defaults: defaults),
         defaultApplicationService: service,
         applicationURL: { URL(fileURLWithPath: "/Applications/ImageView.app") },
+        bundleResolver: ControllerBundleResolver(),
         preferredLanguages: preferredLanguages
     )
+}
+
+private final class ControllerBundleResolver: ApplicationBundleResolving {
+    private let info = ApplicationBundleInfo(
+        url: URL(fileURLWithPath: "/Applications/ImageView.app"),
+        bundleIdentifier: "com.example.ImageView",
+        displayName: "ImageView"
+    )
+
+    func validatedRunningApplication(at url: URL?) -> ApplicationBundleInfo? { url == nil ? nil : info }
+    func application(at url: URL) -> ApplicationBundleInfo? {
+        ApplicationBundleInfo(url: url, bundleIdentifier: url == info.url ? info.bundleIdentifier : nil, displayName: url.deletingPathExtension().lastPathComponent)
+    }
 }
 
 @MainActor
