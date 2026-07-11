@@ -28,6 +28,12 @@ enum AppStrings {
         "settings.format.svg"
     ]
 
+    static let emptyStateKeys = [
+        "emptyState.title",
+        "emptyState.message",
+        "emptyState.open"
+    ]
+
     static func text(_ key: String, preferredLanguages: [String] = Locale.preferredLanguages) -> String {
         let localization = preferredLanguages.contains { $0.lowercased().hasPrefix("zh") } ? "zh-hans" : "en"
         guard let path = Bundle.module.path(forResource: localization, ofType: "lproj"),

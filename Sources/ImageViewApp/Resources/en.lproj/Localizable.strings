@@ -36,6 +36,9 @@
 "menu.window.zoom" = "Zoom";
 "menu.window.bringAllToFront" = "Bring All to Front";
 "menu.help.imageView" = "ImageView Help";
+"emptyState.title" = "Open an Image";
+"emptyState.message" = "Drag an image here, or choose one below";
+"emptyState.open" = "Open Image…";
 "settings.title" = "ImageView Settings";
 "settings.general.title" = "General";
 "settings.general.showsFilmstrip" = "Show filmstrip";

@@ -36,6 +36,9 @@
 "menu.window.zoom" = "缩放";
 "menu.window.bringAllToFront" = "全部置于前台";
 "menu.help.imageView" = "ImageView 帮助";
+"emptyState.title" = "打开图片";
+"emptyState.message" = "将图片拖到这里，或点击下方按钮";
+"emptyState.open" = "打开图片…";
 "settings.title" = "ImageView 设置";
 "settings.general.title" = "通用";
 "settings.general.showsFilmstrip" = "显示胶片预览";
