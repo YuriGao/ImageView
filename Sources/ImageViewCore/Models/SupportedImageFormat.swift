@@ -1,7 +1,7 @@
 import Foundation
 import UniformTypeIdentifiers
 
-public enum SupportedImageFormat: String, CaseIterable, Sendable {
+public enum SupportedImageFormat: String, CaseIterable, Sendable, Hashable {
     case jpeg
     case png
     case gif

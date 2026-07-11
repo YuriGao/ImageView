@@ -1,79 +1,73 @@
-# Task 2 Report: Format Detection and Same-Folder Scanning
+# Task 2 Report: File Association Selection and Apply Results Model
 
-## Implementation
+## Status
 
-Added the Task 2 core model and directory scanning layer under `ImageViewCore`:
-
-- `SupportedImageFormat` supports the required image extensions, exposes `canAttemptSafeWrite`, and maps each case to a `UTType`.
-- `ImageItem` wraps a browsable image URL plus its detected format.
-- `NaturalSort.compare` uses localized standard comparison for human-friendly ordering.
-- `DirectoryScanner.scan(containing:)` scans only the opened file’s directory, filters to supported regular image files, and returns naturally sorted `ImageItem` values.
-
-## Tests
-
-Added the requested tests:
-
-- `SupportedImageFormatTests`
-- `NaturalSortTests`
-- `DirectoryScannerTests`
+Implemented the Task 2 model orchestration and tests on `main` within the requested file scope.
 
 ## TDD Evidence
 
-I wrote the tests first, then ran them before any production code:
+### RED
 
-- `swift test --filter SupportedImageFormatTests` initially failed with missing type errors for `SupportedImageFormat`.
-- `swift test --filter NaturalSortTests` initially failed with missing type errors for `NaturalSort`.
-- `swift test --filter DirectoryScannerTests` initially failed with a failing assertion because the scanner result did not preserve the opened file URL exactly.
+Command:
 
-After implementing the production files and adjusting the scanner to preserve the opened file URL when it is part of the directory listing, all targeted tests passed.
+```bash
+env CLANG_MODULE_CACHE_PATH=$PWD/.build/clang-module-cache SWIFTPM_CACHE_PATH=$PWD/.build/swiftpm-cache swift test --disable-sandbox --filter FileAssociationSettingsModelTests
+```
 
-## Verification
+Result: exit code 1. Compilation failed at `FileAssociationSettingsModelTests.swift` because `FileAssociationSettingsModel` was not in scope, which was the expected missing-feature failure.
 
-Final verification run:
+### GREEN
 
-- `swift test`
+Focused command:
 
-Result:
+```bash
+env CLANG_MODULE_CACHE_PATH=$PWD/.build/clang-module-cache SWIFTPM_CACHE_PATH=$PWD/.build/swiftpm-cache swift test --disable-sandbox --filter 'DefaultApplicationServiceTests|FileAssociationSettingsModelTests'
+```
 
-- Passed: 5 tests, 0 failures
+Result: exit code 0; 10 tests executed, 0 failures (7 model tests and 3 service tests).
 
-## Files Changed
+Full command:
 
-Created:
+```bash
+env CLANG_MODULE_CACHE_PATH=$PWD/.build/clang-module-cache SWIFTPM_CACHE_PATH=$PWD/.build/swiftpm-cache swift test --disable-sandbox
+```
+
+Result: exit code 0; 141 tests executed, 0 failures.
+
+`git diff --check` also completed successfully.
+
+## Implementation
+
+- Added module-internal `FileAssociationRowState` and `FileAssociationSummary`.
+- Added the `@MainActor` observable file-association settings model.
+- Implemented stable common/all format ordering, additive common selection, hidden-selection preservation, default-app status refresh, deterministic apply ordering, success removal, failed-selection retention, row errors, summaries, and invalid bundle handling.
+- Added explicit `Hashable` conformance to `SupportedImageFormat`.
+
+## Swift 6 / Compile Notes
+
+The plan sample relies on `ObservableObject` and `@Published` but does not import their defining framework. The minimal compile correction was to add `import Combine` to the model file. This does not change the requested interface or behavior. The existing `DefaultApplicationServicing` protocol is already `@MainActor`, so no concurrency-signature correction was required.
+
+## Self-review
+
+- Changes are limited to the three requested source/test files plus this required report.
+- Model types remain module-internal as requested.
+- Apply order derives from `allFormats`, avoiding nondeterministic `Set` iteration.
+- Successful formats are removed while failed formats remain selected.
+- Status refresh preserves per-row apply errors.
+- Invalid or missing application bundles do not call the service or clear selection.
+- No unrelated worktree changes were present at start.
+
+## Files
 
 - `Sources/ImageViewCore/Models/SupportedImageFormat.swift`
-- `Sources/ImageViewCore/Models/ImageItem.swift`
-- `Sources/ImageViewCore/Directory/NaturalSort.swift`
-- `Sources/ImageViewCore/Directory/DirectoryScanner.swift`
-- `Tests/ImageViewCoreTests/SupportedImageFormatTests.swift`
-- `Tests/ImageViewCoreTests/NaturalSortTests.swift`
-- `Tests/ImageViewCoreTests/DirectoryScannerTests.swift`
+- `Sources/ImageViewApp/Settings/FileAssociationSettingsModel.swift`
+- `Tests/ImageViewAppTests/FileAssociationSettingsModelTests.swift`
+- `.superpowers/sdd/task-2-report.md`
 
-## Self-Review
+## Commit
 
-- The implementation matches the task scope and stays inside the requested model and directory folders.
-- Sorting is stable and human-friendly via `localizedStandardCompare`.
-- The scanner excludes unsupported formats and hidden files, and only returns regular files.
-- `SupportedImageFormat`, `ImageItem`, and `DirectoryScanner` now align closely with the task brief’s signatures, including `Sendable` where feasible.
+Commit SHA is recorded after commit in the task handoff because including the commit's own SHA inside the committed file would be self-referential.
 
-## Concerns
+## Known Warnings / Concerns
 
-- `DirectoryScanner` uses `@unchecked Sendable` because `FileManager` is not `Sendable` in this SDK. That is acceptable for this task, but it is a reminder that the scanner owns a non-thread-safe Foundation dependency.
-
-## Review Fix Addendum
-
-I moved the directory enumeration, filtering, and sorting work onto a background queue so `scan(containing:)` keeps the same async API without doing the heavy directory walk on the caller's executor.
-
-### Verification Run
-
-- `swift test --filter DirectoryScannerTests`
-- `swift test`
-
-### Output Summary
-
-- `DirectoryScannerTests`: 2 tests passed, 0 failures
-- Full suite: 6 tests passed, 0 failures
-
-### Notes
-
-- Added a focused regression test that calls `DirectoryScanner.scan(containing:)` from `@MainActor` and confirms directory enumeration happens off the main thread.
+SwiftPM reports pre-existing sandbox cache warnings and three unhandled resource-file warnings (`Info.plist`, `AppIcon-master.png`, and `ImageView.icns`). They do not affect build or test success and are outside Task 2 scope.
