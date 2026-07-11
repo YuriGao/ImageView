@@ -31,14 +31,30 @@ Implemented the native AppKit file-association section and English/Simplified Ch
 ## Files
 
 - `Sources/ImageViewApp/Settings/PreferencesWindowController.swift`
+- `Sources/ImageViewApp/Settings/FileAssociationSettingsModel.swift`
 - `Sources/ImageViewApp/AppDelegate.swift`
 - `Sources/ImageViewApp/Localization/AppStrings.swift`
 - `Sources/ImageViewApp/Resources/en.lproj/Localizable.strings`
 - `Sources/ImageViewApp/Resources/zh-Hans.lproj/Localizable.strings`
 - `Tests/ImageViewAppTests/PreferencesWindowControllerTests.swift`
+- `Tests/ImageViewAppTests/FileAssociationSettingsModelTests.swift`
 - `Tests/ImageViewAppTests/AppStringsTests.swift`
 
 ## Commit
 
 - Message: `feat: add image file association settings`
-- SHA: the commit containing this report (reported to the parent task after creation).
+- SHA: `aa087d7`
+
+## Review Fixes
+
+- Localized the four General-setting checkboxes in English and Simplified Chinese.
+- Replaced English-string error classification with structured row errors.
+- Fixed nil application URL status comparison.
+- Added UI tests for ten-row expansion, selection enabling, applying-state disabling, extension/status rendering, dynamic colors, and complete settings localization keys.
+- Focused tests: 19 passed, 0 failed.
+- Full suite: 150 passed, 0 failed.
+- Release build: succeeded.
+- Fix commit: `54488c7 fix: harden file association settings`.
+- Added a controllable setter-failure UI test proving the corresponding row renders the localized service error in `NSColor.systemRed`.
+- Focused: `swift test --disable-sandbox --filter PreferencesWindowControllerTests` — 7 passed, 0 failed.
+- Full: `swift test --disable-sandbox` — 151 passed, 0 failed.

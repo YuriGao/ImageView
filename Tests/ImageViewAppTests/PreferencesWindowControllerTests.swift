@@ -90,6 +90,25 @@ final class PreferencesWindowControllerTests: XCTestCase {
         XCTAssertFalse(showAll.isEnabled)
         service.resumeSet()
     }
+
+    func testFailedApplyRendersLocalizedErrorInRedOnCorrespondingRow() async throws {
+        let service = ControllerServiceFake(setError: ControllerSetError.denied)
+        let controller = makeController(preferredLanguages: ["zh-Hans"], service: service)
+        let content = try XCTUnwrap(controller.window?.contentView)
+        let checkbox = try XCTUnwrap(content.viewWithIdentifier("fileAssociation.jpeg.checkbox") as? NSButton)
+        let status = try XCTUnwrap(content.viewWithIdentifier("fileAssociation.jpeg.status") as? NSTextField)
+        let apply = try XCTUnwrap(content.viewWithIdentifier("fileAssociation.apply") as? NSButton)
+        checkbox.performClick(nil)
+
+        apply.performClick(nil)
+        await service.waitUntilSetFinishes()
+        for _ in 0..<100 where status.stringValue != ControllerSetError.denied.localizedDescription {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(status.stringValue, "设置默认应用被拒绝")
+        XCTAssertEqual(status.textColor, .systemRed)
+    }
 }
 
 @MainActor
@@ -112,13 +131,21 @@ private func makeController(
 private final class ControllerServiceFake: DefaultApplicationServicing {
     private let defaults: [UTType: URL]
     private let suspendsSet: Bool
+    private let setError: (any Error)?
     private var startedContinuation: CheckedContinuation<Void, Never>?
+    private var finishedContinuation: CheckedContinuation<Void, Never>?
     private var setContinuation: CheckedContinuation<Void, Never>?
     private var didStart = false
+    private var didFinish = false
 
-    init(defaults: [UTType: URL] = [:], suspendsSet: Bool = false) {
+    init(
+        defaults: [UTType: URL] = [:],
+        suspendsSet: Bool = false,
+        setError: (any Error)? = nil
+    ) {
         self.defaults = defaults
         self.suspendsSet = suspendsSet
+        self.setError = setError
     }
 
     func defaultApplicationURL(for contentType: UTType) -> URL? { defaults[contentType] }
@@ -127,8 +154,13 @@ private final class ControllerServiceFake: DefaultApplicationServicing {
         didStart = true
         startedContinuation?.resume()
         startedContinuation = nil
-        guard suspendsSet else { return }
-        await withCheckedContinuation { setContinuation = $0 }
+        if suspendsSet {
+            await withCheckedContinuation { setContinuation = $0 }
+        }
+        didFinish = true
+        finishedContinuation?.resume()
+        finishedContinuation = nil
+        if let setError { throw setError }
     }
 
     func waitUntilSetStarts() async {
@@ -140,6 +172,17 @@ private final class ControllerServiceFake: DefaultApplicationServicing {
         setContinuation?.resume()
         setContinuation = nil
     }
+
+    func waitUntilSetFinishes() async {
+        if didFinish { return }
+        await withCheckedContinuation { finishedContinuation = $0 }
+    }
+}
+
+private enum ControllerSetError: LocalizedError {
+    case denied
+
+    var errorDescription: String? { "设置默认应用被拒绝" }
 }
 
 private extension NSView {
