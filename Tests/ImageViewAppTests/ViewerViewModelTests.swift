@@ -622,6 +622,40 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertNotEqual(CurrentFileVersion.read(at: url), originalVersion)
     }
 
+    func testNavigationRejectsCachedPixelsAfterSamePathFileReplacement() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let firstURL = root.appendingPathComponent("a.png")
+        let secondURL = root.appendingPathComponent("b.png")
+        var originalData = try makePNGData(width: 4, height: 3, fillColor: (1, 0, 0, 1))
+        var replacementData = try makePNGData(width: 4, height: 3, fillColor: (0, 0, 1, 1))
+        originalData.append(contentsOf: repeatElement(0, count: max(0, replacementData.count - originalData.count)))
+        replacementData.append(contentsOf: repeatElement(0, count: max(0, originalData.count - replacementData.count)))
+        XCTAssertEqual(originalData.count, replacementData.count)
+        try originalData.write(to: firstURL)
+        try makePNGData(width: 4, height: 3).write(to: secondURL)
+        let originalModificationDate = try XCTUnwrap(
+            FileManager.default.attributesOfItem(atPath: firstURL.path)[.modificationDate] as? Date
+        )
+
+        let viewModel = ViewerViewModel()
+        await viewModel.open(url: firstURL)
+        XCTAssertEqual(try rgbaPixel(in: XCTUnwrap(viewModel.currentImage?.cgImage)), [255, 0, 0, 255])
+
+        await viewModel.open(url: secondURL)
+        XCTAssertEqual(viewModel.navigationState?.currentItem?.url, secondURL)
+
+        try replacementData.write(to: firstURL, options: .atomic)
+        try FileManager.default.setAttributes([.modificationDate: originalModificationDate], ofItemAtPath: firstURL.path)
+
+        await viewModel.open(url: firstURL)
+        XCTAssertEqual(viewModel.navigationState?.currentItem?.url, firstURL)
+
+        XCTAssertEqual(try rgbaPixel(in: XCTUnwrap(viewModel.currentImage?.cgImage)), [0, 0, 255, 255])
+    }
+
     func testRefreshRemovesExternallyDeletedCurrentItemAndDisplaysNextImage() async throws {
         let deletedURL = URL(fileURLWithPath: "/tmp/a.png")
         let nextURL = URL(fileURLWithPath: "/tmp/b.png")
@@ -914,7 +948,11 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.errorMessage)
     }
 
-    private func makePNGData(width: Int, height: Int) throws -> Data {
+    private func makePNGData(
+        width: Int,
+        height: Int,
+        fillColor: (red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat) = (0.2, 0.4, 0.8, 1)
+    ) throws -> Data {
         let colorSpace = CGColorSpaceCreateDeviceRGB()
         guard let context = CGContext(
             data: nil,
@@ -928,7 +966,12 @@ final class ViewerViewModelTests: XCTestCase {
             throw TestError.cannotCreateContext
         }
 
-        context.setFillColor(red: 0.2, green: 0.4, blue: 0.8, alpha: 1)
+        context.setFillColor(
+            red: fillColor.red,
+            green: fillColor.green,
+            blue: fillColor.blue,
+            alpha: fillColor.alpha
+        )
         context.fill(CGRect(x: 0, y: 0, width: width, height: height))
 
         guard let image = context.makeImage(),
@@ -943,6 +986,24 @@ final class ViewerViewModelTests: XCTestCase {
         }
 
         return destinationData as Data
+    }
+
+    private func rgbaPixel(in image: CGImage) throws -> [UInt8] {
+        var bytes = [UInt8](repeating: 0, count: 4)
+        guard let context = CGContext(
+            data: &bytes,
+            width: 1,
+            height: 1,
+            bitsPerComponent: 8,
+            bytesPerRow: 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
+            throw TestError.cannotCreateContext
+        }
+        context.interpolationQuality = .none
+        context.draw(image, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+        return bytes
     }
 
     private func makeTemporaryPNG(width: Int, height: Int, name: String) throws -> URL {

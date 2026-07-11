@@ -39,10 +39,17 @@ final class PerformanceGuardTests: XCTestCase {
         let image = makeImage(width: 4, height: 3)
         let decoded = DecodedImage(cgImage: image, pixelSize: CGSize(width: 4, height: 3), isAnimated: false)
         let url = URL(fileURLWithPath: "/tmp/preloaded.png")
-        await cache.insert(decoded, for: url)
+        let version = CurrentFileVersion(
+            device: 1,
+            inode: 1,
+            fileSize: 1,
+            modificationNanoseconds: 1,
+            changeNanoseconds: 1
+        )
+        await cache.insert(decoded, for: url, version: version)
 
         let started = ContinuousClock.now
-        let cached = await cache.image(for: url)
+        let cached = await cache.image(for: url, matching: version)
         let elapsed = started.duration(to: .now)
 
         XCTAssertNotNil(cached)

@@ -194,33 +194,46 @@ public final class ImageDecodeService: @unchecked Sendable {
     }
 
     private func estimatedAnimationByteCost(source: CGImageSource) -> Int? {
-        let dimensions = (0..<CGImageSourceGetCount(source)).map { index -> (Int?, Int?) in
+        var totalCost = 0
+        for index in 0..<CGImageSourceGetCount(source) {
             let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any]
             let width = (properties?[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue
             let height = (properties?[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue
-            return (width, height)
+            guard let frameCost = Self.animationFrameByteCost(width: width, height: height) else {
+                return nil
+            }
+            let (newTotalCost, totalOverflow) = totalCost.addingReportingOverflow(frameCost)
+            guard !totalOverflow else { return nil }
+            totalCost = newTotalCost
+            if totalCost > animationByteLimit {
+                return totalCost
+            }
         }
-        return Self.estimatedAnimationByteCost(frameDimensions: dimensions)
+        return totalCost
     }
 
     static func estimatedAnimationByteCost(frameDimensions: [(Int?, Int?)]) -> Int? {
         var totalCost = 0
         for (optionalWidth, optionalHeight) in frameDimensions {
-            guard let width = optionalWidth,
-                  let height = optionalHeight,
-                  width > 0,
-                  height > 0 else {
-                return nil
-            }
-            let (pixelCount, pixelOverflow) = width.multipliedReportingOverflow(by: height)
-            guard !pixelOverflow else { return nil }
-            let (frameCost, byteOverflow) = pixelCount.multipliedReportingOverflow(by: 4)
-            guard !byteOverflow else { return nil }
+            guard let frameCost = animationFrameByteCost(width: optionalWidth, height: optionalHeight) else { return nil }
             let (newTotalCost, totalOverflow) = totalCost.addingReportingOverflow(frameCost)
             guard !totalOverflow else { return nil }
             totalCost = newTotalCost
         }
         return totalCost
+    }
+
+    private static func animationFrameByteCost(width: Int?, height: Int?) -> Int? {
+        guard let width,
+              let height,
+              width > 0,
+              height > 0 else {
+            return nil
+        }
+        let (pixelCount, pixelOverflow) = width.multipliedReportingOverflow(by: height)
+        guard !pixelOverflow else { return nil }
+        let (frameCost, byteOverflow) = pixelCount.multipliedReportingOverflow(by: 4)
+        return byteOverflow ? nil : frameCost
     }
 
     private func animationDuration(source: CGImageSource, index: Int) -> TimeInterval {

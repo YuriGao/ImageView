@@ -6,6 +6,7 @@ public actor ImageCache {
 
     private struct Entry {
         let image: DecodedImage
+        let version: CurrentFileVersion
         let cost: Int
         var lastAccess: UInt64
     }
@@ -19,8 +20,13 @@ public actor ImageCache {
         self.costLimit = max(1, costLimit)
     }
 
-    public func image(for url: URL) -> DecodedImage? {
+    public func image(for url: URL, matching version: CurrentFileVersion) -> DecodedImage? {
         guard var entry = entries[url] else {
+            return nil
+        }
+        guard entry.version == version else {
+            entries.removeValue(forKey: url)
+            totalCost -= entry.cost
             return nil
         }
 
@@ -30,7 +36,7 @@ public actor ImageCache {
         return entry.image
     }
 
-    public func insert(_ image: DecodedImage, for url: URL) {
+    public func insert(_ image: DecodedImage, for url: URL, version: CurrentFileVersion) {
         let normalizedCost = max(1, image.decodedByteCost)
 
         if let existing = entries[url] {
@@ -38,7 +44,7 @@ public actor ImageCache {
         }
 
         tick += 1
-        entries[url] = Entry(image: image, cost: normalizedCost, lastAccess: tick)
+        entries[url] = Entry(image: image, version: version, cost: normalizedCost, lastAccess: tick)
         totalCost = DecodedImage.saturatedSum(totalCost, normalizedCost)
         evictIfNeeded()
     }
