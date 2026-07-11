@@ -193,6 +193,57 @@ final class AppDelegateTests: XCTestCase {
         XCTAssertNil(offscreenMenu.items[2].submenu?.item(withTitle: "Next Image")?.target)
     }
 
+    func testConstructingOffscreenMenuDoesNotRedirectRecentMenuRebuild() throws {
+        NSDocumentController.shared.clearRecentDocuments(nil)
+        defer { NSDocumentController.shared.clearRecentDocuments(nil) }
+        let harness = WindowHarness()
+        let delegate = harness.makeDelegate()
+        let installedMenu = delegate.makeMainMenu(preferredLanguages: ["en"])
+        delegate.setInstalledMainMenuForTesting(installedMenu)
+        delegate.finishLaunchingForTesting(installMenu: false)
+        let installedRecentMenu = try XCTUnwrap(
+            installedMenu.items[1].submenu?.item(withTitle: "Open Recent")?.submenu
+        )
+        let offscreenMenu = delegate.makeMainMenu(preferredLanguages: ["en"])
+        let offscreenRecentMenu = try XCTUnwrap(
+            offscreenMenu.items[1].submenu?.item(withTitle: "Open Recent")?.submenu
+        )
+        let openedURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("installed-recent-\(UUID().uuidString).png")
+        try Data().write(to: openedURL)
+        defer { try? FileManager.default.removeItem(at: openedURL) }
+
+        delegate.imageWindowControllersForTesting[0].onSuccessfulOpen?(openedURL)
+
+        XCTAssertEqual(
+            (installedRecentMenu.items.first?.representedObject as? URL)?.lastPathComponent,
+            openedURL.lastPathComponent
+        )
+        XCTAssertNil(offscreenRecentMenu.items.first?.representedObject)
+    }
+
+    func testConstructingOffscreenMenuDoesNotRedirectAppearanceCheckmarkUpdates() throws {
+        let settings = AppSettings(defaults: makeIsolatedDefaults())
+        let delegate = AppDelegate(settings: settings)
+        let installedMenu = delegate.makeMainMenu(preferredLanguages: ["en"])
+        delegate.setInstalledMainMenuForTesting(installedMenu)
+        let installedAppearanceMenu = try XCTUnwrap(
+            installedMenu.items[2].submenu?.item(withTitle: "Appearance")?.submenu
+        )
+        let offscreenMenu = delegate.makeMainMenu(preferredLanguages: ["en"])
+        let offscreenAppearanceMenu = try XCTUnwrap(
+            offscreenMenu.items[2].submenu?.item(withTitle: "Appearance")?.submenu
+        )
+        let darkItem = try XCTUnwrap(offscreenAppearanceMenu.item(withTitle: "Dark"))
+        let action = try XCTUnwrap(darkItem.action)
+
+        XCTAssertTrue(NSApplication.shared.sendAction(action, to: darkItem.target, from: darkItem))
+
+        XCTAssertEqual(installedAppearanceMenu.items.map(\.state), [.off, .off, .on])
+        XCTAssertEqual(offscreenAppearanceMenu.items.map(\.state), [.on, .off, .off])
+        NSApplication.shared.appearance = nil
+    }
+
     func testHelpSearchUsesAnOffscreenMenuInsteadOfTheVisibleHelpMenu() {
         let delegate = AppDelegate()
         let visibleHelpMenu = delegate.makeMainMenu(preferredLanguages: ["en"]).items[5].submenu

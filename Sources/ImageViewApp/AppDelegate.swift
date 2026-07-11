@@ -2,6 +2,8 @@ import AppKit
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private static let openRecentMenuItemIdentifier = NSUserInterfaceItemIdentifier("ImageView.openRecent")
+    private static let appearanceMenuItemIdentifierPrefix = "ImageView.appearance."
     private let settings: AppSettings
     private let defaultApplicationService: DefaultApplicationServicing
     private var imageWindowControllers: [MainWindowController] = []
@@ -127,7 +129,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func installMainMenuIfNeeded() {
         let mainMenu = makeMainMenu()
         NSApp.mainMenu = mainMenu
-        installedMainMenu = mainMenu
+        bindInstalledMainMenu(NSApp.mainMenu ?? mainMenu)
         configureHelpMenuSearchSuppression()
         connectMenuTargets()
     }
@@ -161,12 +163,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         fileMenu.addItem(openMenuItem)
 
         let openRecentItem = NSMenuItem(title: text("menu.file.openRecent"), action: nil, keyEquivalent: "")
+        openRecentItem.identifier = Self.openRecentMenuItemIdentifier
         let openRecentMenu = NSMenu(title: text("menu.file.openRecent"))
         openRecentItem.submenu = openRecentMenu
         fileMenu.addItem(openRecentItem)
         fileMenu.addItem(.separator())
-        self.openRecentMenu = openRecentMenu
-        rebuildOpenRecentMenu()
+        rebuildOpenRecentMenu(openRecentMenu)
 
         let renameMenuItem = NSMenuItem(title: text("menu.file.rename"), action: #selector(MainWindowController.renameCurrentImage(_:)), keyEquivalent: "R")
         renameMenuItem.keyEquivalentModifierMask = [.command, .shift]
@@ -218,15 +220,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             (.light, "menu.view.appearance.light", #selector(selectLightAppearance(_:))),
             (.dark, "menu.view.appearance.dark", #selector(selectDarkAppearance(_:)))
         ]
-        appearanceMenuItems.removeAll()
         for (appearance, titleKey, action) in appearanceChoices {
             let item = NSMenuItem(title: text(titleKey), action: nil, keyEquivalent: "")
             item.action = action
             item.target = self
+            item.identifier = Self.appearanceMenuItemIdentifier(for: appearance)
+            item.state = appearance == settings.appearance ? .on : .off
             appearanceMenu.addItem(item)
-            appearanceMenuItems[appearance] = item
         }
-        updateAppearanceMenuState()
         viewMenu.addItem(.separator())
         viewMenu.addItem(NSMenuItem(title: text("menu.view.enterFullScreen"), action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f"))
 
@@ -314,26 +315,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func selectSystemAppearance(_ sender: Any?) {
-        selectAppearance(.system)
+        selectAppearance(.system, sender: sender)
     }
 
     @objc private func selectLightAppearance(_ sender: Any?) {
-        selectAppearance(.light)
+        selectAppearance(.light, sender: sender)
     }
 
     @objc private func selectDarkAppearance(_ sender: Any?) {
-        selectAppearance(.dark)
+        selectAppearance(.dark, sender: sender)
     }
 
-    private func selectAppearance(_ appearance: AppAppearance) {
+    private func selectAppearance(_ appearance: AppAppearance, sender: Any?) {
         settings.appearance = appearance
         applyAppearance()
-        updateAppearanceMenuState()
+        if appearanceMenuItems.isEmpty,
+           let sourceMenu = (sender as? NSMenuItem)?.menu {
+            updateAppearanceMenuState(in: sourceMenu)
+        } else {
+            updateAppearanceMenuState()
+        }
     }
 
     private func updateAppearanceMenuState() {
         for (appearance, item) in appearanceMenuItems {
             item.state = appearance == settings.appearance ? .on : .off
+        }
+    }
+
+    private func updateAppearanceMenuState(in menu: NSMenu) {
+        for appearance in AppAppearance.allCases {
+            menuItem(with: Self.appearanceMenuItemIdentifier(for: appearance), in: menu)?.state =
+                appearance == settings.appearance ? .on : .off
         }
     }
 
@@ -344,6 +357,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func rebuildOpenRecentMenu() {
         guard let openRecentMenu else { return }
+        rebuildOpenRecentMenu(openRecentMenu)
+    }
+
+    private func rebuildOpenRecentMenu(_ openRecentMenu: NSMenu) {
         openRecentMenu.removeAllItems()
         let urls = NSDocumentController.shared.recentDocumentURLs.prefix(10)
         guard !urls.isEmpty else {
@@ -364,6 +381,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func connectMenuTargets() {
         let target = menuTargetImageController
         connectControllerActions(in: installedMainMenu, target: target)
+    }
+
+    private func bindInstalledMainMenu(_ menu: NSMenu) {
+        installedMainMenu = menu
+        openRecentMenu = menuItem(with: Self.openRecentMenuItemIdentifier, in: menu)?.submenu
+        appearanceMenuItems = Dictionary(uniqueKeysWithValues: AppAppearance.allCases.compactMap { appearance in
+            menuItem(with: Self.appearanceMenuItemIdentifier(for: appearance), in: menu)
+                .map { (appearance, $0) }
+        })
+        rebuildOpenRecentMenu()
+        updateAppearanceMenuState()
+    }
+
+    private static func appearanceMenuItemIdentifier(for appearance: AppAppearance) -> NSUserInterfaceItemIdentifier {
+        NSUserInterfaceItemIdentifier(appearanceMenuItemIdentifierPrefix + appearance.rawValue)
+    }
+
+    private func menuItem(with identifier: NSUserInterfaceItemIdentifier, in menu: NSMenu) -> NSMenuItem? {
+        for item in menu.items {
+            if item.identifier == identifier { return item }
+            if let submenu = item.submenu,
+               let match = menuItem(with: identifier, in: submenu) {
+                return match
+            }
+        }
+        return nil
     }
 
     private func connectControllerActions(in menu: NSMenu?, target: MainWindowController?) {
@@ -405,7 +448,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func setInstalledMainMenuForTesting(_ menu: NSMenu) {
-        installedMainMenu = menu
+        bindInstalledMainMenu(menu)
     }
 
     func showPreferencesForTesting() {
