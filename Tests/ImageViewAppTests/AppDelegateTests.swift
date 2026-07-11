@@ -8,18 +8,26 @@ final class AppDelegateTests: XCTestCase {
     private final class WindowHarness {
         var openRequests: [URL] = []
         var terminationCount = 0
+        var showCounts: [ObjectIdentifier: Int] = [:]
 
         func makeDelegate() -> AppDelegate {
             AppDelegate(
                 settings: AppSettings(defaults: makeIsolatedDefaults()),
                 makeImageWindowController: { MainWindowController(settings: $0) },
-                showImageWindow: { _ in },
+                showImageWindow: { [weak self] controller in
+                    let identifier = ObjectIdentifier(controller)
+                    self?.showCounts[identifier, default: 0] += 1
+                },
                 openImageURL: { [weak self] controller, url in
                     self?.openRequests.append(url)
                     controller.open(url: url)
                 },
                 terminateApplication: { [weak self] in self?.terminationCount += 1 }
             )
+        }
+
+        func showCount(for controller: MainWindowController) -> Int {
+            showCounts[ObjectIdentifier(controller), default: 0]
         }
 
         private func makeIsolatedDefaults() -> UserDefaults {
@@ -38,6 +46,7 @@ final class AppDelegateTests: XCTestCase {
 
         XCTAssertEqual(delegate.imageWindowCount, 1)
         XCTAssertFalse(delegate.imageWindowControllersForTesting[0].hasAssignedOpenRequest)
+        XCTAssertEqual(harness.showCount(for: delegate.imageWindowControllersForTesting[0]), 1)
     }
 
     func testFirstURLReusesEmptyWindowAndLaterURLsCreateWindows() {
@@ -52,6 +61,8 @@ final class AppDelegateTests: XCTestCase {
         XCTAssertEqual(harness.openRequests, urls)
         XCTAssertTrue(delegate.imageWindowControllersForTesting[0].hasAssignedOpenRequest)
         XCTAssertFalse(delegate.imageWindowControllersForTesting[0] === delegate.imageWindowControllersForTesting[1])
+        XCTAssertEqual(harness.showCount(for: delegate.imageWindowControllersForTesting[0]), 2)
+        XCTAssertEqual(harness.showCount(for: delegate.imageWindowControllersForTesting[1]), 1)
     }
 
     func testPrelaunchURLsRetainFullOrderAndDuplicates() {
@@ -68,6 +79,10 @@ final class AppDelegateTests: XCTestCase {
         XCTAssertEqual(harness.openRequests, urls)
         XCTAssertEqual(delegate.imageWindowCount, urls.count)
         XCTAssertTrue(delegate.pendingURLsForTesting.isEmpty)
+        XCTAssertEqual(
+            delegate.imageWindowControllersForTesting.map(harness.showCount(for:)),
+            [2, 1, 1, 1]
+        )
     }
 
     func testClosingOneWindowKeepsOthersAndClosingFinalWindowTerminatesOnce() {
@@ -116,6 +131,7 @@ final class AppDelegateTests: XCTestCase {
         let harness = WindowHarness()
         let delegate = harness.makeDelegate()
         let menu = delegate.makeMainMenu(preferredLanguages: ["en"])
+        delegate.setInstalledMainMenuForTesting(menu)
         delegate.finishLaunchingForTesting(installMenu: false)
         delegate.openURLs([URL(fileURLWithPath: "/a.png"), URL(fileURLWithPath: "/b.png")])
         let first = delegate.imageWindowControllersForTesting[0]
@@ -135,6 +151,7 @@ final class AppDelegateTests: XCTestCase {
         let harness = WindowHarness()
         let delegate = harness.makeDelegate()
         let menu = delegate.makeMainMenu(preferredLanguages: ["en"])
+        delegate.setInstalledMainMenuForTesting(menu)
         delegate.finishLaunchingForTesting(installMenu: false)
         delegate.openURLs([URL(fileURLWithPath: "/a.png"), URL(fileURLWithPath: "/b.png")])
         let second = delegate.imageWindowControllersForTesting[1]
@@ -150,6 +167,7 @@ final class AppDelegateTests: XCTestCase {
         let harness = WindowHarness()
         let delegate = harness.makeDelegate()
         let menu = delegate.makeMainMenu(preferredLanguages: ["en"])
+        delegate.setInstalledMainMenuForTesting(menu)
         delegate.finishLaunchingForTesting(installMenu: false)
         let controller = delegate.imageWindowControllersForTesting[0]
         delegate.imageWindowDidBecomeKey(controller)
@@ -158,6 +176,21 @@ final class AppDelegateTests: XCTestCase {
 
         XCTAssertNil(menu.items[2].submenu?.item(withTitle: "Next Image")?.target)
         XCTAssertTrue(menu.items[0].submenu?.item(withTitle: "Settings…")?.target === delegate)
+    }
+
+    func testConstructingOffscreenMenuDoesNotChangeInstalledMenuRouting() {
+        let harness = WindowHarness()
+        let delegate = harness.makeDelegate()
+        let installedMenu = delegate.makeMainMenu(preferredLanguages: ["en"])
+        delegate.setInstalledMainMenuForTesting(installedMenu)
+        let offscreenMenu = delegate.makeMainMenu(preferredLanguages: ["en"])
+        delegate.finishLaunchingForTesting(installMenu: false)
+        let controller = delegate.imageWindowControllersForTesting[0]
+
+        delegate.imageWindowDidBecomeKey(controller)
+
+        XCTAssertTrue(installedMenu.items[2].submenu?.item(withTitle: "Next Image")?.target === controller)
+        XCTAssertNil(offscreenMenu.items[2].submenu?.item(withTitle: "Next Image")?.target)
     }
 
     func testHelpSearchUsesAnOffscreenMenuInsteadOfTheVisibleHelpMenu() {

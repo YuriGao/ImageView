@@ -14,22 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let showImageWindow: (MainWindowController) -> Void
     private let openImageURL: (MainWindowController, URL) -> Void
     private let terminateApplication: () -> Void
-    private weak var constructedMainMenu: NSMenu?
-    private var preferencesMenuItem: NSMenuItem?
-    private var toggleFilmstripMenuItem: NSMenuItem?
-    private var toggleInspectorMenuItem: NSMenuItem?
-    private var renameMenuItem: NSMenuItem?
-    private var revealMenuItem: NSMenuItem?
-    private var copyPathMenuItem: NSMenuItem?
-    private var moveToTrashMenuItem: NSMenuItem?
-    private var rotateClockwiseMenuItem: NSMenuItem?
-    private var rotateCounterClockwiseMenuItem: NSMenuItem?
-    private var mirrorHorizontalMenuItem: NSMenuItem?
-    private var mirrorVerticalMenuItem: NSMenuItem?
-    private var cropMenuItem: NSMenuItem?
-    private var saveEditsMenuItem: NSMenuItem?
-    private var saveEditsAsMenuItem: NSMenuItem?
-    private var discardEditsMenuItem: NSMenuItem?
+    private weak var installedMainMenu: NSMenu?
     private var openRecentMenu: NSMenu?
     private var appearanceMenuItems: [AppAppearance: NSMenuItem] = [:]
 
@@ -71,7 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         applyAppearance()
         didFinishLaunching = true
         if imageWindowControllers.isEmpty {
-            createImageWindow()
+            showImageWindow(createImageWindow())
         }
         if installMenu {
             installMainMenuIfNeeded()
@@ -96,7 +81,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         imageWindowControllers.append(controller)
         activeImageWindowController = controller
-        showImageWindow(controller)
         return controller
     }
 
@@ -141,7 +125,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func installMainMenuIfNeeded() {
-        NSApp.mainMenu = makeMainMenu()
+        let mainMenu = makeMainMenu()
+        NSApp.mainMenu = mainMenu
+        installedMainMenu = mainMenu
         configureHelpMenuSearchSuppression()
         connectMenuTargets()
     }
@@ -280,21 +266,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         discardEditsMenuItem.keyEquivalentModifierMask = [.command, .shift]
         editMenu.addItem(discardEditsMenuItem)
 
-        self.preferencesMenuItem = preferencesMenuItem
-        self.toggleFilmstripMenuItem = toggleFilmstripMenuItem
-        self.toggleInspectorMenuItem = toggleInspectorMenuItem
-        self.renameMenuItem = renameMenuItem
-        self.revealMenuItem = revealMenuItem
-        self.copyPathMenuItem = copyPathMenuItem
-        self.moveToTrashMenuItem = moveToTrashMenuItem
-        self.rotateClockwiseMenuItem = rotateClockwiseMenuItem
-        self.rotateCounterClockwiseMenuItem = rotateCounterClockwiseMenuItem
-        self.mirrorHorizontalMenuItem = mirrorHorizontalMenuItem
-        self.mirrorVerticalMenuItem = mirrorVerticalMenuItem
-        self.cropMenuItem = cropMenuItem
-        self.saveEditsMenuItem = saveEditsMenuItem
-        self.saveEditsAsMenuItem = saveEditsAsMenuItem
-        self.discardEditsMenuItem = discardEditsMenuItem
         let windowMenuItem = NSMenuItem(title: text("menu.window"), action: nil, keyEquivalent: "")
         let windowMenu = NSMenu(title: text("menu.window"))
         windowMenuItem.submenu = windowMenu
@@ -310,7 +281,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         helpMenuItem.submenu?.addItem(helpItem)
         mainMenu.addItem(helpMenuItem)
 
-        constructedMainMenu = mainMenu
         return mainMenu
     }
 
@@ -393,22 +363,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func connectMenuTargets() {
         let target = menuTargetImageController
-        preferencesMenuItem?.target = self
-        toggleFilmstripMenuItem?.target = target
-        toggleInspectorMenuItem?.target = target
-        renameMenuItem?.target = target
-        revealMenuItem?.target = target
-        copyPathMenuItem?.target = target
-        moveToTrashMenuItem?.target = target
-        rotateClockwiseMenuItem?.target = target
-        rotateCounterClockwiseMenuItem?.target = target
-        mirrorHorizontalMenuItem?.target = target
-        mirrorVerticalMenuItem?.target = target
-        cropMenuItem?.target = target
-        saveEditsMenuItem?.target = target
-        saveEditsAsMenuItem?.target = target
-        discardEditsMenuItem?.target = target
-        connectControllerActions(in: constructedMainMenu ?? NSApp.mainMenu, target: target)
+        connectControllerActions(in: installedMainMenu, target: target)
     }
 
     private func connectControllerActions(in menu: NSMenu?, target: MainWindowController?) {
@@ -447,6 +402,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func connectMenuTargetsForTesting() {
         connectMenuTargets()
+    }
+
+    func setInstalledMainMenuForTesting(_ menu: NSMenu) {
+        installedMainMenu = menu
     }
 
     func showPreferencesForTesting() {
