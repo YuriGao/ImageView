@@ -18,6 +18,10 @@ let package = Package(
             name: "ImageViewApp",
             dependencies: ["ImageViewCore"],
             path: "Sources/ImageViewApp",
+            exclude: [
+                "Resources/ImageView.icns",
+                "Resources/Info.plist"
+            ],
             resources: [
                 .process("Resources/en.lproj"),
                 .process("Resources/zh-Hans.lproj")
