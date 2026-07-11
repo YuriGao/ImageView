@@ -57,6 +57,32 @@ final class ImageDecodeServiceTests: XCTestCase {
         XCTAssertEqual(pixelColor(in: decoded.cgImage, x: 8, y: 8), .red)
     }
 
+    func testComplexSVGIsFullyDecodedOrFails() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let url = root.appendingPathComponent("complex.svg")
+        let svg = """
+        <svg width="24" height="12" viewBox="0 0 24 12">
+          <rect x="1" y="2" width="8" height="8" fill="red"/>
+          <rect x="15" y="2" width="8" height="8" fill="blue"/>
+        </svg>
+        <!-- malformed trailing markup intentionally exercises honest decoder failure
+        """
+        try XCTUnwrap(svg.data(using: .utf8)).write(to: url)
+
+        do {
+            let decoded = try ImageDecodeService().decode(url: url, format: .svg)
+            XCTAssertTrue(pixelColor(in: decoded.cgImage, x: 4, y: 6)?.isPredominantlyRed == true)
+            XCTAssertTrue(pixelColor(in: decoded.cgImage, x: 19, y: 6)?.isPredominantlyBlue == true)
+        } catch ImageDecodeError.cannotDecodeImage {
+            // An honest failure is preferable to a partial image.
+        } catch {
+            XCTFail("Unexpected SVG decode error: \(error)")
+        }
+    }
+
     func testRequiredRasterFormatsHaveSystemDecoderRegistration() throws {
         let sourceTypes = Set(CGImageSourceCopyTypeIdentifiers() as? [String] ?? [])
         let formats: [SupportedImageFormat] = [.jpeg, .png, .gif, .tiff, .bmp, .heic, .heif, .webp, .avif]
@@ -294,5 +320,13 @@ final class ImageDecodeServiceTests: XCTestCase {
         let alpha: UInt8
 
         static let red = RGBA(red: 255, green: 0, blue: 0, alpha: 255)
+
+        var isPredominantlyRed: Bool {
+            alpha > 200 && red > 200 && Int(red) > Int(green) * 2 && Int(red) > Int(blue) * 2
+        }
+
+        var isPredominantlyBlue: Bool {
+            alpha > 200 && blue > 200 && Int(blue) > Int(red) * 2 && Int(blue) > Int(green) * 2
+        }
     }
 }

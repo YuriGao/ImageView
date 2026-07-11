@@ -575,6 +575,53 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertFalse(ViewerViewModel.canPreloadInBackground(.avif))
     }
 
+    func testFileVersionDetectsSameSizeRewriteWithRestoredModificationDate() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let url = root.appendingPathComponent("rewrite.png")
+        let originalData = Data("original".utf8)
+        let replacementData = Data("replaced".utf8)
+        XCTAssertEqual(originalData.count, replacementData.count)
+        try originalData.write(to: url)
+        let originalDate = try XCTUnwrap(
+            FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date
+        )
+        let originalVersion = try XCTUnwrap(CurrentFileVersion.read(at: url))
+
+        let handle = try FileHandle(forWritingTo: url)
+        try handle.write(contentsOf: replacementData)
+        try handle.synchronize()
+        try handle.close()
+        try FileManager.default.setAttributes([.modificationDate: originalDate], ofItemAtPath: url.path)
+
+        XCTAssertEqual(try Data(contentsOf: url), replacementData)
+        XCTAssertNotEqual(CurrentFileVersion.read(at: url), originalVersion)
+    }
+
+    func testFileVersionDetectsAtomicReplacementWithSameSizeAndModificationDate() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let url = root.appendingPathComponent("replacement.png")
+        let originalData = Data("original".utf8)
+        let replacementData = Data("replaced".utf8)
+        XCTAssertEqual(originalData.count, replacementData.count)
+        try originalData.write(to: url)
+        let originalDate = try XCTUnwrap(
+            FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date
+        )
+        let originalVersion = try XCTUnwrap(CurrentFileVersion.read(at: url))
+
+        try replacementData.write(to: url, options: .atomic)
+        try FileManager.default.setAttributes([.modificationDate: originalDate], ofItemAtPath: url.path)
+
+        XCTAssertEqual(try Data(contentsOf: url), replacementData)
+        XCTAssertNotEqual(CurrentFileVersion.read(at: url), originalVersion)
+    }
+
     func testRefreshRemovesExternallyDeletedCurrentItemAndDisplaysNextImage() async throws {
         let deletedURL = URL(fileURLWithPath: "/tmp/a.png")
         let nextURL = URL(fileURLWithPath: "/tmp/b.png")
@@ -1050,8 +1097,20 @@ private struct StubDecoder {
 }
 
 private final class FileVersionSequence: @unchecked Sendable {
-    static let initial = CurrentFileVersion(modificationDate: Date(timeIntervalSince1970: 1), fileSize: 1)
-    static let replacement = CurrentFileVersion(modificationDate: Date(timeIntervalSince1970: 2), fileSize: 2)
+    static let initial = CurrentFileVersion(
+        device: 1,
+        inode: 1,
+        fileSize: 1,
+        modificationNanoseconds: 1,
+        changeNanoseconds: 1
+    )
+    static let replacement = CurrentFileVersion(
+        device: 1,
+        inode: 1,
+        fileSize: 2,
+        modificationNanoseconds: 2,
+        changeNanoseconds: 2
+    )
 
     private var values: [URL: [CurrentFileVersion?]]
     private var readCounts: [URL: Int] = [:]
