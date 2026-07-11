@@ -69,6 +69,22 @@ final class PreferencesWindowControllerTests: XCTestCase {
         XCTAssertLessThanOrEqual(svgFrame.minY - applyFrame.maxY, 24)
     }
 
+    func testWindowHeightTracksVisibleFormatCount() throws {
+        let controller = makeController(preferredLanguages: ["en"])
+        let window = try XCTUnwrap(controller.window)
+        let content = try XCTUnwrap(window.contentView)
+        let showAll = try XCTUnwrap(content.viewWithIdentifier("fileAssociation.showAll") as? NSButton)
+        let collapsedHeight = window.contentLayoutRect.height
+
+        showAll.performClick(nil)
+        let expandedHeight = window.contentLayoutRect.height
+        showAll.performClick(nil)
+
+        XCTAssertLessThan(collapsedHeight, 520)
+        XCTAssertGreaterThan(expandedHeight, collapsedHeight + 100)
+        XCTAssertEqual(window.contentLayoutRect.height, collapsedHeight, accuracy: 1)
+    }
+
     func testSelectingFormatEnablesApplyAndRendersExtensionAndDefaultStatus() throws {
         let previewURL = URL(fileURLWithPath: "/System/Applications/Preview.app")
         let controller = makeController(

@@ -18,6 +18,7 @@ final class PreferencesWindowController: NSWindowController {
     private let showAllButton = NSButton()
     private let applyButton = NSButton()
     private let summaryLabel = NSTextField(labelWithString: "")
+    private var contentStack: NSStackView!
     private var rowControls: [SupportedImageFormat: (checkbox: NSButton, status: NSTextField)] = [:]
     private var renderedFormats: [SupportedImageFormat] = []
 
@@ -52,6 +53,7 @@ final class PreferencesWindowController: NSWindowController {
     override func showWindow(_ sender: Any?) {
         fileAssociationModel.refreshStatuses()
         render()
+        updateWindowHeight(animated: false)
         window?.center()
         super.showWindow(sender)
     }
@@ -120,7 +122,7 @@ final class PreferencesWindowController: NSWindowController {
         summaryLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
         applyButton.setContentHuggingPriority(.required, for: .horizontal)
 
-        let contentStack = NSStackView(views: [
+        contentStack = NSStackView(views: [
             heading(text("settings.general.title")), generalStack, separator,
             heading(text("settings.fileAssociations.title"), identifier: "fileAssociation.title"),
             actions, rowsStack, footer
@@ -137,7 +139,7 @@ final class PreferencesWindowController: NSWindowController {
             contentStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
             contentStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -24),
             contentStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 20),
-            contentStack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -20),
+            contentStack.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -20),
             separator.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             rowsStack.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             footer.widthAnchor.constraint(equalTo: contentStack.widthAnchor)
@@ -164,6 +166,7 @@ final class PreferencesWindowController: NSWindowController {
             .store(in: &cancellables)
         syncGeneralControls()
         render()
+        updateWindowHeight(animated: false)
     }
 
     private func rebuildRowsIfNeeded() {
@@ -241,6 +244,18 @@ final class PreferencesWindowController: NSWindowController {
         String(format: text(key), locale: Locale(identifier: preferredLanguages.first ?? "en"), arguments: arguments)
     }
 
+    private func updateWindowHeight(animated: Bool) {
+        guard let window, let contentStack else { return }
+        contentStack.layoutSubtreeIfNeeded()
+        let contentHeight = ceil(contentStack.fittingSize.height) + 40
+        let currentFrame = window.frame
+        let contentRect = NSRect(x: 0, y: 0, width: 560, height: contentHeight)
+        var targetFrame = window.frameRect(forContentRect: contentRect)
+        targetFrame.origin.x = currentFrame.minX
+        targetFrame.origin.y = currentFrame.maxY - targetFrame.height
+        window.setFrame(targetFrame, display: true, animate: animated && window.isVisible)
+    }
+
     private func summaryText() -> String {
         switch fileAssociationModel.summary {
         case .success(let count): return localizedFormat("settings.fileAssociations.success", count)
@@ -294,6 +309,7 @@ final class PreferencesWindowController: NSWindowController {
     @objc private func toggleShowsAllFormats(_ sender: NSButton) {
         fileAssociationModel.setShowsAllFormats(!fileAssociationModel.showsAllFormats)
         render()
+        updateWindowHeight(animated: true)
     }
 
     @objc private func applySelectedFormats(_ sender: NSButton) {
