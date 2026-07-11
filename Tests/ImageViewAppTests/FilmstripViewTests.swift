@@ -56,4 +56,85 @@ final class FilmstripViewTests: XCTestCase {
         XCTAssertEqual(selected?.url, first.url)
         XCTAssertEqual(selected?.format, .png)
     }
+
+    func testMiddleSelectionIsCenteredInViewport() {
+        let items = makeItems(count: 7)
+        let filmstrip = FilmstripView()
+        filmstrip.frame = NSRect(x: 0, y: 0, width: 360, height: 78)
+
+        filmstrip.apply(items: items, current: items[3])
+        filmstrip.layoutSubtreeIfNeeded()
+
+        assertSelectedThumbnailCentered(filmstrip)
+    }
+
+    func testFirstAndLastSelectionsUseEmptySpaceToRemainCentered() {
+        let items = makeItems(count: 7)
+        let filmstrip = FilmstripView()
+        filmstrip.frame = NSRect(x: 0, y: 0, width: 360, height: 78)
+
+        filmstrip.apply(items: items, current: items.first)
+        filmstrip.layoutSubtreeIfNeeded()
+        assertSelectedThumbnailCentered(filmstrip)
+        XCTAssertGreaterThan(filmstrip.debugLeadingSpacerWidth(), 0)
+
+        filmstrip.apply(items: items, current: items.last)
+        filmstrip.layoutSubtreeIfNeeded()
+        assertSelectedThumbnailCentered(filmstrip)
+        XCTAssertGreaterThan(filmstrip.debugTrailingSpacerWidth(), 0)
+    }
+
+    func testViewportResizeRecomputesSpacersAndRecentersSelection() {
+        let items = makeItems(count: 7)
+        let filmstrip = FilmstripView()
+        filmstrip.frame = NSRect(x: 0, y: 0, width: 300, height: 78)
+        filmstrip.apply(items: items, current: items[3])
+        filmstrip.layoutSubtreeIfNeeded()
+        let originalSpacerWidth = filmstrip.debugLeadingSpacerWidth()
+
+        filmstrip.frame.size.width = 460
+        filmstrip.layoutSubtreeIfNeeded()
+
+        assertSelectedThumbnailCentered(filmstrip)
+        XCTAssertGreaterThan(filmstrip.debugLeadingSpacerWidth(), originalSpacerWidth)
+    }
+
+    func testNilOrMissingSelectionReturnsToLeadingPosition() {
+        let items = makeItems(count: 5)
+        let filmstrip = FilmstripView()
+        filmstrip.frame = NSRect(x: 0, y: 0, width: 300, height: 78)
+        filmstrip.apply(items: items, current: items[3])
+
+        filmstrip.apply(items: items, current: nil)
+        XCTAssertEqual(filmstrip.contentView.bounds.origin.x, 0, accuracy: 0.5)
+
+        let missing = ImageItem(url: URL(fileURLWithPath: "/tmp/missing.png"), format: .png)
+        filmstrip.apply(items: items, current: missing)
+        XCTAssertEqual(filmstrip.contentView.bounds.origin.x, 0, accuracy: 0.5)
+    }
+
+    private func makeItems(count: Int) -> [ImageItem] {
+        (0..<count).map {
+            ImageItem(url: URL(fileURLWithPath: "/tmp/\($0).png"), format: .png)
+        }
+    }
+
+    private func assertSelectedThumbnailCentered(
+        _ filmstrip: FilmstripView,
+        accuracy: CGFloat = 0.5,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        guard let selectedCenter = filmstrip.debugSelectedCenterInViewport() else {
+            XCTFail("Expected a selected thumbnail", file: file, line: line)
+            return
+        }
+        XCTAssertEqual(
+            selectedCenter,
+            filmstrip.contentView.bounds.midX,
+            accuracy: accuracy,
+            file: file,
+            line: line
+        )
+    }
 }
