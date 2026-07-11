@@ -4,10 +4,17 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let settings: AppSettings
     private let defaultApplicationService: DefaultApplicationServicing
-    private var mainWindowController: MainWindowController?
+    private var imageWindowControllers: [MainWindowController] = []
+    private weak var activeImageWindowController: MainWindowController?
     private var preferencesWindowController: PreferencesWindowController?
-    private var pendingLaunchURL: URL?
+    private var pendingLaunchURLs: [URL] = []
     private var didFinishLaunching = false
+    private var didRequestTermination = false
+    private let makeImageWindowController: (AppSettings) -> MainWindowController
+    private let showImageWindow: (MainWindowController) -> Void
+    private let openImageURL: (MainWindowController, URL) -> Void
+    private let terminateApplication: () -> Void
+    private weak var constructedMainMenu: NSMenu?
     private var preferencesMenuItem: NSMenuItem?
     private var toggleFilmstripMenuItem: NSMenuItem?
     private var toggleInspectorMenuItem: NSMenuItem?
@@ -28,53 +35,98 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     init(
         settings: AppSettings = .shared,
-        defaultApplicationService: DefaultApplicationServicing = WorkspaceDefaultApplicationService()
+        defaultApplicationService: DefaultApplicationServicing = WorkspaceDefaultApplicationService(),
+        makeImageWindowController: @escaping (AppSettings) -> MainWindowController = { MainWindowController(settings: $0) },
+        showImageWindow: @escaping (MainWindowController) -> Void = { $0.showWindow(nil) },
+        openImageURL: @escaping (MainWindowController, URL) -> Void = { $0.open(url: $1) },
+        terminateApplication: @escaping () -> Void = { NSApp.terminate(nil) }
     ) {
         self.settings = settings
         self.defaultApplicationService = defaultApplicationService
+        self.makeImageWindowController = makeImageWindowController
+        self.showImageWindow = showImageWindow
+        self.openImageURL = openImageURL
+        self.terminateApplication = terminateApplication
         super.init()
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        applyAppearance()
-        didFinishLaunching = true
-        showWindowIfNeeded()
-        installMainMenuIfNeeded()
-        if let url = pendingLaunchURL {
-            mainWindowController?.open(url: url)
-            pendingLaunchURL = nil
-        }
+        finishLaunching()
         NSApp.activate(ignoringOtherApps: true)
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
-        guard let url = urls.last ?? urls.first else {
-            return
-        }
-
         guard didFinishLaunching else {
-            pendingLaunchURL = url
+            pendingLaunchURLs.append(contentsOf: urls)
             return
         }
-
-        showWindowIfNeeded()
-        mainWindowController?.open(url: url)
+        openURLs(urls)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
     }
 
-    private func showWindowIfNeeded() {
-        if mainWindowController == nil {
-            mainWindowController = MainWindowController(settings: settings)
-            mainWindowController?.onSuccessfulOpen = { [weak self] url in
-                NSDocumentController.shared.noteNewRecentDocumentURL(url)
-                self?.rebuildOpenRecentMenu()
-            }
+    private func finishLaunching(installMenu: Bool = true) {
+        applyAppearance()
+        didFinishLaunching = true
+        if imageWindowControllers.isEmpty {
+            createImageWindow()
+        }
+        if installMenu {
+            installMainMenuIfNeeded()
+        }
+        let urls = pendingLaunchURLs
+        pendingLaunchURLs.removeAll()
+        openURLs(urls)
+    }
+
+    @discardableResult
+    private func createImageWindow() -> MainWindowController {
+        let controller = makeImageWindowController(settings)
+        controller.onSuccessfulOpen = { [weak self] url in
+            NSDocumentController.shared.noteNewRecentDocumentURL(url)
+            self?.rebuildOpenRecentMenu()
+        }
+        controller.onWindowDidBecomeKey = { [weak self] controller in
+            self?.imageWindowDidBecomeKey(controller)
+        }
+        controller.onWindowDidClose = { [weak self] controller in
+            self?.imageWindowDidClose(controller)
+        }
+        imageWindowControllers.append(controller)
+        activeImageWindowController = controller
+        showImageWindow(controller)
+        return controller
+    }
+
+    func openURLs(_ urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        for url in urls {
+            let controller = imageWindowControllers.first(where: { !$0.hasAssignedOpenRequest }) ?? createImageWindow()
+            activeImageWindowController = controller
+            openImageURL(controller, url)
+            showImageWindow(controller)
         }
         connectMenuTargets()
-        mainWindowController?.showWindow(nil)
+    }
+
+    func imageWindowDidBecomeKey(_ controller: MainWindowController) {
+        guard imageWindowControllers.contains(where: { $0 === controller }) else { return }
+        activeImageWindowController = controller
+        connectMenuTargets()
+    }
+
+    func imageWindowDidClose(_ controller: MainWindowController) {
+        guard let index = imageWindowControllers.firstIndex(where: { $0 === controller }) else { return }
+        imageWindowControllers.remove(at: index)
+        if activeImageWindowController === controller {
+            activeImageWindowController = imageWindowControllers.last
+        }
+        connectMenuTargets()
+        guard imageWindowControllers.isEmpty, !didRequestTermination else { return }
+        didRequestTermination = true
+        terminateApplication()
     }
 
     @objc private func showPreferences(_ sender: Any?) {
@@ -258,16 +310,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         helpMenuItem.submenu?.addItem(helpItem)
         mainMenu.addItem(helpMenuItem)
 
+        constructedMainMenu = mainMenu
         return mainMenu
     }
 
     @objc private func openImage(_ sender: Any?) {
         let panel = NSOpenPanel()
-        panel.allowsMultipleSelection = false
+        panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        showWindowIfNeeded()
-        mainWindowController?.open(url: url)
+        guard panel.runModal() == .OK else { return }
+        openURLs(panel.urls)
     }
 
     @objc private func showHelp(_ sender: Any?) {
@@ -317,8 +369,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openRecentImage(_ sender: NSMenuItem) {
         guard let url = sender.representedObject as? URL else { return }
-        showWindowIfNeeded()
-        mainWindowController?.open(url: url)
+        openURLs([url])
     }
 
     private func rebuildOpenRecentMenu() {
@@ -341,7 +392,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func connectMenuTargets() {
-        let target = mainWindowController
+        let target = menuTargetImageController
         preferencesMenuItem?.target = self
         toggleFilmstripMenuItem?.target = target
         toggleInspectorMenuItem?.target = target
@@ -357,16 +408,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         saveEditsMenuItem?.target = target
         saveEditsAsMenuItem?.target = target
         discardEditsMenuItem?.target = target
-        connectControllerActions(in: NSApp.mainMenu, target: target)
+        connectControllerActions(in: constructedMainMenu ?? NSApp.mainMenu, target: target)
     }
 
     private func connectControllerActions(in menu: NSMenu?, target: MainWindowController?) {
-        guard let menu, let target else { return }
+        guard let menu else { return }
         for item in menu.items {
-            if let action = item.action, target.responds(to: action) {
+            if let action = item.action,
+               MainWindowController.menuCommand(for: action) != nil ||
+               action == #selector(MainWindowController.toggleFilmstrip(_:)) ||
+               action == #selector(MainWindowController.toggleInspector(_:)) {
                 item.target = target
             }
             connectControllerActions(in: item.submenu, target: target)
+        }
+    }
+
+    private var menuTargetImageController: MainWindowController? {
+        if let keyWindow = NSApp.keyWindow,
+           let keyController = imageWindowControllers.first(where: { $0.window === keyWindow }) {
+            return keyController
+        }
+        if let activeImageWindowController,
+           imageWindowControllers.contains(where: { $0 === activeImageWindowController }) {
+            return activeImageWindowController
+        }
+        return imageWindowControllers.last
+    }
+
+    var imageWindowCount: Int { imageWindowControllers.count }
+    var imageWindowControllersForTesting: [MainWindowController] { imageWindowControllers }
+    var pendingURLsForTesting: [URL] { pendingLaunchURLs }
+    var activeImageWindowControllerForTesting: MainWindowController? { activeImageWindowController }
+
+    func finishLaunchingForTesting(installMenu: Bool = true) {
+        finishLaunching(installMenu: installMenu)
+    }
+
+    func connectMenuTargetsForTesting() {
+        connectMenuTargets()
+    }
+
+    func showPreferencesForTesting() {
+        if preferencesWindowController == nil {
+            preferencesWindowController = PreferencesWindowController(
+                settings: settings,
+                defaultApplicationService: defaultApplicationService
+            )
         }
     }
 }
