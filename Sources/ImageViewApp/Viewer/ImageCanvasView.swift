@@ -180,7 +180,7 @@ final class ImageCanvasView: NSView {
         }
 
         didNavigateDuringTrackpadScroll = true
-        accumulatedTrackpadDeltaX > 0 ? onNext?() : onPrevious?()
+        accumulatedTrackpadDeltaX > 0 ? onPrevious?() : onNext?()
     }
 
     private func resetTrackpadScrollState() {
