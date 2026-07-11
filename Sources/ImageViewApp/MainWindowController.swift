@@ -11,8 +11,8 @@ final class MainWindowController: NSWindowController {
     static let bottomBarInfoSymbolName = "info.circle"
     static let bottomBarStatusToInfoSpacing: CGFloat = 8
     static let filmstripOverlayHeight: CGFloat = 98
-    static let filmstripAutoHideDelay: TimeInterval = 1.8
-    static let pageControlsAutoHideDelay: TimeInterval = 1.5
+    static let overlayAutoHideDelay: TimeInterval = 1.8
+    static let overlayFadeOutDuration: TimeInterval = 0.18
     var onSuccessfulOpen: ((URL) -> Void)? {
         didSet { viewModel.onSuccessfulOpen = onSuccessfulOpen }
     }
@@ -778,7 +778,7 @@ final class MainWindowController: NSWindowController {
             pointerIsOverOverlay: isPointerOverFilmstrip
         ) else { return }
         let generation = filmstripVisibilityGeneration
-        filmstripHideTimer = Timer.scheduledTimer(withTimeInterval: Self.filmstripAutoHideDelay, repeats: false) { [weak self] _ in
+        filmstripHideTimer = Timer.scheduledTimer(withTimeInterval: Self.overlayAutoHideDelay, repeats: false) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self, self.filmstripVisibilityGeneration == generation else { return }
                 self.hideFilmstripOverlay()
@@ -799,7 +799,7 @@ final class MainWindowController: NSWindowController {
 
         let generation = filmstripVisibilityGeneration
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.18
+            context.duration = Self.overlayFadeOutDuration
             filmstripOverlayView.animator().alphaValue = 0
         } completionHandler: { [weak self] in
             Task { @MainActor [weak self] in
@@ -841,7 +841,7 @@ final class MainWindowController: NSWindowController {
         ) else { return }
         let generation = pageControlsVisibilityGeneration
         pageControlsHideTimer = Timer.scheduledTimer(
-            withTimeInterval: Self.pageControlsAutoHideDelay,
+            withTimeInterval: Self.overlayAutoHideDelay,
             repeats: false
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
@@ -863,7 +863,7 @@ final class MainWindowController: NSWindowController {
 
         let generation = pageControlsVisibilityGeneration
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.16
+            context.duration = Self.overlayFadeOutDuration
             pageNavigationOverlayView.animator().alphaValue = 0
         } completionHandler: { [weak self] in
             Task { @MainActor [weak self] in

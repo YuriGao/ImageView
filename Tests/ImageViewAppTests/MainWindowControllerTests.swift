@@ -318,6 +318,11 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertTrue(MainWindowController.shouldAutoHidePageControls(pointerIsOverControls: false))
     }
 
+    func testFilmstripAndPageControlsShareDisappearanceTiming() {
+        XCTAssertEqual(MainWindowController.overlayAutoHideDelay, 1.8)
+        XCTAssertEqual(MainWindowController.overlayFadeOutDuration, 0.18)
+    }
+
     func testInspectorMenuValidationReflectsSettingState() {
         let defaults = UserDefaults(suiteName: "ImageViewAppTests.Inspector.\(UUID().uuidString)")!
         let settings = AppSettings(defaults: defaults)
