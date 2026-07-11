@@ -19,6 +19,10 @@
 "menu.view.zoomToFit" = "Zoom to Fit";
 "menu.view.showFilmstrip" = "Show Filmstrip";
 "menu.view.showInfo" = "Show Info";
+"menu.view.appearance" = "Appearance";
+"menu.view.appearance.system" = "System";
+"menu.view.appearance.light" = "Light";
+"menu.view.appearance.dark" = "Dark";
 "menu.view.enterFullScreen" = "Enter Full Screen";
 "menu.image.rotateClockwise" = "Rotate Clockwise";
 "menu.image.rotateCounterclockwise" = "Rotate Counterclockwise";

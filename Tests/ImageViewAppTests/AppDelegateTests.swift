@@ -42,9 +42,60 @@ final class AppDelegateTests: XCTestCase {
         XCTAssertNotNil(menu.items[5].submenu?.item(withTitle: "ImageView 帮助"))
     }
 
+    func testAppearanceMenuContainsThreeLocalizedMutuallyExclusiveChoices() {
+        let settings = AppSettings(defaults: makeIsolatedDefaults())
+        let delegate = AppDelegate(settings: settings)
+        let menu = delegate.makeMainMenu(preferredLanguages: ["en"])
+        let appearanceMenu = menu.items[2].submenu?
+            .item(withTitle: "Appearance")?.submenu
+
+        XCTAssertEqual(appearanceMenu?.items.map(\.title), ["System", "Light", "Dark"])
+        XCTAssertEqual(appearanceMenu?.items.map(\.state), [.on, .off, .off])
+        XCTAssertTrue(appearanceMenu?.items.allSatisfy { $0.target === delegate } == true)
+        XCTAssertTrue(appearanceMenu?.items.allSatisfy { $0.keyEquivalent.isEmpty } == true)
+    }
+
+    func testAppearanceMenuLocalizesForSimplifiedChinese() {
+        let delegate = AppDelegate(settings: AppSettings(defaults: makeIsolatedDefaults()))
+        let menu = delegate.makeMainMenu(preferredLanguages: ["zh-Hans"])
+        let appearanceMenu = menu.items[2].submenu?
+            .item(withTitle: "外观")?.submenu
+
+        XCTAssertEqual(appearanceMenu?.items.map(\.title), ["跟随系统", "浅色", "深色"])
+    }
+
+    func testAppearanceNameMapsSettingsToAppKitAppearances() {
+        XCTAssertNil(AppDelegate.appearanceName(for: .system))
+        XCTAssertEqual(AppDelegate.appearanceName(for: .light), .aqua)
+        XCTAssertEqual(AppDelegate.appearanceName(for: .dark), .darkAqua)
+    }
+
+    func testAppearanceMenuSelectionPersistsAndUpdatesCheckmarks() throws {
+        let settings = AppSettings(defaults: makeIsolatedDefaults())
+        let delegate = AppDelegate(settings: settings)
+        let menu = delegate.makeMainMenu(preferredLanguages: ["en"])
+        let appearanceMenu = menu.items[2].submenu?
+            .item(withTitle: "Appearance")?.submenu
+
+        let darkItem = try XCTUnwrap(appearanceMenu?.item(withTitle: "Dark"))
+        let action = try XCTUnwrap(darkItem.action)
+        XCTAssertTrue(NSApplication.shared.sendAction(action, to: darkItem.target, from: darkItem))
+
+        XCTAssertEqual(settings.appearance, .dark)
+        XCTAssertEqual(appearanceMenu?.items.map(\.state), [.off, .off, .on])
+        NSApplication.shared.appearance = nil
+    }
+
     func testAppTerminatesAfterLastWindowCloses() {
         let delegate = AppDelegate()
 
         XCTAssertTrue(delegate.applicationShouldTerminateAfterLastWindowClosed(NSApplication.shared))
+    }
+
+    private func makeIsolatedDefaults() -> UserDefaults {
+        let suiteName = "ImageViewAppTests.AppDelegate.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        return defaults
     }
 }

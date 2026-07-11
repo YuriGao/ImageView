@@ -2,7 +2,7 @@ import AppKit
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let settings = AppSettings.shared
+    private let settings: AppSettings
     private var mainWindowController: MainWindowController?
     private var preferencesWindowController: PreferencesWindowController?
     private var pendingLaunchURL: URL?
@@ -23,8 +23,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var saveEditsAsMenuItem: NSMenuItem?
     private var discardEditsMenuItem: NSMenuItem?
     private var openRecentMenu: NSMenu?
+    private var appearanceMenuItems: [AppAppearance: NSMenuItem] = [:]
+
+    init(settings: AppSettings = .shared) {
+        self.settings = settings
+        super.init()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        applyAppearance()
         didFinishLaunching = true
         showWindowIfNeeded()
         installMainMenuIfNeeded()
@@ -154,6 +161,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         toggleInspectorMenuItem.keyEquivalentModifierMask = [.command, .option]
         viewMenu.addItem(toggleInspectorMenuItem)
         viewMenu.addItem(.separator())
+
+        let appearanceMenuItem = NSMenuItem(title: text("menu.view.appearance"), action: nil, keyEquivalent: "")
+        let appearanceMenu = NSMenu(title: text("menu.view.appearance"))
+        appearanceMenuItem.submenu = appearanceMenu
+        viewMenu.addItem(appearanceMenuItem)
+
+        let appearanceChoices: [(AppAppearance, String, Selector)] = [
+            (.system, "menu.view.appearance.system", #selector(selectSystemAppearance(_:))),
+            (.light, "menu.view.appearance.light", #selector(selectLightAppearance(_:))),
+            (.dark, "menu.view.appearance.dark", #selector(selectDarkAppearance(_:)))
+        ]
+        appearanceMenuItems.removeAll()
+        for (appearance, titleKey, action) in appearanceChoices {
+            let item = NSMenuItem(title: text(titleKey), action: nil, keyEquivalent: "")
+            item.action = action
+            item.target = self
+            appearanceMenu.addItem(item)
+            appearanceMenuItems[appearance] = item
+        }
+        updateAppearanceMenuState()
+        viewMenu.addItem(.separator())
         viewMenu.addItem(NSMenuItem(title: text("menu.view.enterFullScreen"), action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f"))
 
         let editMenuItem = NSMenuItem(title: text("menu.image"), action: nil, keyEquivalent: "")
@@ -240,6 +268,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.informativeText = "Open an image, use the View menu to browse and zoom, and use the Image menu to edit or save changes."
         alert.addButton(withTitle: "OK")
         alert.runModal()
+    }
+
+    static func appearanceName(for appearance: AppAppearance) -> NSAppearance.Name? {
+        switch appearance {
+        case .system: nil
+        case .light: .aqua
+        case .dark: .darkAqua
+        }
+    }
+
+    func applyAppearance(to application: NSApplication = NSApp) {
+        application.appearance = Self.appearanceName(for: settings.appearance)
+            .flatMap(NSAppearance.init(named:))
+    }
+
+    @objc private func selectSystemAppearance(_ sender: Any?) {
+        selectAppearance(.system)
+    }
+
+    @objc private func selectLightAppearance(_ sender: Any?) {
+        selectAppearance(.light)
+    }
+
+    @objc private func selectDarkAppearance(_ sender: Any?) {
+        selectAppearance(.dark)
+    }
+
+    private func selectAppearance(_ appearance: AppAppearance) {
+        settings.appearance = appearance
+        applyAppearance()
+        updateAppearanceMenuState()
+    }
+
+    private func updateAppearanceMenuState() {
+        for (appearance, item) in appearanceMenuItems {
+            item.state = appearance == settings.appearance ? .on : .off
+        }
     }
 
     @objc private func openRecentImage(_ sender: NSMenuItem) {

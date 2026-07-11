@@ -19,6 +19,10 @@
 "menu.view.zoomToFit" = "缩放以适合窗口";
 "menu.view.showFilmstrip" = "显示胶片预览";
 "menu.view.showInfo" = "显示信息";
+"menu.view.appearance" = "外观";
+"menu.view.appearance.system" = "跟随系统";
+"menu.view.appearance.light" = "浅色";
+"menu.view.appearance.dark" = "深色";
 "menu.view.enterFullScreen" = "进入全屏幕";
 "menu.image.rotateClockwise" = "顺时针旋转";
 "menu.image.rotateCounterclockwise" = "逆时针旋转";
