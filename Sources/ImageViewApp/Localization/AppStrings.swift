@@ -12,7 +12,9 @@ enum AppStrings {
     ]
 
     static let settingsKeys = [
-        "settings.title", "settings.general.title",
+        "settings.title", "settings.general.title", "settings.general.showsFilmstrip",
+        "settings.general.showsInspector", "settings.general.confirmsDelete",
+        "settings.general.navigationTransitions",
         "settings.fileAssociations.title", "settings.fileAssociations.selectCommon",
         "settings.fileAssociations.showAll", "settings.fileAssociations.showLess",
         "settings.fileAssociations.apply", "settings.fileAssociations.applying",

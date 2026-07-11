@@ -38,6 +38,10 @@
 "menu.help.imageView" = "ImageView 帮助";
 "settings.title" = "ImageView 设置";
 "settings.general.title" = "通用";
+"settings.general.showsFilmstrip" = "显示胶片预览";
+"settings.general.showsInspector" = "显示信息面板";
+"settings.general.confirmsDelete" = "移到废纸篓前确认";
+"settings.general.navigationTransitions" = "使用图像切换动画";
 "settings.fileAssociations.title" = "文件关联";
 "settings.fileAssociations.selectCommon" = "选择常用格式";
 "settings.fileAssociations.showAll" = "显示全部格式";

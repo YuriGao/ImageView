@@ -1,4 +1,5 @@
 import AppKit
+import ImageViewCore
 import UniformTypeIdentifiers
 import XCTest
 @testable import ImageViewApp
@@ -32,17 +33,76 @@ final class PreferencesWindowControllerTests: XCTestCase {
             controller.window?.contentView?.viewWithIdentifier("fileAssociation.title") as? NSTextField
         )
         XCTAssertEqual(title.stringValue, "文件关联")
+        let generalButtons = ["showsFilmstrip", "showsInspector", "confirmsDelete", "navigationTransitions"].compactMap {
+            controller.window?.contentView?.viewWithIdentifier("settings.\($0)") as? NSButton
+        }
+        XCTAssertEqual(generalButtons.map(\.title), ["显示胶片预览", "显示信息面板", "移到废纸篓前确认", "使用图像切换动画"])
+    }
+
+    func testShowAllRevealsExactlyTenFormats() throws {
+        let controller = makeController(preferredLanguages: ["en"])
+        let content = try XCTUnwrap(controller.window?.contentView)
+        let button = try XCTUnwrap(content.viewWithIdentifier("fileAssociation.showAll") as? NSButton)
+
+        button.performClick(nil)
+
+        XCTAssertEqual(SupportedImageFormat.allCases.filter {
+            content.viewWithIdentifier("fileAssociation.\($0.rawValue)") != nil
+        }.count, 10)
+    }
+
+    func testSelectingFormatEnablesApplyAndRendersExtensionAndDefaultStatus() throws {
+        let previewURL = URL(fileURLWithPath: "/System/Applications/Preview.app")
+        let controller = makeController(
+            preferredLanguages: ["en"],
+            service: ControllerServiceFake(defaults: [.jpeg: previewURL])
+        )
+        controller.showWindow(nil)
+        let content = try XCTUnwrap(controller.window?.contentView)
+        let checkbox = try XCTUnwrap(content.viewWithIdentifier("fileAssociation.jpeg.checkbox") as? NSButton)
+        let extensions = try XCTUnwrap(content.viewWithIdentifier("fileAssociation.jpeg.extensions") as? NSTextField)
+        let status = try XCTUnwrap(content.viewWithIdentifier("fileAssociation.jpeg.status") as? NSTextField)
+        let apply = try XCTUnwrap(content.viewWithIdentifier("fileAssociation.apply") as? NSButton)
+
+        checkbox.performClick(nil)
+
+        XCTAssertTrue(apply.isEnabled)
+        XCTAssertEqual(extensions.stringValue, "JPG, JPEG")
+        XCTAssertEqual(status.stringValue, "Default: Preview")
+        XCTAssertEqual(status.textColor, .secondaryLabelColor)
+    }
+
+    func testApplyingDisablesMutationControlsAndUsesApplyingTitle() async throws {
+        let service = ControllerServiceFake(suspendsSet: true)
+        let controller = makeController(preferredLanguages: ["en"], service: service)
+        let content = try XCTUnwrap(controller.window?.contentView)
+        let checkbox = try XCTUnwrap(content.viewWithIdentifier("fileAssociation.jpeg.checkbox") as? NSButton)
+        let apply = try XCTUnwrap(content.viewWithIdentifier("fileAssociation.apply") as? NSButton)
+        let showAll = try XCTUnwrap(content.viewWithIdentifier("fileAssociation.showAll") as? NSButton)
+        checkbox.performClick(nil)
+
+        apply.performClick(nil)
+        await service.waitUntilSetStarts()
+
+        XCTAssertEqual(apply.title, "Setting defaults…")
+        XCTAssertFalse(apply.isEnabled)
+        XCTAssertFalse(checkbox.isEnabled)
+        XCTAssertFalse(showAll.isEnabled)
+        service.resumeSet()
     }
 }
 
 @MainActor
-private func makeController(preferredLanguages: [String]) -> PreferencesWindowController {
+private func makeController(
+    preferredLanguages: [String],
+    service: ControllerServiceFake = ControllerServiceFake()
+) -> PreferencesWindowController {
     let suiteName = "PreferencesWindowControllerTests.\(UUID().uuidString)"
     let defaults = UserDefaults(suiteName: suiteName)!
     defaults.removePersistentDomain(forName: suiteName)
     return PreferencesWindowController(
         settings: AppSettings(defaults: defaults),
-        defaultApplicationService: ControllerServiceFake(),
+        defaultApplicationService: service,
         applicationURL: { URL(fileURLWithPath: "/Applications/ImageView.app") },
         preferredLanguages: preferredLanguages
     )
@@ -50,8 +110,36 @@ private func makeController(preferredLanguages: [String]) -> PreferencesWindowCo
 
 @MainActor
 private final class ControllerServiceFake: DefaultApplicationServicing {
-    func defaultApplicationURL(for contentType: UTType) -> URL? { nil }
-    func setDefaultApplication(at applicationURL: URL, for contentType: UTType) async throws {}
+    private let defaults: [UTType: URL]
+    private let suspendsSet: Bool
+    private var startedContinuation: CheckedContinuation<Void, Never>?
+    private var setContinuation: CheckedContinuation<Void, Never>?
+    private var didStart = false
+
+    init(defaults: [UTType: URL] = [:], suspendsSet: Bool = false) {
+        self.defaults = defaults
+        self.suspendsSet = suspendsSet
+    }
+
+    func defaultApplicationURL(for contentType: UTType) -> URL? { defaults[contentType] }
+
+    func setDefaultApplication(at applicationURL: URL, for contentType: UTType) async throws {
+        didStart = true
+        startedContinuation?.resume()
+        startedContinuation = nil
+        guard suspendsSet else { return }
+        await withCheckedContinuation { setContinuation = $0 }
+    }
+
+    func waitUntilSetStarts() async {
+        if didStart { return }
+        await withCheckedContinuation { startedContinuation = $0 }
+    }
+
+    func resumeSet() {
+        setContinuation?.resume()
+        setContinuation = nil
+    }
 }
 
 private extension NSView {

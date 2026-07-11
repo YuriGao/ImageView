@@ -3,10 +3,15 @@ import Foundation
 import ImageViewCore
 import UniformTypeIdentifiers
 
+enum FileAssociationRowError: Equatable {
+    case unsupportedContentType
+    case service(String)
+}
+
 struct FileAssociationRowState: Equatable {
     var defaultApplicationName: String?
     var isImageViewDefault = false
-    var errorDescription: String?
+    var error: FileAssociationRowError?
 }
 
 enum FileAssociationSummary: Equatable {
@@ -75,8 +80,8 @@ final class FileAssociationSettingsModel: ObservableObject {
             let defaultURL = service.defaultApplicationURL(for: contentType)?.standardizedFileURL
             rows[format] = FileAssociationRowState(
                 defaultApplicationName: defaultURL?.deletingPathExtension().lastPathComponent,
-                isImageViewDefault: defaultURL == imageViewURL,
-                errorDescription: rows[format]?.errorDescription
+                isImageViewDefault: imageViewURL.map { defaultURL == $0 } ?? false,
+                error: rows[format]?.error
             )
         }
     }
@@ -97,17 +102,17 @@ final class FileAssociationSettingsModel: ObservableObject {
         for format in formats {
             guard let contentType = format.contentType else {
                 failed += 1
-                rows[format, default: FileAssociationRowState()].errorDescription = "Unsupported content type"
+                rows[format, default: FileAssociationRowState()].error = .unsupportedContentType
                 continue
             }
             do {
                 try await service.setDefaultApplication(at: appURL, for: contentType)
                 succeeded += 1
                 selectedFormats.remove(format)
-                rows[format, default: FileAssociationRowState()].errorDescription = nil
+                rows[format, default: FileAssociationRowState()].error = nil
             } catch {
                 failed += 1
-                rows[format, default: FileAssociationRowState()].errorDescription = error.localizedDescription
+                rows[format, default: FileAssociationRowState()].error = .service(error.localizedDescription)
             }
         }
 

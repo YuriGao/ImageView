@@ -54,6 +54,14 @@ final class FileAssociationSettingsModelTests: XCTestCase {
         XCTAssertEqual(model.rows[.png]?.defaultApplicationName, "Preview")
     }
 
+    func testRefreshDoesNotTreatMissingApplicationURLsAsImageViewDefault() {
+        let model = makeModel(service: DefaultApplicationServiceFake(), appURL: nil)
+
+        model.refreshStatuses()
+
+        XCTAssertFalse(model.rows[.jpeg]?.isImageViewDefault == true)
+    }
+
     func testApplyChangesOnlySelectedFormatsAndClearsSuccesses() async {
         let service = DefaultApplicationServiceFake()
         let model = makeModel(service: service)
@@ -77,7 +85,7 @@ final class FileAssociationSettingsModelTests: XCTestCase {
 
         XCTAssertEqual(model.selectedFormats, [.png])
         XCTAssertEqual(model.summary, .partialSuccess(succeeded: 1, failed: 1))
-        XCTAssertNotNil(model.rows[.png]?.errorDescription)
+        XCTAssertEqual(model.rows[.png]?.error, .service("Denied"))
     }
 
     func testInvalidApplicationBundlePreventsMutation() async {

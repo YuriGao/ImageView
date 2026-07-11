@@ -38,6 +38,10 @@
 "menu.help.imageView" = "ImageView Help";
 "settings.title" = "ImageView Settings";
 "settings.general.title" = "General";
+"settings.general.showsFilmstrip" = "Show filmstrip";
+"settings.general.showsInspector" = "Show info panel";
+"settings.general.confirmsDelete" = "Confirm before moving to Trash";
+"settings.general.navigationTransitions" = "Animate image transitions";
 "settings.fileAssociations.title" = "File Associations";
 "settings.fileAssociations.selectCommon" = "Select Common Formats";
 "settings.fileAssociations.showAll" = "Show All Formats";

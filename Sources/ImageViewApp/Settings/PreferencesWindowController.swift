@@ -9,10 +9,10 @@ final class PreferencesWindowController: NSWindowController {
     private let fileAssociationModel: FileAssociationSettingsModel
     private var cancellables: Set<AnyCancellable> = []
 
-    private let showsFilmstripButton = NSButton(checkboxWithTitle: "Show filmstrip", target: nil, action: nil)
-    private let showsInspectorButton = NSButton(checkboxWithTitle: "Show info panel", target: nil, action: nil)
-    private let confirmsDeleteButton = NSButton(checkboxWithTitle: "Confirm before moving to Trash", target: nil, action: nil)
-    private let navigationTransitionsButton = NSButton(checkboxWithTitle: "Animate image transitions", target: nil, action: nil)
+    private let showsFilmstripButton = NSButton()
+    private let showsInspectorButton = NSButton()
+    private let confirmsDeleteButton = NSButton()
+    private let navigationTransitionsButton = NSButton()
     private let rowsStack = NSStackView()
     private let selectCommonButton = NSButton()
     private let showAllButton = NSButton()
@@ -67,6 +67,10 @@ final class PreferencesWindowController: NSWindowController {
 
     private func setup() {
         guard let window else { return }
+        configureGeneralButton(showsFilmstripButton, key: "settings.general.showsFilmstrip", identifier: "settings.showsFilmstrip")
+        configureGeneralButton(showsInspectorButton, key: "settings.general.showsInspector", identifier: "settings.showsInspector")
+        configureGeneralButton(confirmsDeleteButton, key: "settings.general.confirmsDelete", identifier: "settings.confirmsDelete")
+        configureGeneralButton(navigationTransitionsButton, key: "settings.general.navigationTransitions", identifier: "settings.navigationTransitions")
         let generalStack = NSStackView(views: [
             showsFilmstripButton, showsInspectorButton,
             confirmsDeleteButton, navigationTransitionsButton
@@ -84,6 +88,7 @@ final class PreferencesWindowController: NSWindowController {
         selectCommonButton.action = #selector(selectCommonFormats(_:))
 
         showAllButton.title = text("settings.fileAssociations.showAll")
+        showAllButton.identifier = NSUserInterfaceItemIdentifier("fileAssociation.showAll")
         showAllButton.bezelStyle = .inline
         showAllButton.target = self
         showAllButton.action = #selector(toggleShowsAllFormats(_:))
@@ -184,13 +189,16 @@ final class PreferencesWindowController: NSWindowController {
 
         for format in formats {
             let checkbox = NSButton(checkboxWithTitle: text("settings.format.\(format.rawValue)"), target: self, action: #selector(toggleFormat(_:)))
+            checkbox.identifier = NSUserInterfaceItemIdentifier("fileAssociation.\(format.rawValue).checkbox")
             checkbox.cell?.representedObject = format.rawValue
             checkbox.setContentHuggingPriority(.required, for: .horizontal)
             let extensions = NSTextField(labelWithString: extensionLabel(for: format))
+            extensions.identifier = NSUserInterfaceItemIdentifier("fileAssociation.\(format.rawValue).extensions")
             extensions.textColor = .secondaryLabelColor
             extensions.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
             extensions.setContentHuggingPriority(.required, for: .horizontal)
             let status = NSTextField(labelWithString: "")
+            status.identifier = NSUserInterfaceItemIdentifier("fileAssociation.\(format.rawValue).status")
             status.alignment = .right
             status.lineBreakMode = .byTruncatingMiddle
             status.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -213,10 +221,13 @@ final class PreferencesWindowController: NSWindowController {
             controls.checkbox.state = fileAssociationModel.selectedFormats.contains(format) ? .on : .off
             controls.checkbox.isEnabled = mutationsEnabled
             let row = fileAssociationModel.rows[format]
-            if let error = row?.errorDescription {
-                controls.status.stringValue = error == "Unsupported content type"
-                    ? text("settings.fileAssociations.unsupportedType")
-                    : error
+            if let error = row?.error {
+                switch error {
+                case .unsupportedContentType:
+                    controls.status.stringValue = text("settings.fileAssociations.unsupportedType")
+                case .service(let description):
+                    controls.status.stringValue = description
+                }
                 controls.status.textColor = .systemRed
             } else if row?.isImageViewDefault == true {
                 controls.status.stringValue = text("settings.fileAssociations.defaultImageView")
@@ -268,6 +279,12 @@ final class PreferencesWindowController: NSWindowController {
         case .avif: return "AVIF"
         case .svg: return "SVG"
         }
+    }
+
+    private func configureGeneralButton(_ button: NSButton, key: String, identifier: String) {
+        button.setButtonType(.switch)
+        button.title = text(key)
+        button.identifier = NSUserInterfaceItemIdentifier(identifier)
     }
 
     private func syncGeneralControls() {
