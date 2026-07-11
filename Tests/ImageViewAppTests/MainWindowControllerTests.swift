@@ -5,6 +5,30 @@ import XCTest
 
 @MainActor
 final class MainWindowControllerTests: XCTestCase {
+    func testOpenRequestMarksWindowAssignedBeforeDecodeCompletes() {
+        let controller = MainWindowController(settings: AppSettings(defaults: makeIsolatedDefaults()))
+        XCTAssertFalse(controller.hasAssignedOpenRequest)
+
+        controller.open(url: URL(fileURLWithPath: "/missing/image.png"))
+
+        XCTAssertTrue(controller.hasAssignedOpenRequest)
+    }
+
+    func testWindowLifecycleCallbacksIdentifyTheirController() throws {
+        let controller = MainWindowController(settings: AppSettings(defaults: makeIsolatedDefaults()))
+        var keyController: MainWindowController?
+        var closedController: MainWindowController?
+        controller.onWindowDidBecomeKey = { keyController = $0 }
+        controller.onWindowDidClose = { closedController = $0 }
+        let window = try XCTUnwrap(controller.window)
+
+        controller.windowDidBecomeKey(Notification(name: NSWindow.didBecomeKeyNotification, object: window))
+        controller.windowWillClose(Notification(name: NSWindow.willCloseNotification, object: window))
+
+        XCTAssertTrue(keyController === controller)
+        XCTAssertTrue(closedController === controller)
+    }
+
     func testBottomBarInfoControlUsesStandardInfoSymbol() {
         XCTAssertEqual(MainWindowController.bottomBarInfoSymbolName, "info.circle")
     }
@@ -335,5 +359,9 @@ final class MainWindowControllerTests: XCTestCase {
         settings.showsInspector = true
         XCTAssertTrue(controller.validateMenuItem(item))
         XCTAssertEqual(item.state, .on)
+    }
+
+    private func makeIsolatedDefaults() -> UserDefaults {
+        UserDefaults(suiteName: "ImageViewAppTests.MainWindowController.\(UUID().uuidString)")!
     }
 }

@@ -16,6 +16,9 @@ final class MainWindowController: NSWindowController {
     var onSuccessfulOpen: ((URL) -> Void)? {
         didSet { viewModel.onSuccessfulOpen = onSuccessfulOpen }
     }
+    private(set) var hasAssignedOpenRequest = false
+    var onWindowDidBecomeKey: ((MainWindowController) -> Void)?
+    var onWindowDidClose: ((MainWindowController) -> Void)?
     enum MenuCommand: Equatable {
         case fileOperationRequiringCurrentItem
         case navigation
@@ -112,6 +115,7 @@ final class MainWindowController: NSWindowController {
     }
 
     func open(url: URL) {
+        hasAssignedOpenRequest = true
         cancelCrop(nil)
         confirmUnsavedEditsIfNeeded(for: .opening) { [weak self] in
             guard let self else { return }
@@ -1061,9 +1065,16 @@ extension MainWindowController: NSMenuItemValidation {
 
 extension MainWindowController: NSWindowDelegate {
     func windowDidBecomeKey(_ notification: Notification) {
+        onWindowDidBecomeKey?(self)
         guard Self.shouldRefreshCurrentFileOnWindowActivation() else { return }
         refreshCurrentFileForExternalChanges()
         startExternalFileCheckTimer()
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        externalFileCheckTimer?.invalidate()
+        externalFileCheckTimer = nil
+        onWindowDidClose?(self)
     }
 
     func windowDidResignKey(_ notification: Notification) {
