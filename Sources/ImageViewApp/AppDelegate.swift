@@ -16,6 +16,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let showImageWindow: (MainWindowController) -> Void
     private let openImageURL: (MainWindowController, URL) -> Void
     private let terminateApplication: () -> Void
+    private let noteRecentDocument: (URL) -> Void
+    private let recentDocumentURLs: () -> [URL]
     private weak var installedMainMenu: NSMenu?
     private var openRecentMenu: NSMenu?
     private var appearanceMenuItems: [AppAppearance: NSMenuItem] = [:]
@@ -26,7 +28,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         makeImageWindowController: @escaping (AppSettings) -> MainWindowController = { MainWindowController(settings: $0) },
         showImageWindow: @escaping (MainWindowController) -> Void = { $0.showWindow(nil) },
         openImageURL: @escaping (MainWindowController, URL) -> Void = { $0.open(url: $1) },
-        terminateApplication: @escaping () -> Void = { NSApp.terminate(nil) }
+        terminateApplication: @escaping () -> Void = { NSApp.terminate(nil) },
+        noteRecentDocument: @escaping (URL) -> Void = { NSDocumentController.shared.noteNewRecentDocumentURL($0) },
+        recentDocumentURLs: @escaping () -> [URL] = { NSDocumentController.shared.recentDocumentURLs }
     ) {
         self.settings = settings
         self.defaultApplicationService = defaultApplicationService
@@ -34,6 +38,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.showImageWindow = showImageWindow
         self.openImageURL = openImageURL
         self.terminateApplication = terminateApplication
+        self.noteRecentDocument = noteRecentDocument
+        self.recentDocumentURLs = recentDocumentURLs
         super.init()
     }
 
@@ -72,7 +78,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func createImageWindow() -> MainWindowController {
         let controller = makeImageWindowController(settings)
         controller.onSuccessfulOpen = { [weak self] url in
-            NSDocumentController.shared.noteNewRecentDocumentURL(url)
+            self?.noteRecentDocument(url)
             self?.rebuildOpenRecentMenu()
         }
         controller.onWindowDidBecomeKey = { [weak self] controller in
@@ -362,7 +368,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func rebuildOpenRecentMenu(_ openRecentMenu: NSMenu) {
         openRecentMenu.removeAllItems()
-        let urls = NSDocumentController.shared.recentDocumentURLs.prefix(10)
+        let urls = recentDocumentURLs().prefix(10)
         guard !urls.isEmpty else {
             let emptyItem = NSMenuItem(title: AppStrings.text("menu.file.noRecentImages"), action: nil, keyEquivalent: "")
             emptyItem.isEnabled = false

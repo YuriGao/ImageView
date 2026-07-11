@@ -7,11 +7,13 @@ final class AppDelegateTests: XCTestCase {
     @MainActor
     private final class WindowHarness {
         var openRequests: [URL] = []
+        var recentURLs: [URL] = []
         var terminationCount = 0
         var showCounts: [ObjectIdentifier: Int] = [:]
 
         func makeDelegate() -> AppDelegate {
-            AppDelegate(
+            _ = NSApplication.shared
+            return AppDelegate(
                 settings: AppSettings(defaults: makeIsolatedDefaults()),
                 makeImageWindowController: { MainWindowController(settings: $0) },
                 showImageWindow: { [weak self] controller in
@@ -22,7 +24,13 @@ final class AppDelegateTests: XCTestCase {
                     self?.openRequests.append(url)
                     controller.open(url: url)
                 },
-                terminateApplication: { [weak self] in self?.terminationCount += 1 }
+                terminateApplication: { [weak self] in self?.terminationCount += 1 },
+                noteRecentDocument: { [weak self] url in
+                    guard let self else { return }
+                    recentURLs.removeAll { $0 == url }
+                    recentURLs.insert(url, at: 0)
+                },
+                recentDocumentURLs: { [weak self] in self?.recentURLs ?? [] }
             )
         }
 
@@ -194,8 +202,6 @@ final class AppDelegateTests: XCTestCase {
     }
 
     func testConstructingOffscreenMenuDoesNotRedirectRecentMenuRebuild() throws {
-        NSDocumentController.shared.clearRecentDocuments(nil)
-        defer { NSDocumentController.shared.clearRecentDocuments(nil) }
         let harness = WindowHarness()
         let delegate = harness.makeDelegate()
         let installedMenu = delegate.makeMainMenu(preferredLanguages: ["en"])
@@ -208,16 +214,15 @@ final class AppDelegateTests: XCTestCase {
         let offscreenRecentMenu = try XCTUnwrap(
             offscreenMenu.items[1].submenu?.item(withTitle: "Open Recent")?.submenu
         )
-        let openedURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("installed-recent-\(UUID().uuidString).png")
-        try Data().write(to: openedURL)
-        defer { try? FileManager.default.removeItem(at: openedURL) }
+        delegate.openURLs([URL(fileURLWithPath: "/first.png"), URL(fileURLWithPath: "/second.png")])
+        let openedURL = URL(fileURLWithPath: "/opened-by-second-window.png")
 
-        delegate.imageWindowControllersForTesting[0].onSuccessfulOpen?(openedURL)
+        delegate.imageWindowControllersForTesting[1].onSuccessfulOpen?(openedURL)
 
+        XCTAssertEqual(harness.recentURLs, [openedURL])
         XCTAssertEqual(
-            (installedRecentMenu.items.first?.representedObject as? URL)?.lastPathComponent,
-            openedURL.lastPathComponent
+            installedRecentMenu.items.first?.representedObject as? URL,
+            openedURL
         )
         XCTAssertNil(offscreenRecentMenu.items.first?.representedObject)
     }
