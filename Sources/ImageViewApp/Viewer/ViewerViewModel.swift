@@ -26,8 +26,28 @@ enum ImageLoadPhase: Equatable {
 }
 
 private enum ImageLoadEvent: Sendable {
-    case preview(DecodedImage?)
+    case preview(DecodedImage)
     case full(DecodedImage)
+}
+
+private func detachedDecode(
+    _ operation: @escaping @Sendable () throws -> DecodedImage
+) async throws -> DecodedImage {
+    let task = Task.detached(priority: .userInitiated) {
+        try Task.checkCancellation()
+        let image = try operation()
+        try Task.checkCancellation()
+        return image
+    }
+
+    return try await withTaskCancellationHandler {
+        try Task.checkCancellation()
+        let image = try await task.value
+        try Task.checkCancellation()
+        return image
+    } onCancel: {
+        task.cancel()
+    }
 }
 
 @MainActor
@@ -59,7 +79,8 @@ final class ViewerViewModel: ObservableObject {
     private let fileActions = FileActions()
     private let editingService = ImageEditingService()
     private let cache = ImageCache(costLimit: ImageCache.defaultFullImageCostLimit)
-    private var openGeneration: UInt64 = 0
+    private var displayRequestGeneration: UInt64 = 0
+    private var cancelActiveProgressiveLoad: (() -> Void)?
     private var pendingOperations: [EditOperation] = []
     private var persistedCurrentImage: DecodedImage?
     private var displayedFileVersion: CurrentFileVersion?
@@ -88,9 +109,9 @@ final class ViewerViewModel: ObservableObject {
             self.loadPreviewAtURL = loadPreviewAtURL
         } else {
             self.loadPreviewAtURL = { url, format in
-                try await Task.detached(priority: .userInitiated) {
+                try await detachedDecode {
                     try ImageDecodeService().decode(url: url, format: format, maxPixelSize: 2_048)
-                }.value
+                }
             }
         }
         if let loadImageAtURL {
@@ -102,9 +123,9 @@ final class ViewerViewModel: ObservableObject {
                     return cached
                 }
 
-                let decoded = try await Task.detached(priority: .userInitiated) {
+                let decoded = try await detachedDecode {
                     try decodeImageAtURL(url, format)
-                }.value
+                }
                 await cache.insert(decoded, for: url, cost: decoded.cgImage.bytesPerRow * decoded.cgImage.height)
                 return decoded
             }
@@ -112,8 +133,7 @@ final class ViewerViewModel: ObservableObject {
     }
 
     func open(url: URL) async {
-        openGeneration += 1
-        let generation = openGeneration
+        let generation = beginDisplayRequest()
         pendingOperations.removeAll()
         persistedCurrentImage = nil
         displayedFileVersion = nil
@@ -124,7 +144,7 @@ final class ViewerViewModel: ObservableObject {
         updateDisplayTitle()
 
         guard let format = SupportedImageFormat(fileExtension: url.pathExtension) else {
-            guard generation == openGeneration else { return }
+            guard generation == displayRequestGeneration else { return }
             navigationState = nil
             currentImage = nil
             currentMetadata = nil
@@ -140,57 +160,79 @@ final class ViewerViewModel: ObservableObject {
         do {
             let loadPreviewAtURL = self.loadPreviewAtURL
             let loadImageAtURL = self.loadImageAtURL
-            try await withThrowingTaskGroup(of: ImageLoadEvent.self) { group in
-                group.addTask {
-                    .preview(try? await loadPreviewAtURL(url, format))
+            let (events, continuation) = AsyncThrowingStream<ImageLoadEvent, Error>.makeStream()
+            let previewTask = Task {
+                do {
+                    let image = try await loadPreviewAtURL(url, format)
+                    try Task.checkCancellation()
+                    continuation.yield(.preview(image))
+                } catch {
+                    // Preview failures are non-fatal; the full image still decides the open result.
                 }
-                group.addTask {
-                    .full(try await loadImageAtURL(url, format))
+            }
+            let fullTask = Task {
+                do {
+                    let image = try await loadImageAtURL(url, format)
+                    try Task.checkCancellation()
+                    continuation.yield(.full(image))
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
                 }
-
-                while let event = try await group.next() {
-                    guard generation == openGeneration else {
-                        group.cancelAll()
-                        return
-                    }
-
-                    switch event {
-                    case let .preview(image):
-                        guard let image, loadPhase != .full else { continue }
-                        currentImage = image
-                        loadPhase = .preview
-                    case let .full(image):
-                        currentImage = image
-                        persistedCurrentImage = image
-                        displayedFileVersion = currentFileVersionAtURL(url)
-                        updateMetadata(url: url, format: format, image: image)
-                        navigationState = NavigationState(items: [fallbackItem], currentURL: url)
-                        loadPhase = .full
-                        updateDisplayTitle()
-                        group.cancelAll()
-                        return
-                    }
+            }
+            let cancelProgressiveLoad = {
+                previewTask.cancel()
+                fullTask.cancel()
+                continuation.finish()
+            }
+            cancelActiveProgressiveLoad = cancelProgressiveLoad
+            defer {
+                cancelProgressiveLoad()
+                if generation == displayRequestGeneration {
+                    cancelActiveProgressiveLoad = nil
                 }
             }
 
-            guard generation == openGeneration else { return }
+            eventLoop: for try await event in events {
+                guard generation == displayRequestGeneration else { break }
+
+                switch event {
+                case let .preview(image):
+                    guard loadPhase != .full else { continue }
+                    currentImage = image
+                    loadPhase = .preview
+                case let .full(image):
+                    currentImage = image
+                    persistedCurrentImage = image
+                    displayedFileVersion = currentFileVersionAtURL(url)
+                    updateMetadata(url: url, format: format, image: image)
+                    navigationState = NavigationState(items: [fallbackItem], currentURL: url)
+                    loadPhase = .full
+                    updateDisplayTitle()
+                    cancelProgressiveLoad()
+                    break eventLoop
+                }
+            }
+
+            guard generation == displayRequestGeneration, loadPhase == .full else { return }
 
             do {
                 let items = try await scanContainingDirectory(url)
-                guard generation == openGeneration else { return }
+                guard generation == displayRequestGeneration else { return }
 
                 if items.contains(where: { $0.url.standardizedFileURL == url.standardizedFileURL }) {
                     navigationState = NavigationState(items: items, currentURL: url)
                     updateDisplayTitle()
                 }
             } catch {
-                guard generation == openGeneration else { return }
+                guard generation == displayRequestGeneration else { return }
             }
 
+            guard generation == displayRequestGeneration else { return }
             preloadNeighbors()
             onSuccessfulOpen?(url)
         } catch {
-            guard generation == openGeneration else { return }
+            guard generation == displayRequestGeneration else { return }
             navigationState = nil
             currentImage = nil
             currentMetadata = nil
@@ -209,7 +251,7 @@ final class ViewerViewModel: ObservableObject {
             loadPhase = .empty
         }
         updateDisplayTitle()
-        Task { await displayCurrentAndPreload() }
+        startDisplayCurrentAndPreload()
     }
 
     func showPrevious() {
@@ -219,7 +261,7 @@ final class ViewerViewModel: ObservableObject {
             loadPhase = .empty
         }
         updateDisplayTitle()
-        Task { await displayCurrentAndPreload() }
+        startDisplayCurrentAndPreload()
     }
 
     func show(item: ImageItem) {
@@ -234,7 +276,7 @@ final class ViewerViewModel: ObservableObject {
             loadPhase = .empty
         }
         updateDisplayTitle()
-        Task { await displayCurrentAndPreload() }
+        startDisplayCurrentAndPreload()
     }
 
     func moveCurrentToTrash() {
@@ -257,7 +299,7 @@ final class ViewerViewModel: ObservableObject {
             loadPhase = .empty
             errorMessage = nil
             updateDisplayTitle()
-            Task { await displayCurrentAndPreload() }
+            startDisplayCurrentAndPreload()
         } catch {
             errorMessage = "无法移动到废纸篓：\(url.lastPathComponent)"
         }
@@ -390,7 +432,7 @@ final class ViewerViewModel: ObservableObject {
 
     func discardCurrentEditsAndReload() {
         guard discardCurrentEdits() else { return }
-        Task { await displayCurrentAndPreload() }
+        startDisplayCurrentAndPreload()
     }
 
     func copyCurrentPathToPasteboard() {
@@ -411,11 +453,14 @@ final class ViewerViewModel: ObservableObject {
             return
         }
 
-        await cache.removeImage(for: item.url)
+        let generation = beginDisplayRequest()
         loadPhase = .empty
+        await cache.removeImage(for: item.url)
+        guard generation == displayRequestGeneration else { return }
         do {
             let image = try await display(url: item.url, format: item.format)
-            guard navigationState?.currentItem?.url.standardizedFileURL == item.url.standardizedFileURL else { return }
+            guard generation == displayRequestGeneration,
+                  navigationState?.currentItem?.url.standardizedFileURL == item.url.standardizedFileURL else { return }
             currentImage = image
             persistedCurrentImage = image
             displayedFileVersion = currentVersion
@@ -424,14 +469,15 @@ final class ViewerViewModel: ObservableObject {
             errorMessage = nil
             preloadNeighbors()
         } catch {
+            guard generation == displayRequestGeneration else { return }
             loadPhase = .failed
             errorMessage = "图片已在外部修改且无法解码：\(item.url.lastPathComponent)"
         }
     }
 
-    private func displayCurrentAndPreload() async {
-        guard let item = navigationState?.currentItem else { return }
+    private func displayCurrentAndPreload(item: ImageItem, generation: UInt64) async {
         guard let image = try? await display(url: item.url, format: item.format),
+              generation == displayRequestGeneration,
               navigationState?.currentItem?.url == item.url else {
             return
         }
@@ -464,7 +510,21 @@ final class ViewerViewModel: ObservableObject {
 
         loadPhase = .empty
         updateDisplayTitle()
-        Task { await displayCurrentAndPreload() }
+        startDisplayCurrentAndPreload()
+    }
+
+    private func startDisplayCurrentAndPreload() {
+        guard let item = navigationState?.currentItem else { return }
+        let generation = beginDisplayRequest()
+        loadPhase = .empty
+        Task { await displayCurrentAndPreload(item: item, generation: generation) }
+    }
+
+    private func beginDisplayRequest() -> UInt64 {
+        cancelActiveProgressiveLoad?()
+        cancelActiveProgressiveLoad = nil
+        displayRequestGeneration &+= 1
+        return displayRequestGeneration
     }
 
     private func preloadNeighbors() {

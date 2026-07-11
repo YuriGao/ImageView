@@ -249,6 +249,147 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.currentImage?.pixelSize, full.pixelSize)
     }
 
+    func testNavigationInvalidatesOlderOpenBeforeItsFullImageArrives() async throws {
+        let firstURL = URL(fileURLWithPath: "/tmp/open-race-first.png")
+        let secondURL = URL(fileURLWithPath: "/tmp/open-race-second.png")
+        let initialFirst = try makeDecodedImage(width: 1_000, height: 700)
+        let staleFirst = try makeDecodedImage(width: 4_000, height: 2_800)
+        let second = try makeDecodedImage(width: 2_000, height: 1_400)
+        let fullLoader = SequencedImageLoader(plans: [
+            firstURL: [
+                .init(image: initialFirst),
+                .init(image: staleFirst, pauseID: "stale-open")
+            ],
+            secondURL: [.init(image: second)]
+        ])
+        let previewLoader = ControlledImageLoader(images: [
+            firstURL: initialFirst,
+            secondURL: second
+        ])
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: { _ in
+                [ImageItem(url: firstURL, format: .png), ImageItem(url: secondURL, format: .png)]
+            },
+            loadImageAtURL: fullLoader.load(url:format:),
+            loadPreviewAtURL: previewLoader.load(url:format:)
+        )
+
+        await viewModel.open(url: firstURL)
+        let staleOpen = Task { await viewModel.open(url: firstURL) }
+        await fullLoader.waitUntilPaused(id: "stale-open")
+
+        viewModel.showNext()
+        await waitUntil {
+            viewModel.navigationState?.currentItem?.url == secondURL
+                && viewModel.currentImage?.pixelSize == second.pixelSize
+        }
+
+        try await fullLoader.resume(id: "stale-open")
+        _ = await staleOpen.value
+
+        XCTAssertEqual(viewModel.navigationState?.currentItem?.url, secondURL)
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, second.pixelSize)
+    }
+
+    func testLatestDisplayRequestWinsAfterNavigatingAwayAndBackToSameURL() async throws {
+        let firstURL = URL(fileURLWithPath: "/tmp/display-race-first.png")
+        let secondURL = URL(fileURLWithPath: "/tmp/display-race-second.png")
+        let initialFirst = try makeDecodedImage(width: 1_000, height: 700)
+        let staleFirst = try makeDecodedImage(width: 4_000, height: 2_800)
+        let latestFirst = try makeDecodedImage(width: 3_000, height: 2_100)
+        let second = try makeDecodedImage(width: 2_000, height: 1_400)
+        let fullLoader = SequencedImageLoader(plans: [
+            firstURL: [
+                .init(image: initialFirst),
+                .init(image: staleFirst, pauseID: "stale-display"),
+                .init(image: latestFirst)
+            ],
+            secondURL: [.init(image: second)]
+        ])
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: { _ in
+                [ImageItem(url: firstURL, format: .png), ImageItem(url: secondURL, format: .png)]
+            },
+            loadImageAtURL: fullLoader.load(url:format:),
+            loadPreviewAtURL: { _, _ in initialFirst }
+        )
+
+        await viewModel.open(url: firstURL)
+        let firstItem = try XCTUnwrap(viewModel.navigationState?.currentItem)
+        viewModel.show(item: firstItem)
+        await fullLoader.waitUntilPaused(id: "stale-display")
+
+        viewModel.showNext()
+        viewModel.showPrevious()
+        await waitUntil { viewModel.currentImage?.pixelSize == latestFirst.pixelSize }
+
+        try await fullLoader.resume(id: "stale-display")
+        await fullLoader.waitUntilCompleted(id: "stale-display")
+        await Task.yield()
+
+        XCTAssertEqual(viewModel.navigationState?.currentItem?.url, firstURL)
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, latestFirst.pixelSize)
+    }
+
+    func testOpenCompletesScanningAndCallbackWithoutWaitingForCancelledPreview() async throws {
+        let url = URL(fileURLWithPath: "/tmp/nonblocking-full.png")
+        let preview = try makeDecodedImage(width: 2_048, height: 1_365)
+        let full = try makeDecodedImage(width: 6_000, height: 4_000)
+        let previewLoader = ControlledImageLoader(images: [url: preview])
+        let fullLoader = ControlledImageLoader(images: [url: full])
+        let scanCompleted = expectation(description: "directory scan and open callback completed")
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: { _ in [ImageItem(url: url, format: .png)] },
+            loadImageAtURL: fullLoader.load(url:format:),
+            loadPreviewAtURL: previewLoader.load(url:format:)
+        )
+        viewModel.onSuccessfulOpen = { openedURL in
+            XCTAssertEqual(openedURL, url)
+            scanCompleted.fulfill()
+        }
+
+        await previewLoader.pauseNextLoad(for: url)
+        let opening = Task { await viewModel.open(url: url) }
+        await previewLoader.waitUntilPaused(url: url)
+
+        await fulfillment(of: [scanCompleted], timeout: 0.2)
+        XCTAssertEqual(viewModel.loadPhase, .full)
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, full.pixelSize)
+
+        try await previewLoader.resume(url: url)
+        _ = await opening.value
+    }
+
+    func testPreviewCannotBeSavedInPlaceOrToAnotherURL() async throws {
+        let url = URL(fileURLWithPath: "/tmp/preview-save-safety.png")
+        let targetURL = URL(fileURLWithPath: "/tmp/preview-save-safety-copy.png")
+        try? FileManager.default.removeItem(at: targetURL)
+        defer { try? FileManager.default.removeItem(at: targetURL) }
+        let preview = try makeDecodedImage(width: 2_048, height: 1_365)
+        let full = try makeDecodedImage(width: 6_000, height: 4_000)
+        let previewLoader = ControlledImageLoader(images: [url: preview])
+        let fullLoader = ControlledImageLoader(images: [url: full])
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: { _ in [ImageItem(url: url, format: .png)] },
+            loadImageAtURL: fullLoader.load(url:format:),
+            loadPreviewAtURL: previewLoader.load(url:format:)
+        )
+
+        await fullLoader.pauseNextLoad(for: url)
+        let opening = Task { await viewModel.open(url: url) }
+        await fullLoader.waitUntilPaused(url: url)
+        await waitUntil { viewModel.loadPhase == .preview }
+
+        XCTAssertFalse(viewModel.saveCurrentEdits())
+        XCTAssertFalse(viewModel.saveCurrentEdits(to: targetURL, format: .png))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: targetURL.path))
+        XCTAssertFalse(viewModel.hasUnsavedEdits)
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, preview.pixelSize)
+
+        try await fullLoader.resume(url: url)
+        _ = await opening.value
+    }
+
     func testNewOpenIgnoresLatePreviewFromEarlierRequest() async throws {
         let firstURL = URL(fileURLWithPath: "/tmp/first.png")
         let secondURL = URL(fileURLWithPath: "/tmp/second.png")
@@ -893,5 +1034,65 @@ private actor ControlledImageLoader {
         }
 
         continuation.resume(returning: image)
+    }
+}
+
+private actor SequencedImageLoader {
+    struct Plan: Sendable {
+        let image: DecodedImage
+        let pauseID: String?
+
+        init(image: DecodedImage, pauseID: String? = nil) {
+            self.image = image
+            self.pauseID = pauseID
+        }
+    }
+
+    private struct PausedRequest {
+        let image: DecodedImage
+        var continuation: CheckedContinuation<DecodedImage, Error>?
+    }
+
+    private var plans: [URL: [Plan]]
+    private var pausedRequests: [String: PausedRequest] = [:]
+    private var completedIDs: Set<String> = []
+
+    init(plans: [URL: [Plan]]) {
+        self.plans = plans
+    }
+
+    func load(url: URL, format _: SupportedImageFormat) async throws -> DecodedImage {
+        guard var urlPlans = plans[url], !urlPlans.isEmpty else {
+            throw ImageDecodeError.cannotCreateSource
+        }
+        let plan = urlPlans.removeFirst()
+        plans[url] = urlPlans
+        guard let pauseID = plan.pauseID else { return plan.image }
+
+        let image = try await withCheckedThrowingContinuation { continuation in
+            pausedRequests[pauseID] = PausedRequest(image: plan.image, continuation: continuation)
+        }
+        completedIDs.insert(pauseID)
+        return image
+    }
+
+    func waitUntilPaused(id: String) async {
+        while pausedRequests[id]?.continuation == nil {
+            await Task.yield()
+        }
+    }
+
+    func resume(id: String) throws {
+        guard let request = pausedRequests.removeValue(forKey: id),
+              let continuation = request.continuation else {
+            return
+        }
+        continuation.resume(returning: request.image)
+    }
+
+    func waitUntilCompleted(id: String) async {
+        while !completedIDs.contains(id) {
+            await Task.yield()
+        }
     }
 }
