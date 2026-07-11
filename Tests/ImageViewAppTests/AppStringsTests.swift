@@ -2,6 +2,13 @@ import XCTest
 @testable import ImageViewApp
 
 final class AppStringsTests: XCTestCase {
+    func testFileAssociationSettingsLocalizeInEnglishAndSimplifiedChinese() {
+        XCTAssertEqual(AppStrings.text("settings.fileAssociations.title", preferredLanguages: ["en"]), "File Associations")
+        XCTAssertEqual(AppStrings.text("settings.fileAssociations.apply", preferredLanguages: ["en"]), "Set ImageView as Default")
+        XCTAssertEqual(AppStrings.text("settings.fileAssociations.title", preferredLanguages: ["zh-Hans"]), "文件关联")
+        XCTAssertEqual(AppStrings.text("settings.fileAssociations.apply", preferredLanguages: ["zh-Hans"]), "将 ImageView 设为默认")
+    }
+
     func testChinesePreferredLanguageUsesSimplifiedChinese() {
         XCTAssertEqual(AppStrings.text("menu.file", preferredLanguages: ["zh-Hans"]), "文件")
     }

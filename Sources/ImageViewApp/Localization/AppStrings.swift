@@ -11,6 +11,21 @@ enum AppStrings {
         "menu.help.imageView"
     ]
 
+    static let settingsKeys = [
+        "settings.title", "settings.general.title",
+        "settings.fileAssociations.title", "settings.fileAssociations.selectCommon",
+        "settings.fileAssociations.showAll", "settings.fileAssociations.showLess",
+        "settings.fileAssociations.apply", "settings.fileAssociations.applying",
+        "settings.fileAssociations.defaultImageView", "settings.fileAssociations.defaultOther",
+        "settings.fileAssociations.defaultUnknown", "settings.fileAssociations.success",
+        "settings.fileAssociations.partialSuccess", "settings.fileAssociations.failure",
+        "settings.fileAssociations.invalidBundle", "settings.fileAssociations.unsupportedType",
+        "settings.format.jpeg", "settings.format.png", "settings.format.gif",
+        "settings.format.webp", "settings.format.heic", "settings.format.tiff",
+        "settings.format.bmp", "settings.format.heif", "settings.format.avif",
+        "settings.format.svg"
+    ]
+
     static func text(_ key: String, preferredLanguages: [String] = Locale.preferredLanguages) -> String {
         let localization = preferredLanguages.contains { $0.lowercased().hasPrefix("zh") } ? "zh-hans" : "en"
         guard let path = Bundle.module.path(forResource: localization, ofType: "lproj"),

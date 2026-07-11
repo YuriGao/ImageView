@@ -3,6 +3,7 @@ import AppKit
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let settings: AppSettings
+    private let defaultApplicationService: DefaultApplicationServicing
     private var mainWindowController: MainWindowController?
     private var preferencesWindowController: PreferencesWindowController?
     private var pendingLaunchURL: URL?
@@ -25,8 +26,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var openRecentMenu: NSMenu?
     private var appearanceMenuItems: [AppAppearance: NSMenuItem] = [:]
 
-    init(settings: AppSettings = .shared) {
+    init(
+        settings: AppSettings = .shared,
+        defaultApplicationService: DefaultApplicationServicing = WorkspaceDefaultApplicationService()
+    ) {
         self.settings = settings
+        self.defaultApplicationService = defaultApplicationService
         super.init()
     }
 
@@ -74,7 +79,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func showPreferences(_ sender: Any?) {
         if preferencesWindowController == nil {
-            preferencesWindowController = PreferencesWindowController(settings: settings)
+            preferencesWindowController = PreferencesWindowController(
+                settings: settings,
+                defaultApplicationService: defaultApplicationService
+            )
         }
         preferencesWindowController?.showWindow(sender)
         preferencesWindowController?.window?.makeKeyAndOrderFront(sender)
