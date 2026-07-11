@@ -126,7 +126,7 @@ final class ViewerViewModel: ObservableObject {
                 let decoded = try await detachedDecode {
                     try decodeImageAtURL(url, format)
                 }
-                await cache.insert(decoded, for: url, cost: decoded.cgImage.bytesPerRow * decoded.cgImage.height)
+                await cache.insert(decoded, for: url)
                 return decoded
             }
         }
@@ -364,7 +364,7 @@ final class ViewerViewModel: ObservableObject {
                 isAnimated: false
             )
             Task { [cache] in
-                await cache.insert(decoded, for: item.url, cost: decoded.cgImage.bytesPerRow * decoded.cgImage.height)
+                await cache.insert(decoded, for: item.url)
             }
             persistedCurrentImage = decoded
             displayedFileVersion = currentFileVersionAtURL(item.url)
@@ -388,7 +388,7 @@ final class ViewerViewModel: ObservableObject {
             try editingService.save(image.cgImage, to: targetURL, format: format)
             let decoded = DecodedImage(cgImage: image.cgImage, pixelSize: image.pixelSize, isAnimated: false)
             Task { [cache] in
-                await cache.insert(decoded, for: targetURL, cost: decoded.cgImage.bytesPerRow * decoded.cgImage.height)
+                await cache.insert(decoded, for: targetURL)
             }
             navigationState?.replaceCurrentURL(targetURL, format: format)
             persistedCurrentImage = decoded
@@ -546,7 +546,7 @@ final class ViewerViewModel: ObservableObject {
             for item in neighbors {
                 if await cache.image(for: item.url) == nil,
                    let decoded = try? decodeImageAtURL(item.url, item.format) {
-                    await cache.insert(decoded, for: item.url, cost: decoded.cgImage.bytesPerRow * decoded.cgImage.height)
+                    await cache.insert(decoded, for: item.url)
                 }
             }
         }
@@ -554,9 +554,9 @@ final class ViewerViewModel: ObservableObject {
 
     static func canPreloadInBackground(_ format: SupportedImageFormat) -> Bool {
         switch format {
-        case .svg, .webp, .avif:
+        case .gif, .svg, .webp, .avif:
             return false
-        case .jpeg, .png, .gif, .tiff, .bmp, .heic, .heif:
+        case .jpeg, .png, .tiff, .bmp, .heic, .heif:
             return true
         }
     }

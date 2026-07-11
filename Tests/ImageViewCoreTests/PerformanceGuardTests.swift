@@ -39,7 +39,7 @@ final class PerformanceGuardTests: XCTestCase {
         let image = makeImage(width: 4, height: 3)
         let decoded = DecodedImage(cgImage: image, pixelSize: CGSize(width: 4, height: 3), isAnimated: false)
         let url = URL(fileURLWithPath: "/tmp/preloaded.png")
-        await cache.insert(decoded, for: url, cost: 48)
+        await cache.insert(decoded, for: url)
 
         let started = ContinuousClock.now
         let cached = await cache.image(for: url)

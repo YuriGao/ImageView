@@ -569,6 +569,7 @@ final class ViewerViewModelTests: XCTestCase {
     func testCanPreloadInBackgroundSkipsFallbackFormats() {
         XCTAssertTrue(ViewerViewModel.canPreloadInBackground(.png))
         XCTAssertTrue(ViewerViewModel.canPreloadInBackground(.jpeg))
+        XCTAssertFalse(ViewerViewModel.canPreloadInBackground(.gif))
         XCTAssertFalse(ViewerViewModel.canPreloadInBackground(.svg))
         XCTAssertFalse(ViewerViewModel.canPreloadInBackground(.webp))
         XCTAssertFalse(ViewerViewModel.canPreloadInBackground(.avif))

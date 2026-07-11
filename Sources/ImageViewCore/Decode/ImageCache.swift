@@ -30,8 +30,8 @@ public actor ImageCache {
         return entry.image
     }
 
-    public func insert(_ image: DecodedImage, for url: URL, cost: Int) {
-        let normalizedCost = max(1, cost)
+    public func insert(_ image: DecodedImage, for url: URL) {
+        let normalizedCost = max(1, image.decodedByteCost)
 
         if let existing = entries[url] {
             totalCost -= existing.cost
@@ -39,7 +39,7 @@ public actor ImageCache {
 
         tick += 1
         entries[url] = Entry(image: image, cost: normalizedCost, lastAccess: tick)
-        totalCost += normalizedCost
+        totalCost = DecodedImage.saturatedSum(totalCost, normalizedCost)
         evictIfNeeded()
     }
 

@@ -108,6 +108,72 @@ final class ImageDecodeServiceTests: XCTestCase {
         XCTAssertEqual(decoded.animationFrames.map(\.duration), [0.1, 0.2])
     }
 
+    func testDecodedByteCostIncludesMainImageAndEveryAnimationFrame() throws {
+        let main = try makeImage(width: 4, height: 3)
+        let firstFrame = try makeImage(width: 2, height: 2)
+        let secondFrame = try makeImage(width: 3, height: 1)
+        let decoded = DecodedImage(
+            cgImage: main,
+            pixelSize: CGSize(width: main.width, height: main.height),
+            isAnimated: true,
+            animationFrames: [
+                AnimatedFrame(cgImage: firstFrame, duration: 0.1),
+                AnimatedFrame(cgImage: secondFrame, duration: 0.2)
+            ]
+        )
+        let expectedMainCost = main.bytesPerRow * main.height
+        let expectedFrameCosts = [firstFrame, secondFrame]
+            .reduce(0) { $0 + ($1.bytesPerRow * $1.height) }
+
+        XCTAssertEqual(decoded.decodedByteCost, expectedMainCost + expectedFrameCosts)
+    }
+
+    func testDecodedByteCostSaturatesOnOverflow() {
+        XCTAssertEqual(
+            DecodedImage.saturatedByteCost(bytesPerRow: Int.max, height: 2),
+            Int.max
+        )
+        XCTAssertEqual(DecodedImage.saturatedSum(Int.max, 1), Int.max)
+    }
+
+    func testDecodeAnimatedGifAboveAnimationBudgetReturnsVisibleFirstFrameWithoutFrames() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("limited.gif")
+        try writeAnimatedGIF(to: url)
+
+        let limited = try ImageDecodeService(animationByteLimit: 1).decode(url: url, format: .gif)
+
+        XCTAssertEqual(limited.pixelSize, CGSize(width: 4, height: 3))
+        XCTAssertTrue(limited.isAnimated)
+        XCTAssertTrue(limited.animationFrames.isEmpty)
+        XCTAssertGreaterThan(limited.decodedByteCost, 0)
+    }
+
+    func testAnimationBudgetAllowsExactEstimateAndRejectsOneByteLess() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("boundary.gif")
+        try writeAnimatedGIF(to: url)
+        let estimatedFrameCost = 4 * 3 * 4 * 2
+
+        let atLimit = try ImageDecodeService(animationByteLimit: estimatedFrameCost)
+            .decode(url: url, format: .gif)
+        let belowLimit = try ImageDecodeService(animationByteLimit: estimatedFrameCost - 1)
+            .decode(url: url, format: .gif)
+
+        XCTAssertEqual(atLimit.animationFrames.count, 2)
+        XCTAssertTrue(belowLimit.animationFrames.isEmpty)
+    }
+
+    func testAnimationEstimateRejectsMissingPropertiesAndOverflow() {
+        XCTAssertNil(ImageDecodeService.estimatedAnimationByteCost(frameDimensions: [(nil, 3)]))
+        XCTAssertNil(ImageDecodeService.estimatedAnimationByteCost(frameDimensions: [(4, nil)]))
+        XCTAssertNil(ImageDecodeService.estimatedAnimationByteCost(frameDimensions: [(Int.max, 2)]))
+    }
+
     func testDecodeEmbeddedWebPSample() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
