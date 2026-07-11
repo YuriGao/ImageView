@@ -759,7 +759,10 @@ final class MainWindowController: NSWindowController {
         if !settings.showsFilmstrip {
             hideFilmstripOverlay(immediately: true)
         }
-        inspectorView.isHidden = !settings.showsInspector
+        inspectorView.isHidden = !Self.shouldDisplayInspector(
+            isEnabled: settings.showsInspector,
+            hasCurrentImage: viewModel.currentImage != nil
+        )
         bottomInfoButton.state = settings.showsInspector ? .on : .off
         updateDimensionStatus(metadata: viewModel.currentMetadata)
         updatePageStatus(navigationState: viewModel.navigationState)
@@ -961,6 +964,10 @@ final class MainWindowController: NSWindowController {
         for view in [bottomDimensionLabel, bottomPageLabel, bottomZoomLabel, bottomInfoButton] {
             view.isHidden = shouldHideStatusContent
         }
+        inspectorView.isHidden = !Self.shouldDisplayInspector(
+            isEnabled: settings.showsInspector,
+            hasCurrentImage: hasCurrentImage
+        )
     }
 
     static func shouldDisplayEmptyState(
@@ -975,12 +982,18 @@ final class MainWindowController: NSWindowController {
         !hasCurrentImage
     }
 
+    static func shouldDisplayInspector(isEnabled: Bool, hasCurrentImage: Bool) -> Bool {
+        isEnabled && hasCurrentImage
+    }
+
     var isEmptyStateVisibleForTesting: Bool { !emptyStateView.isHidden }
 
     var isImageStatusContentHiddenForTesting: Bool {
         [bottomDimensionLabel, bottomPageLabel, bottomZoomLabel, bottomInfoButton]
             .allSatisfy(\.isHidden)
     }
+
+    var isInspectorVisibleForTesting: Bool { !inspectorView.isHidden }
 
     func requestOpenFromEmptyStateForTesting() {
         emptyStateView.performOpenForTesting()

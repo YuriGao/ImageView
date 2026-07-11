@@ -325,6 +325,35 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertFalse(MainWindowController.shouldHideImageStatusContent(hasCurrentImage: true))
     }
 
+    func testInspectorRequiresBothTheSettingAndAnImage() {
+        XCTAssertFalse(MainWindowController.shouldDisplayInspector(
+            isEnabled: false,
+            hasCurrentImage: false
+        ))
+        XCTAssertFalse(MainWindowController.shouldDisplayInspector(
+            isEnabled: true,
+            hasCurrentImage: false
+        ))
+        XCTAssertFalse(MainWindowController.shouldDisplayInspector(
+            isEnabled: false,
+            hasCurrentImage: true
+        ))
+        XCTAssertTrue(MainWindowController.shouldDisplayInspector(
+            isEnabled: true,
+            hasCurrentImage: true
+        ))
+    }
+
+    func testNewEmptyWindowHidesPreviouslyEnabledInspector() {
+        let defaults = makeIsolatedDefaults()
+        let settings = AppSettings(defaults: defaults)
+        settings.showsInspector = true
+
+        let controller = MainWindowController(settings: settings)
+
+        XCTAssertFalse(controller.isInspectorVisibleForTesting)
+    }
+
     func testEmptyStateOpenRequestIsForwarded() {
         let controller = MainWindowController(settings: AppSettings(defaults: makeIsolatedDefaults()))
         var requestCount = 0
