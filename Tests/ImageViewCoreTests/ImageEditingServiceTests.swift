@@ -1,5 +1,7 @@
 import CoreGraphics
 import Foundation
+import ImageIO
+import UniformTypeIdentifiers
 import XCTest
 @testable import ImageViewCore
 
@@ -104,6 +106,39 @@ final class ImageEditingServiceTests: XCTestCase {
         }
     }
 
+    func testSavePreservesCompatibleMetadataAndNormalizesOrientation() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let sourceURL = root.appendingPathComponent("metadata-source.jpg")
+        let outputURL = root.appendingPathComponent("metadata-output.jpg")
+        try makeMetadataJPEG().write(to: sourceURL)
+        let decoded = try ImageDecodeService().decode(url: sourceURL, format: .jpeg)
+        let output = try ImageEditingService().apply([.mirrorHorizontal], to: decoded.cgImage)
+
+        try ImageEditingService().save(
+            output,
+            to: outputURL,
+            format: .jpeg,
+            metadataSourceURL: sourceURL
+        )
+
+        let properties = try imageProperties(at: outputURL)
+        let exif = try XCTUnwrap(properties[kCGImagePropertyExifDictionary] as? [CFString: Any])
+        let tiff = try XCTUnwrap(properties[kCGImagePropertyTIFFDictionary] as? [CFString: Any])
+        XCTAssertEqual((properties[kCGImagePropertyOrientation] as? NSNumber)?.intValue, 1)
+        XCTAssertEqual((tiff[kCGImagePropertyTIFFOrientation] as? NSNumber)?.intValue, 1)
+        XCTAssertEqual(exif[kCGImagePropertyExifDateTimeOriginal] as? String, "2026:07:11 12:34:56")
+        XCTAssertEqual(tiff[kCGImagePropertyTIFFMake] as? String, "ImageView Test")
+        XCTAssertEqual(tiff[kCGImagePropertyTIFFModel] as? String, "Metadata Fixture")
+        XCTAssertNotNil(properties[kCGImagePropertyGPSDictionary])
+        XCTAssertEqual((properties[kCGImagePropertyDPIWidth] as? NSNumber)?.intValue, 144)
+        XCTAssertEqual((properties[kCGImagePropertyDPIHeight] as? NSNumber)?.intValue, 144)
+        XCTAssertEqual((properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue, output.width)
+        XCTAssertEqual((properties[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue, output.height)
+    }
+
     private func makeImage(rows: [[Pixel]]) throws -> CGImage {
         guard let firstRow = rows.first, !firstRow.isEmpty else {
             throw TestError.invalidImageData
@@ -140,6 +175,54 @@ final class ImageEditingServiceTests: XCTestCase {
         }
 
         return image
+    }
+
+    private func makeMetadataJPEG() throws -> Data {
+        let image = try makeImage(rows: [
+            [.red, .green, .blue, .yellow],
+            [.magenta, .cyan, .red, .green]
+        ])
+        guard let data = CFDataCreateMutable(nil, 0),
+              let destination = CGImageDestinationCreateWithData(
+                data,
+                UTType.jpeg.identifier as CFString,
+                1,
+                nil
+              ) else {
+            throw TestError.invalidImageData
+        }
+        let properties: [CFString: Any] = [
+            kCGImagePropertyOrientation: 6,
+            kCGImagePropertyDPIWidth: 144,
+            kCGImagePropertyDPIHeight: 144,
+            kCGImagePropertyExifDictionary: [
+                kCGImagePropertyExifDateTimeOriginal: "2026:07:11 12:34:56"
+            ],
+            kCGImagePropertyTIFFDictionary: [
+                kCGImagePropertyTIFFMake: "ImageView Test",
+                kCGImagePropertyTIFFModel: "Metadata Fixture",
+                kCGImagePropertyTIFFOrientation: 6
+            ],
+            kCGImagePropertyGPSDictionary: [
+                kCGImagePropertyGPSLatitudeRef: "N",
+                kCGImagePropertyGPSLatitude: 31.2304,
+                kCGImagePropertyGPSLongitudeRef: "E",
+                kCGImagePropertyGPSLongitude: 121.4737
+            ]
+        ]
+        CGImageDestinationAddImage(destination, image, properties as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else {
+            throw TestError.invalidImageData
+        }
+        return data as Data
+    }
+
+    private func imageProperties(at url: URL) throws -> [CFString: Any] {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] else {
+            throw TestError.invalidImageData
+        }
+        return properties
     }
 
     private func pixelRows(in image: CGImage) throws -> [[Pixel]] {

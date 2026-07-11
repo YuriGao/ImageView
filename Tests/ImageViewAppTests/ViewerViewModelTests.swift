@@ -742,6 +742,27 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.errorMessage)
     }
 
+    func testSaveCurrentEditsInPlacePreservesSourceMetadata() async throws {
+        let imageURL = try makeTemporaryMetadataJPEG(name: "metadata-in-place")
+        defer { try? FileManager.default.removeItem(at: imageURL.deletingLastPathComponent()) }
+
+        let viewModel = ViewerViewModel()
+        await viewModel.open(url: imageURL)
+        viewModel.applyEdit(.mirrorHorizontal)
+
+        XCTAssertTrue(viewModel.saveCurrentEdits())
+
+        let properties = try imageProperties(at: imageURL)
+        let exif = try XCTUnwrap(properties[kCGImagePropertyExifDictionary] as? [CFString: Any])
+        let tiff = try XCTUnwrap(properties[kCGImagePropertyTIFFDictionary] as? [CFString: Any])
+        XCTAssertEqual((properties[kCGImagePropertyOrientation] as? NSNumber)?.intValue, 1)
+        XCTAssertEqual(exif[kCGImagePropertyExifDateTimeOriginal] as? String, "2026:07:11 12:34:56")
+        XCTAssertEqual(tiff[kCGImagePropertyTIFFMake] as? String, "ImageView Test")
+        XCTAssertNotNil(properties[kCGImagePropertyGPSDictionary])
+        XCTAssertEqual((properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue, viewModel.currentImage?.cgImage.width)
+        XCTAssertEqual((properties[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue, viewModel.currentImage?.cgImage.height)
+    }
+
     func testSaveCurrentEditsToNewURLUpdatesCurrentItem() async throws {
         let imageURL = try makeTemporaryPNG(width: 8, height: 3, name: "save-as-source")
         let targetURL = imageURL.deletingLastPathComponent().appendingPathComponent("save-as-target.png")
@@ -756,6 +777,29 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.hasUnsavedEdits)
         XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 3, height: 8))
         XCTAssertTrue(FileManager.default.fileExists(atPath: targetURL.path))
+    }
+
+    func testSaveCurrentEditsToNewURLUsesCurrentItemAsMetadataSource() async throws {
+        let imageURL = try makeTemporaryMetadataJPEG(name: "metadata-save-as-source")
+        let targetURL = imageURL.deletingLastPathComponent().appendingPathComponent("metadata-save-as-target.jpg")
+        defer { try? FileManager.default.removeItem(at: imageURL.deletingLastPathComponent()) }
+
+        let viewModel = ViewerViewModel()
+        await viewModel.open(url: imageURL)
+        viewModel.applyEdit(.mirrorHorizontal)
+
+        XCTAssertTrue(viewModel.saveCurrentEdits(to: targetURL, format: .jpeg))
+
+        let properties = try imageProperties(at: targetURL)
+        let exif = try XCTUnwrap(properties[kCGImagePropertyExifDictionary] as? [CFString: Any])
+        let tiff = try XCTUnwrap(properties[kCGImagePropertyTIFFDictionary] as? [CFString: Any])
+        XCTAssertEqual((properties[kCGImagePropertyOrientation] as? NSNumber)?.intValue, 1)
+        XCTAssertEqual(exif[kCGImagePropertyExifDateTimeOriginal] as? String, "2026:07:11 12:34:56")
+        XCTAssertEqual(tiff[kCGImagePropertyTIFFModel] as? String, "Metadata Fixture")
+        XCTAssertNotNil(properties[kCGImagePropertyGPSDictionary])
+
+        let originalProperties = try imageProperties(at: imageURL)
+        XCTAssertEqual((originalProperties[kCGImagePropertyOrientation] as? NSNumber)?.intValue, 6)
     }
 
     func testSaveCurrentEditsShowsErrorForUnsupportedFormats() async throws {
@@ -860,6 +904,57 @@ final class ViewerViewModelTests: XCTestCase {
         let imageURL = root.appendingPathComponent("\(name).png")
         try makePNGData(width: width, height: height).write(to: imageURL)
         return imageURL
+    }
+
+    private func makeTemporaryMetadataJPEG(name: String) throws -> URL {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let imageURL = root.appendingPathComponent("\(name).jpg")
+        try makeMetadataJPEGData().write(to: imageURL)
+        return imageURL
+    }
+
+    private func makeMetadataJPEGData() throws -> Data {
+        let decoded = try makeDecodedImage(width: 8, height: 3)
+        guard let data = CFDataCreateMutable(nil, 0),
+              let destination = CGImageDestinationCreateWithData(
+                data,
+                UTType.jpeg.identifier as CFString,
+                1,
+                nil
+              ) else {
+            throw TestError.cannotEncodeImage
+        }
+        let properties: [CFString: Any] = [
+            kCGImagePropertyOrientation: 6,
+            kCGImagePropertyExifDictionary: [
+                kCGImagePropertyExifDateTimeOriginal: "2026:07:11 12:34:56"
+            ],
+            kCGImagePropertyTIFFDictionary: [
+                kCGImagePropertyTIFFMake: "ImageView Test",
+                kCGImagePropertyTIFFModel: "Metadata Fixture",
+                kCGImagePropertyTIFFOrientation: 6
+            ],
+            kCGImagePropertyGPSDictionary: [
+                kCGImagePropertyGPSLatitudeRef: "N",
+                kCGImagePropertyGPSLatitude: 31.2304,
+                kCGImagePropertyGPSLongitudeRef: "E",
+                kCGImagePropertyGPSLongitude: 121.4737
+            ]
+        ]
+        CGImageDestinationAddImage(destination, decoded.cgImage, properties as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else {
+            throw TestError.cannotEncodeImage
+        }
+        return data as Data
+    }
+
+    private func imageProperties(at url: URL) throws -> [CFString: Any] {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] else {
+            throw TestError.cannotEncodeImage
+        }
+        return properties
     }
 
     private func makeDecodedImage(width: Int, height: Int) throws -> DecodedImage {

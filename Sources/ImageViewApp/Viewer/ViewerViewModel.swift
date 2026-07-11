@@ -357,7 +357,12 @@ final class ViewerViewModel: ObservableObject {
         }
 
         do {
-            try editingService.save(image.cgImage, to: item.url, format: item.format)
+            try editingService.save(
+                image.cgImage,
+                to: item.url,
+                format: item.format,
+                metadataSourceURL: item.url
+            )
             let decoded = DecodedImage(
                 cgImage: image.cgImage,
                 pixelSize: image.pixelSize,
@@ -382,10 +387,19 @@ final class ViewerViewModel: ObservableObject {
 
     @discardableResult
     func saveCurrentEdits(to targetURL: URL, format: SupportedImageFormat) -> Bool {
-        guard canEditCurrentImage, let image = currentImage else { return false }
+        guard canEditCurrentImage,
+              let item = navigationState?.currentItem,
+              let image = currentImage else {
+            return false
+        }
 
         do {
-            try editingService.save(image.cgImage, to: targetURL, format: format)
+            try editingService.save(
+                image.cgImage,
+                to: targetURL,
+                format: format,
+                metadataSourceURL: item.url
+            )
             let decoded = DecodedImage(cgImage: image.cgImage, pixelSize: image.pixelSize, isAnimated: false)
             Task { [cache] in
                 await cache.insert(decoded, for: targetURL)

@@ -42,14 +42,25 @@ public final class ImageEditingService {
         }
     }
 
-    public func save(_ image: CGImage, to url: URL, format: SupportedImageFormat) throws {
+    public func save(
+        _ image: CGImage,
+        to url: URL,
+        format: SupportedImageFormat,
+        metadataSourceURL: URL? = nil
+    ) throws {
         guard format.canAttemptSafeWrite, let uti = Self.uti(for: format) else {
             throw ImageEditingError.unsupportedSaveFormat
+        }
+
+        let metadata = metadataSourceURL.flatMap {
+            sanitizedMetadata(from: $0, for: format, outputImage: image)
         }
 
         let temporaryURL = url
             .deletingLastPathComponent()
             .appendingPathComponent(".\(url.lastPathComponent).imageview-tmp")
+        try? FileManager.default.removeItem(at: temporaryURL)
+        defer { try? FileManager.default.removeItem(at: temporaryURL) }
 
         guard let destination = CGImageDestinationCreateWithURL(
             temporaryURL as CFURL,
@@ -60,7 +71,7 @@ public final class ImageEditingService {
             throw ImageEditingError.cannotCreateDestination
         }
 
-        CGImageDestinationAddImage(destination, image, nil)
+        CGImageDestinationAddImage(destination, image, metadata as CFDictionary?)
         guard CGImageDestinationFinalize(destination) else {
             throw ImageEditingError.saveFailed
         }
@@ -74,6 +85,103 @@ public final class ImageEditingService {
         } catch {
             try? FileManager.default.removeItem(at: temporaryURL)
             throw error
+        }
+    }
+
+    private func sanitizedMetadata(
+        from sourceURL: URL,
+        for format: SupportedImageFormat,
+        outputImage: CGImage
+    ) -> [CFString: Any]? {
+        guard let source = CGImageSourceCreateWithURL(sourceURL as CFURL, nil),
+              let sourceProperties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] else {
+            return nil
+        }
+
+        var properties: [CFString: Any] = [:]
+        for key in Self.compatibleRootKeys {
+            properties[key] = sourceProperties[key]
+        }
+
+        if Self.supportsRichMetadata(format) {
+            for key in Self.compatibleMetadataDictionaryKeys {
+                guard let dictionary = sourceProperties[key] as? [CFString: Any] else { continue }
+                properties[key] = Self.removingStaleThumbnailFields(from: dictionary)
+            }
+        }
+
+        properties[kCGImagePropertyOrientation] = 1
+        properties[kCGImagePropertyPixelWidth] = outputImage.width
+        properties[kCGImagePropertyPixelHeight] = outputImage.height
+
+        if var exif = properties[kCGImagePropertyExifDictionary] as? [CFString: Any] {
+            exif[kCGImagePropertyExifPixelXDimension] = outputImage.width
+            exif[kCGImagePropertyExifPixelYDimension] = outputImage.height
+            properties[kCGImagePropertyExifDictionary] = exif
+        }
+
+        if var tiff = properties[kCGImagePropertyTIFFDictionary] as? [CFString: Any] {
+            tiff[kCGImagePropertyTIFFOrientation] = 1
+            for key in Self.staleTIFFStorageKeys {
+                tiff.removeValue(forKey: key)
+            }
+            properties[kCGImagePropertyTIFFDictionary] = tiff
+        }
+
+        return properties
+    }
+
+    private static var compatibleRootKeys: [CFString] {
+        [
+            kCGImagePropertyDPIWidth,
+            kCGImagePropertyDPIHeight,
+            kCGImagePropertyColorModel,
+            kCGImagePropertyProfileName
+        ]
+    }
+
+    private static var compatibleMetadataDictionaryKeys: [CFString] {
+        [
+            kCGImagePropertyExifDictionary,
+            kCGImagePropertyExifAuxDictionary,
+            kCGImagePropertyGPSDictionary,
+            kCGImagePropertyTIFFDictionary,
+            kCGImagePropertyIPTCDictionary
+        ]
+    }
+
+    private static var staleTIFFStorageKeys: [CFString] {
+        [
+            kCGImagePropertyTIFFCompression,
+            kCGImagePropertyTIFFPhotometricInterpretation,
+            kCGImagePropertyTIFFTileWidth,
+            kCGImagePropertyTIFFTileLength
+        ]
+    }
+
+    private static func supportsRichMetadata(_ format: SupportedImageFormat) -> Bool {
+        switch format {
+        case .jpeg, .tiff, .heic, .heif:
+            return true
+        case .png, .bmp, .gif, .webp, .avif, .svg:
+            return false
+        }
+    }
+
+    private static func removingStaleThumbnailFields(from dictionary: [CFString: Any]) -> [CFString: Any] {
+        dictionary.reduce(into: [CFString: Any]()) { result, entry in
+            let normalizedKey = (entry.key as String).lowercased()
+            guard !normalizedKey.contains("thumbnail"),
+                  normalizedKey != "jpeginterchangeformat",
+                  normalizedKey != "jpeginterchangeformatlength" else {
+                return
+            }
+
+            if let nested = entry.value as? [CFString: Any] {
+                result[entry.key] = removingStaleThumbnailFields(from: nested)
+            } else {
+                result[entry.key] = entry.value
+            }
         }
     }
 
