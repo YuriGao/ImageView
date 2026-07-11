@@ -251,10 +251,37 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertEqual(item.state, .on)
     }
 
-    func testFilmstripOverlayOnlyDisplaysWhenEnabledAndPointerIsActive() {
-        XCTAssertTrue(MainWindowController.shouldDisplayFilmstripOverlay(isEnabled: true, pointerIsActive: true))
-        XCTAssertFalse(MainWindowController.shouldDisplayFilmstripOverlay(isEnabled: true, pointerIsActive: false))
-        XCTAssertFalse(MainWindowController.shouldDisplayFilmstripOverlay(isEnabled: false, pointerIsActive: true))
+    func testFilmstripRequiresEnabledLoadedFitScaleAndPointerActivity() {
+        XCTAssertTrue(MainWindowController.shouldDisplayFilmstripOverlay(
+            isEnabled: true,
+            hasLoadedImage: true,
+            canvasScale: 1.01,
+            pointerIsActive: true
+        ))
+        XCTAssertFalse(MainWindowController.shouldDisplayFilmstripOverlay(
+            isEnabled: true,
+            hasLoadedImage: false,
+            canvasScale: 1,
+            pointerIsActive: true
+        ))
+        XCTAssertFalse(MainWindowController.shouldDisplayFilmstripOverlay(
+            isEnabled: true,
+            hasLoadedImage: true,
+            canvasScale: 1.011,
+            pointerIsActive: true
+        ))
+        XCTAssertFalse(MainWindowController.shouldDisplayFilmstripOverlay(
+            isEnabled: false,
+            hasLoadedImage: true,
+            canvasScale: 1,
+            pointerIsActive: true
+        ))
+        XCTAssertFalse(MainWindowController.shouldDisplayFilmstripOverlay(
+            isEnabled: true,
+            hasLoadedImage: true,
+            canvasScale: 1,
+            pointerIsActive: false
+        ))
     }
 
     func testFilmstripDoesNotScheduleAutoHideWhilePointerIsOverOverlay() {

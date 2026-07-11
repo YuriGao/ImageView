@@ -257,7 +257,11 @@ final class MainWindowController: NSWindowController {
         canvas.onNext = { [weak self] in self?.navigateToNextImage() }
         canvas.onPrevious = { [weak self] in self?.navigateToPreviousImage() }
         canvas.onTransformChanged = { [weak self] scale in
-            self?.updateZoomStatus(zoomScale: scale)
+            guard let self else { return }
+            self.updateZoomStatus(zoomScale: scale)
+            if scale > 1.01 {
+                self.hideFilmstripOverlay(immediately: true)
+            }
         }
         gestureCoordinator = GestureCoordinator(canvas: canvas)
         filmstripView.onSelect = { [weak self] item in
@@ -268,6 +272,9 @@ final class MainWindowController: NSWindowController {
             .sink { [weak self] image in
                 guard let self else { return }
                 self.canvas.image = image
+                if image == nil {
+                    self.hideFilmstripOverlay(immediately: true)
+                }
                 guard self.settings.animatesNavigationTransitions,
                       image != nil else { return }
                 self.canvas.alphaValue = 0
@@ -733,7 +740,10 @@ final class MainWindowController: NSWindowController {
     }
 
     private func revealFilmstripOverlay() {
-        guard Self.shouldDisplayFilmstripOverlay(isEnabled: settings.showsFilmstrip, pointerIsActive: true) else { return }
+        guard filmstripIsEligible(pointerIsActive: true) else {
+            hideFilmstripOverlay(immediately: true)
+            return
+        }
         cancelFilmstripAutoHide()
         filmstripOverlayView.isHidden = false
 
@@ -751,6 +761,15 @@ final class MainWindowController: NSWindowController {
         filmstripHideTimer?.invalidate()
         filmstripHideTimer = nil
         filmstripVisibilityGeneration += 1
+    }
+
+    private func filmstripIsEligible(pointerIsActive: Bool) -> Bool {
+        Self.shouldDisplayFilmstripOverlay(
+            isEnabled: settings.showsFilmstrip,
+            hasLoadedImage: viewModel.currentImage != nil,
+            canvasScale: canvas.scale,
+            pointerIsActive: pointerIsActive
+        )
     }
 
     private func scheduleFilmstripAutoHide() {
@@ -772,6 +791,7 @@ final class MainWindowController: NSWindowController {
         guard !filmstripOverlayView.isHidden else { return }
 
         if immediately {
+            isPointerOverFilmstrip = false
             filmstripOverlayView.alphaValue = 0
             filmstripOverlayView.isHidden = true
             return
@@ -900,8 +920,13 @@ final class MainWindowController: NSWindowController {
         .windowBackgroundColor
     }
 
-    static func shouldDisplayFilmstripOverlay(isEnabled: Bool, pointerIsActive: Bool) -> Bool {
-        isEnabled && pointerIsActive
+    static func shouldDisplayFilmstripOverlay(
+        isEnabled: Bool,
+        hasLoadedImage: Bool,
+        canvasScale: CGFloat,
+        pointerIsActive: Bool
+    ) -> Bool {
+        isEnabled && hasLoadedImage && canvasScale <= 1.01 && pointerIsActive
     }
 
     static func shouldAutoHideFilmstrip(isEnabled: Bool, pointerIsOverOverlay: Bool) -> Bool {
