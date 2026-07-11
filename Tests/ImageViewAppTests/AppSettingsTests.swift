@@ -28,6 +28,24 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertFalse(second.animatesNavigationTransitions)
     }
 
+    func testAppearanceDefaultsToSystem() {
+        XCTAssertEqual(AppSettings(defaults: makeIsolatedDefaults()).appearance, .system)
+    }
+
+    func testAppearancePersistsAcrossInstances() {
+        let defaults = makeIsolatedDefaults()
+        AppSettings(defaults: defaults).appearance = .dark
+
+        XCTAssertEqual(AppSettings(defaults: defaults).appearance, .dark)
+    }
+
+    func testUnknownAppearanceFallsBackToSystem() {
+        let defaults = makeIsolatedDefaults()
+        defaults.set("sepia", forKey: "appearance")
+
+        XCTAssertEqual(AppSettings(defaults: defaults).appearance, .system)
+    }
+
     private func makeIsolatedDefaults() -> UserDefaults {
         let suiteName = "ImageViewAppTests.AppSettings.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
