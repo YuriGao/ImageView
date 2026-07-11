@@ -105,9 +105,11 @@ final class ImageCanvasView: NSView {
         let previousScale = scale
         scale = min(max(scale * delta, 0.1), 12.0)
         let ratio = scale / previousScale
+        let center = CGPoint(x: bounds.midX, y: bounds.midY)
+        let anchor = CGPoint(x: point.x - center.x, y: point.y - center.y)
         offset = clampedOffset(for: CGPoint(
-            x: point.x - (point.x - offset.x) * ratio,
-            y: point.y - (point.y - offset.y) * ratio
+            x: anchor.x - (anchor.x - offset.x) * ratio,
+            y: anchor.y - (anchor.y - offset.y) * ratio
         ))
     }
 

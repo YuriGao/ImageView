@@ -5,6 +5,26 @@ import ImageViewCore
 
 @MainActor
 final class ImageCanvasViewTests: XCTestCase {
+    func testZoomAtCanvasCenterKeepsZeroOffset() {
+        let canvas = ImageCanvasView(frame: CGRect(x: 0, y: 0, width: 400, height: 300))
+        canvas.image = makeDecodedImage(width: 400, height: 300)
+
+        canvas.zoom(by: 2, around: CGPoint(x: 200, y: 150))
+
+        XCTAssertEqual(canvas.offset.x, 0, accuracy: 0.001)
+        XCTAssertEqual(canvas.offset.y, 0, accuracy: 0.001)
+    }
+
+    func testZoomOffCenterPreservesCanvasAnchor() {
+        let canvas = ImageCanvasView(frame: CGRect(x: 0, y: 0, width: 400, height: 300))
+        canvas.image = makeDecodedImage(width: 400, height: 300)
+
+        canvas.zoom(by: 2, around: CGPoint(x: 300, y: 150))
+
+        XCTAssertEqual(canvas.offset.x, -100, accuracy: 0.001)
+        XCTAssertEqual(canvas.offset.y, 0, accuracy: 0.001)
+    }
+
     func testTransformHelpersUpdateScaleAndOffset() {
         let canvas = ImageCanvasView()
 
