@@ -198,6 +198,57 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.currentMetadata?.pixelWidth, 6_000)
     }
 
+    func testPreviewCannotBeEditedBeforeFullImageArrives() async throws {
+        let url = URL(fileURLWithPath: "/tmp/preview-edit-safety.png")
+        let preview = try makeDecodedImage(width: 2_048, height: 1_365)
+        let full = try makeDecodedImage(width: 6_000, height: 4_000)
+        let previewLoader = ControlledImageLoader(images: [url: preview])
+        let fullLoader = ControlledImageLoader(images: [url: full])
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: { _ in [ImageItem(url: url, format: .png)] },
+            loadImageAtURL: fullLoader.load(url:format:),
+            loadPreviewAtURL: previewLoader.load(url:format:)
+        )
+
+        await fullLoader.pauseNextLoad(for: url)
+        let opening = Task { await viewModel.open(url: url) }
+        await fullLoader.waitUntilPaused(url: url)
+        await waitUntil { viewModel.currentImage?.pixelSize == preview.pixelSize }
+
+        XCTAssertEqual(viewModel.loadPhase, .preview)
+        viewModel.applyEdit(.rotateClockwise)
+        XCTAssertFalse(viewModel.hasUnsavedEdits)
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, preview.pixelSize)
+
+        try await fullLoader.resume(url: url)
+        _ = await opening.value
+    }
+
+    func testOpenPublishesFullImageWithoutWaitingForSlowPreview() async throws {
+        let url = URL(fileURLWithPath: "/tmp/full-wins-race.png")
+        let preview = try makeDecodedImage(width: 2_048, height: 1_365)
+        let full = try makeDecodedImage(width: 6_000, height: 4_000)
+        let previewLoader = ControlledImageLoader(images: [url: preview])
+        let fullLoader = ControlledImageLoader(images: [url: full])
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: { _ in [ImageItem(url: url, format: .png)] },
+            loadImageAtURL: fullLoader.load(url:format:),
+            loadPreviewAtURL: previewLoader.load(url:format:)
+        )
+
+        await previewLoader.pauseNextLoad(for: url)
+        let opening = Task { await viewModel.open(url: url) }
+        await previewLoader.waitUntilPaused(url: url)
+
+        await waitUntil { viewModel.loadPhase == .full }
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, full.pixelSize)
+
+        try await previewLoader.resume(url: url)
+        _ = await opening.value
+        XCTAssertEqual(viewModel.loadPhase, .full)
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, full.pixelSize)
+    }
+
     func testNewOpenIgnoresLatePreviewFromEarlierRequest() async throws {
         let firstURL = URL(fileURLWithPath: "/tmp/first.png")
         let secondURL = URL(fileURLWithPath: "/tmp/second.png")

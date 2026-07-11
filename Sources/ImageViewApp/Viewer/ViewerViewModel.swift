@@ -18,6 +18,18 @@ struct CurrentFileVersion: Equatable, Sendable {
     }
 }
 
+enum ImageLoadPhase: Equatable {
+    case empty
+    case preview
+    case full
+    case failed
+}
+
+private enum ImageLoadEvent: Sendable {
+    case preview(DecodedImage?)
+    case full(DecodedImage)
+}
+
 @MainActor
 final class ViewerViewModel: ObservableObject {
     var onSuccessfulOpen: ((URL) -> Void)?
@@ -27,6 +39,11 @@ final class ViewerViewModel: ObservableObject {
     @Published private(set) var errorMessage: String?
     @Published private(set) var displayTitle = "ImageView"
     @Published private(set) var hasUnsavedEdits = false
+    @Published private(set) var loadPhase: ImageLoadPhase = .empty
+
+    var canEditCurrentImage: Bool {
+        loadPhase == .full && currentImage != nil
+    }
 
     var currentFilename: String {
         navigationState?.currentItem?.url.lastPathComponent ?? "ImageView"
@@ -102,6 +119,7 @@ final class ViewerViewModel: ObservableObject {
         displayedFileVersion = nil
         currentMetadata = nil
         hasUnsavedEdits = false
+        loadPhase = .empty
         errorMessage = nil
         updateDisplayTitle()
 
@@ -111,6 +129,7 @@ final class ViewerViewModel: ObservableObject {
             currentImage = nil
             currentMetadata = nil
             persistedCurrentImage = nil
+            loadPhase = .failed
             errorMessage = "不支持的图片格式：\(url.pathExtension)"
             updateDisplayTitle()
             return
@@ -119,20 +138,42 @@ final class ViewerViewModel: ObservableObject {
         let fallbackItem = ImageItem(url: url, format: format)
 
         do {
-            async let preview = loadPreviewAtURL(url, format)
-            async let full = display(url: url, format: format)
-            if let previewImage = try? await preview,
-               generation == openGeneration {
-                currentImage = previewImage
+            let loadPreviewAtURL = self.loadPreviewAtURL
+            let loadImageAtURL = self.loadImageAtURL
+            try await withThrowingTaskGroup(of: ImageLoadEvent.self) { group in
+                group.addTask {
+                    .preview(try? await loadPreviewAtURL(url, format))
+                }
+                group.addTask {
+                    .full(try await loadImageAtURL(url, format))
+                }
+
+                while let event = try await group.next() {
+                    guard generation == openGeneration else {
+                        group.cancelAll()
+                        return
+                    }
+
+                    switch event {
+                    case let .preview(image):
+                        guard let image, loadPhase != .full else { continue }
+                        currentImage = image
+                        loadPhase = .preview
+                    case let .full(image):
+                        currentImage = image
+                        persistedCurrentImage = image
+                        displayedFileVersion = currentFileVersionAtURL(url)
+                        updateMetadata(url: url, format: format, image: image)
+                        navigationState = NavigationState(items: [fallbackItem], currentURL: url)
+                        loadPhase = .full
+                        updateDisplayTitle()
+                        group.cancelAll()
+                        return
+                    }
+                }
             }
-            let image = try await full
+
             guard generation == openGeneration else { return }
-            currentImage = image
-            persistedCurrentImage = image
-            displayedFileVersion = currentFileVersionAtURL(url)
-            updateMetadata(url: url, format: format, image: image)
-            navigationState = NavigationState(items: [fallbackItem], currentURL: url)
-            updateDisplayTitle()
 
             do {
                 let items = try await scanContainingDirectory(url)
@@ -155,19 +196,28 @@ final class ViewerViewModel: ObservableObject {
             currentMetadata = nil
             persistedCurrentImage = nil
             displayedFileVersion = nil
+            loadPhase = .failed
             errorMessage = "图片损坏或无法解码：\(url.lastPathComponent)"
             updateDisplayTitle()
         }
     }
 
     func showNext() {
+        let previousURL = navigationState?.currentItem?.url
         navigationState?.moveNext()
+        if navigationState?.currentItem?.url != previousURL {
+            loadPhase = .empty
+        }
         updateDisplayTitle()
         Task { await displayCurrentAndPreload() }
     }
 
     func showPrevious() {
+        let previousURL = navigationState?.currentItem?.url
         navigationState?.movePrevious()
+        if navigationState?.currentItem?.url != previousURL {
+            loadPhase = .empty
+        }
         updateDisplayTitle()
         Task { await displayCurrentAndPreload() }
     }
@@ -180,6 +230,9 @@ final class ViewerViewModel: ObservableObject {
         }
 
         navigationState = NavigationState(items: state.items, currentURL: item.url)
+        if state.currentItem?.url != navigationState?.currentItem?.url {
+            loadPhase = .empty
+        }
         updateDisplayTitle()
         Task { await displayCurrentAndPreload() }
     }
@@ -195,11 +248,13 @@ final class ViewerViewModel: ObservableObject {
                 currentMetadata = nil
                 persistedCurrentImage = nil
                 displayedFileVersion = nil
+                loadPhase = .empty
                 errorMessage = "没有可显示的图片"
                 updateDisplayTitle()
                 return
             }
 
+            loadPhase = .empty
             errorMessage = nil
             updateDisplayTitle()
             Task { await displayCurrentAndPreload() }
@@ -230,7 +285,7 @@ final class ViewerViewModel: ObservableObject {
     }
 
     func applyEdit(_ operation: EditOperation) {
-        guard let image = currentImage else { return }
+        guard canEditCurrentImage, let image = currentImage else { return }
 
         do {
             let output = try editingService.apply([operation], to: image.cgImage)
@@ -253,7 +308,8 @@ final class ViewerViewModel: ObservableObject {
 
     @discardableResult
     func saveCurrentEdits() -> Bool {
-        guard let item = navigationState?.currentItem,
+        guard canEditCurrentImage,
+              let item = navigationState?.currentItem,
               let image = currentImage else {
             return false
         }
@@ -284,7 +340,7 @@ final class ViewerViewModel: ObservableObject {
 
     @discardableResult
     func saveCurrentEdits(to targetURL: URL, format: SupportedImageFormat) -> Bool {
-        guard let image = currentImage else { return false }
+        guard canEditCurrentImage, let image = currentImage else { return false }
 
         do {
             try editingService.save(image.cgImage, to: targetURL, format: format)
@@ -356,6 +412,7 @@ final class ViewerViewModel: ObservableObject {
         }
 
         await cache.removeImage(for: item.url)
+        loadPhase = .empty
         do {
             let image = try await display(url: item.url, format: item.format)
             guard navigationState?.currentItem?.url.standardizedFileURL == item.url.standardizedFileURL else { return }
@@ -363,9 +420,11 @@ final class ViewerViewModel: ObservableObject {
             persistedCurrentImage = image
             displayedFileVersion = currentVersion
             updateMetadata(url: item.url, format: item.format, image: image)
+            loadPhase = .full
             errorMessage = nil
             preloadNeighbors()
         } catch {
+            loadPhase = .failed
             errorMessage = "图片已在外部修改且无法解码：\(item.url.lastPathComponent)"
         }
     }
@@ -380,6 +439,7 @@ final class ViewerViewModel: ObservableObject {
         persistedCurrentImage = image
         displayedFileVersion = currentFileVersionAtURL(item.url)
         updateMetadata(url: item.url, format: item.format, image: image)
+        loadPhase = .full
         preloadNeighbors()
     }
 
@@ -397,10 +457,12 @@ final class ViewerViewModel: ObservableObject {
             currentImage = nil
             currentMetadata = nil
             persistedCurrentImage = nil
+            loadPhase = .empty
             updateDisplayTitle()
             return
         }
 
+        loadPhase = .empty
         updateDisplayTitle()
         Task { await displayCurrentAndPreload() }
     }

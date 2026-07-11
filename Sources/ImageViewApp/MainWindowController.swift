@@ -419,7 +419,7 @@ final class MainWindowController: NSWindowController {
     }
 
     @objc func startCropping(_ sender: Any?) {
-        guard viewModel.currentImage != nil,
+        guard viewModel.canEditCurrentImage,
               let imageDrawRect = canvas.imageDrawRect else {
             NSSound.beep()
             return
@@ -431,7 +431,8 @@ final class MainWindowController: NSWindowController {
     }
 
     @objc func applyCrop(_ sender: Any?) {
-        guard cropOverlay.isCropping,
+        guard viewModel.canEditCurrentImage,
+              cropOverlay.isCropping,
               let pixelCropRect = canvas.pixelCropRect(for: cropOverlay.cropRect) else {
             NSSound.beep()
             return
@@ -448,7 +449,7 @@ final class MainWindowController: NSWindowController {
     }
 
     @objc func saveEdits(_ sender: Any?) {
-        guard viewModel.currentImage != nil else {
+        guard viewModel.canEditCurrentImage else {
             NSSound.beep()
             return
         }
@@ -456,7 +457,7 @@ final class MainWindowController: NSWindowController {
     }
 
     @objc func saveEditsAs(_ sender: Any?) {
-        guard viewModel.currentImage != nil, viewModel.hasUnsavedEdits else {
+        guard viewModel.canEditCurrentImage, viewModel.hasUnsavedEdits else {
             NSSound.beep()
             return
         }
@@ -671,6 +672,7 @@ final class MainWindowController: NSWindowController {
         _ command: MenuCommand,
         hasCurrentItem: Bool,
         hasCurrentImage: Bool,
+        canEditCurrentImage: Bool,
         hasUnsavedEdits: Bool
     ) -> Bool {
         switch command {
@@ -681,10 +683,12 @@ final class MainWindowController: NSWindowController {
         case .canvasSizing:
             return hasCurrentImage
         case .startCropping:
-            return hasCurrentImage
+            return canEditCurrentImage
         case .editOperation:
-            return hasCurrentImage
-        case .saveEdits, .saveEditsAs, .discardEdits:
+            return canEditCurrentImage
+        case .saveEdits, .saveEditsAs:
+            return canEditCurrentImage && hasUnsavedEdits
+        case .discardEdits:
             return hasCurrentImage && hasUnsavedEdits
         }
     }
@@ -993,7 +997,7 @@ final class MainWindowController: NSWindowController {
     }
 
     private func performEdit(_ operation: EditOperation) {
-        guard viewModel.currentImage != nil else {
+        guard viewModel.canEditCurrentImage else {
             NSSound.beep()
             return
         }
@@ -1058,6 +1062,7 @@ extension MainWindowController: NSMenuItemValidation {
             command,
             hasCurrentItem: viewModel.navigationState?.currentItem != nil,
             hasCurrentImage: viewModel.currentImage != nil,
+            canEditCurrentImage: viewModel.canEditCurrentImage,
             hasUnsavedEdits: viewModel.hasUnsavedEdits
         )
     }

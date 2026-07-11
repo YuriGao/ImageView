@@ -198,20 +198,22 @@ final class MainWindowControllerTests: XCTestCase {
         )
     }
 
-    func testMenuCommandAvailabilityRequiresImageAndUnsavedStateWhereAppropriate() {
+    func testMenuCommandAvailabilityRequiresFullImageForEditingButKeepsPreviewViewingAvailable() {
         XCTAssertFalse(
             MainWindowController.isMenuCommandEnabled(
                 .startCropping,
                 hasCurrentItem: true,
                 hasCurrentImage: false,
+                canEditCurrentImage: false,
                 hasUnsavedEdits: false
             )
         )
-        XCTAssertTrue(
+        XCTAssertFalse(
             MainWindowController.isMenuCommandEnabled(
                 .startCropping,
                 hasCurrentItem: true,
                 hasCurrentImage: true,
+                canEditCurrentImage: false,
                 hasUnsavedEdits: false
             )
         )
@@ -219,7 +221,8 @@ final class MainWindowControllerTests: XCTestCase {
             MainWindowController.isMenuCommandEnabled(
                 .editOperation(.rotateClockwise),
                 hasCurrentItem: true,
-                hasCurrentImage: false,
+                hasCurrentImage: true,
+                canEditCurrentImage: false,
                 hasUnsavedEdits: false
             )
         )
@@ -228,6 +231,7 @@ final class MainWindowControllerTests: XCTestCase {
                 .editOperation(.mirrorHorizontal),
                 hasCurrentItem: false,
                 hasCurrentImage: true,
+                canEditCurrentImage: true,
                 hasUnsavedEdits: false
             )
         )
@@ -236,14 +240,16 @@ final class MainWindowControllerTests: XCTestCase {
                 .saveEdits,
                 hasCurrentItem: true,
                 hasCurrentImage: true,
-                hasUnsavedEdits: false
+                canEditCurrentImage: false,
+                hasUnsavedEdits: true
             )
         )
-        XCTAssertTrue(
+        XCTAssertFalse(
             MainWindowController.isMenuCommandEnabled(
-                .discardEdits,
+                .saveEditsAs,
                 hasCurrentItem: true,
                 hasCurrentImage: true,
+                canEditCurrentImage: false,
                 hasUnsavedEdits: true
             )
         )
@@ -252,7 +258,26 @@ final class MainWindowControllerTests: XCTestCase {
                 .saveEditsAs,
                 hasCurrentItem: true,
                 hasCurrentImage: true,
+                canEditCurrentImage: true,
                 hasUnsavedEdits: true
+            )
+        )
+        XCTAssertTrue(
+            MainWindowController.isMenuCommandEnabled(
+                .canvasSizing,
+                hasCurrentItem: true,
+                hasCurrentImage: true,
+                canEditCurrentImage: false,
+                hasUnsavedEdits: false
+            )
+        )
+        XCTAssertTrue(
+            MainWindowController.isMenuCommandEnabled(
+                .navigation,
+                hasCurrentItem: true,
+                hasCurrentImage: true,
+                canEditCurrentImage: false,
+                hasUnsavedEdits: false
             )
         )
     }
