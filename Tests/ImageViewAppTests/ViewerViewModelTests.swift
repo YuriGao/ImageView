@@ -198,6 +198,32 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.currentMetadata?.pixelWidth, 6_000)
     }
 
+    func testOpenPublishesLoadingBeforeAnyDecodedImage() async throws {
+        let url = URL(fileURLWithPath: "/tmp/loading.png")
+        let image = try makeDecodedImage(width: 8, height: 6)
+        let previewLoader = ControlledImageLoader(images: [url: image])
+        let fullLoader = ControlledImageLoader(images: [url: image])
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: { _ in [] },
+            loadImageAtURL: fullLoader.load(url:format:),
+            loadPreviewAtURL: previewLoader.load(url:format:)
+        )
+        await previewLoader.pauseNextLoad(for: url)
+        await fullLoader.pauseNextLoad(for: url)
+
+        let task = Task { await viewModel.open(url: url) }
+        await previewLoader.waitUntilPaused(url: url)
+        await fullLoader.waitUntilPaused(url: url)
+
+        XCTAssertEqual(viewModel.loadPhase, .loading)
+        XCTAssertNil(viewModel.currentImage)
+
+        try await fullLoader.resume(url: url)
+        try await previewLoader.resume(url: url)
+        await task.value
+        XCTAssertEqual(viewModel.loadPhase, .full)
+    }
+
     func testPreviewCannotBeEditedBeforeFullImageArrives() async throws {
         let url = URL(fileURLWithPath: "/tmp/preview-edit-safety.png")
         let preview = try makeDecodedImage(width: 2_048, height: 1_365)
@@ -544,7 +570,8 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.currentMetadata)
         XCTAssertNil(viewModel.navigationState)
         XCTAssertEqual(viewModel.displayTitle, "ImageView")
-        XCTAssertEqual(viewModel.errorMessage, "没有可显示的图片")
+        XCTAssertEqual(viewModel.loadPhase, .empty)
+        XCTAssertNil(viewModel.errorMessage)
     }
 
     func testRenameCurrentSuccessClearsPriorErrorMessage() async throws {

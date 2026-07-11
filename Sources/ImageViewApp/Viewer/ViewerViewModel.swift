@@ -10,6 +10,7 @@ private struct VersionedLoadedImage: Sendable {
 
 enum ImageLoadPhase: Equatable {
     case empty
+    case loading
     case preview
     case full
     case failed
@@ -159,7 +160,7 @@ final class ViewerViewModel: ObservableObject {
         displayedFileVersion = nil
         currentMetadata = nil
         hasUnsavedEdits = false
-        loadPhase = .empty
+        loadPhase = .loading
         errorMessage = nil
         updateDisplayTitle()
 
@@ -268,7 +269,7 @@ final class ViewerViewModel: ObservableObject {
         let previousURL = navigationState?.currentItem?.url
         navigationState?.moveNext()
         if navigationState?.currentItem?.url != previousURL {
-            loadPhase = .empty
+            loadPhase = .loading
         }
         updateDisplayTitle()
         startDisplayCurrentAndPreload()
@@ -278,7 +279,7 @@ final class ViewerViewModel: ObservableObject {
         let previousURL = navigationState?.currentItem?.url
         navigationState?.movePrevious()
         if navigationState?.currentItem?.url != previousURL {
-            loadPhase = .empty
+            loadPhase = .loading
         }
         updateDisplayTitle()
         startDisplayCurrentAndPreload()
@@ -293,7 +294,7 @@ final class ViewerViewModel: ObservableObject {
 
         navigationState = NavigationState(items: state.items, currentURL: item.url)
         if state.currentItem?.url != navigationState?.currentItem?.url {
-            loadPhase = .empty
+            loadPhase = .loading
         }
         updateDisplayTitle()
         startDisplayCurrentAndPreload()
@@ -311,12 +312,12 @@ final class ViewerViewModel: ObservableObject {
                 persistedCurrentImage = nil
                 displayedFileVersion = nil
                 loadPhase = .empty
-                errorMessage = "没有可显示的图片"
+                errorMessage = nil
                 updateDisplayTitle()
                 return
             }
 
-            loadPhase = .empty
+            loadPhase = .loading
             errorMessage = nil
             updateDisplayTitle()
             startDisplayCurrentAndPreload()
@@ -494,7 +495,7 @@ final class ViewerViewModel: ObservableObject {
         }
 
         let generation = beginDisplayRequest()
-        loadPhase = .empty
+        loadPhase = .loading
         await cache.removeImage(for: item.url)
         guard generation == displayRequestGeneration else { return }
         do {
@@ -548,7 +549,7 @@ final class ViewerViewModel: ObservableObject {
             return
         }
 
-        loadPhase = .empty
+        loadPhase = .loading
         updateDisplayTitle()
         startDisplayCurrentAndPreload()
     }
@@ -556,7 +557,7 @@ final class ViewerViewModel: ObservableObject {
     private func startDisplayCurrentAndPreload() {
         guard let item = navigationState?.currentItem else { return }
         let generation = beginDisplayRequest()
-        loadPhase = .empty
+        loadPhase = .loading
         Task { await displayCurrentAndPreload(item: item, generation: generation) }
     }
 
