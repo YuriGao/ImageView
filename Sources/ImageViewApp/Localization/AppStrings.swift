@@ -1,6 +1,8 @@
 import Foundation
 
 enum AppStrings {
+    private static let packagedResourceBundleName = "ImageView_ImageViewApp"
+
     static let menuKeys = [
         "menu.file", "menu.view", "menu.image", "menu.window", "menu.help",
         "menu.app.settings", "menu.app.quit",
@@ -36,10 +38,21 @@ enum AppStrings {
 
     static func text(_ key: String, preferredLanguages: [String] = Locale.preferredLanguages) -> String {
         let localization = preferredLanguages.contains { $0.lowercased().hasPrefix("zh") } ? "zh-hans" : "en"
-        guard let path = Bundle.module.path(forResource: localization, ofType: "lproj"),
+        let resourceBundle = packagedResourceBundle ?? Bundle.module
+        guard let path = resourceBundle.path(forResource: localization, ofType: "lproj"),
               let bundle = Bundle(path: path) else {
             return key
         }
         return bundle.localizedString(forKey: key, value: key, table: "Localizable")
+    }
+
+    private static var packagedResourceBundle: Bundle? {
+        guard let url = Bundle.main.url(
+            forResource: packagedResourceBundleName,
+            withExtension: "bundle"
+        ) else {
+            return nil
+        }
+        return Bundle(url: url)
     }
 }

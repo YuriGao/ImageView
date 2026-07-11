@@ -31,6 +31,14 @@ open .build/ImageView.app
 
 构建产物为 `.build/ImageView.app`。应用包声明了上述图片类型，macOS 可将其作为候选默认图片查看器。
 
+## 安装到本机
+
+```bash
+scripts/install-app.sh
+```
+
+脚本会重新构建并安装到 `/Applications/ImageView.app`，然后启动已安装版本。
+
 ## 文档
 
 - [产品需求文档](docs/superpowers/specs/2026-07-09-imageview-prd.md)
