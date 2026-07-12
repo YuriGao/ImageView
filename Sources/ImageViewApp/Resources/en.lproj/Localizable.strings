@@ -39,6 +39,7 @@
 "emptyState.title" = "Open an Image";
 "emptyState.message" = "Drag an image here, or choose one below";
 "emptyState.open" = "Open Image…";
+"errorState.retry" = "Choose Another Image…";
 "settings.title" = "ImageView Settings";
 "settings.general.title" = "General";
 "settings.general.showsFilmstrip" = "Show filmstrip";

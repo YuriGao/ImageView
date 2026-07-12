@@ -47,4 +47,11 @@ final class AppStringsTests: XCTestCase {
             XCTAssertNotEqual(AppStrings.text(key, preferredLanguages: ["zh-Hans"]), key)
         }
     }
+
+    func testEveryErrorStateLabelHasChineseAndEnglishTranslations() {
+        for key in AppStrings.errorStateKeys {
+            XCTAssertNotEqual(AppStrings.text(key, preferredLanguages: ["en"]), key)
+            XCTAssertNotEqual(AppStrings.text(key, preferredLanguages: ["zh-Hans"]), key)
+        }
+    }
 }

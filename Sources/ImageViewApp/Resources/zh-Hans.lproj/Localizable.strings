@@ -39,6 +39,7 @@
 "emptyState.title" = "打开图片";
 "emptyState.message" = "将图片拖到这里，或点击下方按钮";
 "emptyState.open" = "打开图片…";
+"errorState.retry" = "重新选择图片…";
 "settings.title" = "ImageView 设置";
 "settings.general.title" = "通用";
 "settings.general.showsFilmstrip" = "显示胶片预览";
