@@ -1210,6 +1210,10 @@ final class MainWindowControllerTests: XCTestCase {
         try await assertGridDestructiveActionHonorsUnsavedChoices(action: .move)
     }
 
+    func testGridRenameHonorsUnsavedSaveDiscardAndCancel() async throws {
+        try await assertGridDestructiveActionHonorsUnsavedChoices(action: .rename)
+    }
+
     func testGridBackForwardPreservesScrollOrigin() async throws {
         let fixture = try makeFolderNavigationFixture(itemNames: (0..<20).map { "\($0).png" })
         defer { try? FileManager.default.removeItem(at: fixture.folder) }
@@ -1711,6 +1715,7 @@ final class MainWindowControllerTests: XCTestCase {
     private enum GridDestructiveAction {
         case trash
         case move
+        case rename
     }
 
     private func assertGridDestructiveActionHonorsUnsavedChoices(
@@ -1722,6 +1727,18 @@ final class MainWindowControllerTests: XCTestCase {
             .cancel
         ] {
             let operationCount = MainWindowLockedValue(0)
+            let renamePlan: FolderBrowserViewModel.PlanBatchRename = { urls, baseName, startNumber, _ in
+                BatchRenamePlan(
+                    proposals: urls.enumerated().map { index, source in
+                        RenameProposal(
+                            source: source,
+                            destination: source.deletingLastPathComponent()
+                                .appendingPathComponent("\(baseName) \(startNumber + index).png")
+                        )
+                    },
+                    failures: []
+                )
+            }
             let fixture = try makeFolderNavigationFixture(
                 moveToTrash: { urls in
                     operationCount.update { $0 += 1 }
@@ -1730,6 +1747,11 @@ final class MainWindowControllerTests: XCTestCase {
                 moveToFolder: { urls, _, _ in
                     operationCount.update { $0 += 1 }
                     return BatchOperationResult(succeeded: urls)
+                },
+                planBatchRename: renamePlan,
+                executeRenamePlan: { plan in
+                    operationCount.update { $0 += 1 }
+                    return BatchOperationResult(succeeded: plan.proposals.map(\.source))
                 }
             )
             defer { try? FileManager.default.removeItem(at: fixture.folder) }
@@ -1744,7 +1766,10 @@ final class MainWindowControllerTests: XCTestCase {
             fixture.controller.setUnsavedChangesChoiceForTesting(choice)
             fixture.controller.batchActionDialogProviderForTesting = .init(
                 confirmTrash: { _ in true },
-                chooseDestinationFolder: { fixture.folder.appendingPathComponent("destination", isDirectory: true) }
+                chooseDestinationFolder: { fixture.folder.appendingPathComponent("destination", isDirectory: true) },
+                requestRenameParameters: { _, confirm in
+                    confirm(.init(baseName: "Renamed", startNumber: 1, padding: 0))
+                }
             )
 
             switch action {
@@ -1752,9 +1777,14 @@ final class MainWindowControllerTests: XCTestCase {
                 fixture.controller.triggerFolderBrowserTrashForTesting()
             case .move:
                 fixture.controller.triggerFolderBrowserMoveForTesting()
+            case .rename:
+                fixture.controller.triggerFolderBrowserRenameForTesting()
             }
             for _ in 0..<100 where choice != .cancel && operationCount.value == 0 {
                 await Task.yield()
+            }
+            if choice == .cancel {
+                for _ in 0..<100 { await Task.yield() }
             }
 
             XCTAssertEqual(operationCount.value, choice == .cancel ? 0 : 1, "choice=\(choice)")

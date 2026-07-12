@@ -53,6 +53,30 @@ final class BatchRenameSheetControllerTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(received), .init(baseName: "Review", startNumber: 3, padding: 2))
     }
 
+    func testConfirmEndsSheetBeforeCallingCallback() {
+        let item = ImageItem(url: URL(fileURLWithPath: "/tmp/one.png"), format: .png)
+        let controller = BatchRenameSheetController(items: [item])
+        let parent = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        guard let sheet = controller.window else {
+            return XCTFail("Expected rename sheet window")
+        }
+        parent.beginSheet(sheet)
+        var callbackObservedDetachedSheet = false
+        controller.onConfirm = { _ in
+            callbackObservedDetachedSheet = sheet.sheetParent == nil
+        }
+
+        controller.confirmForTesting()
+
+        XCTAssertTrue(callbackObservedDetachedSheet)
+        XCTAssertNil(sheet.sheetParent)
+    }
+
     func testPaddingZeroConfirmsAndPreviewsUnpaddedNumbers() throws {
         let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
         let item = ImageItem(url: folder.appendingPathComponent("one.png"), format: .png)

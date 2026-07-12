@@ -268,6 +268,19 @@ final class FolderBrowserViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.visibleItems, [apple])
     }
 
+    func testSetSelectionCanonicalizesIDsToVisibleItemOrder() async {
+        let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
+        let first = ImageItem(url: folder.appendingPathComponent("a.png"), format: .png)
+        let second = ImageItem(url: folder.appendingPathComponent("b.jpg"), format: .jpeg)
+        let third = ImageItem(url: folder.appendingPathComponent("c.webp"), format: .webp)
+        let viewModel = FolderBrowserViewModel(scanFolder: { _ in [first, second, third] })
+        await viewModel.openFolder(folder)
+
+        viewModel.setSelection([third.id, first.id, second.id])
+
+        XCTAssertEqual(viewModel.selectedItems, [first, second, third])
+    }
+
     func testApplyingTrashLikeResultRemovesSucceededAndKeepsFailedSelected() async {
         let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
         let removed = ImageItem(url: folder.appendingPathComponent("removed.png"), format: .png)
@@ -366,7 +379,7 @@ final class FolderBrowserViewModelTests: XCTestCase {
         let task = viewModel.moveSelected(to: destination, conflictPolicy: .skip)
         await task?.value
 
-        XCTAssertEqual(received.value?.urls, [moved.url, failed.url])
+        XCTAssertEqual(received.value?.urls, [failed.url, moved.url])
         XCTAssertEqual(received.value?.destination, destination)
         XCTAssertEqual(received.value?.policy, .skip)
         XCTAssertEqual(viewModel.visibleItems, [failed])

@@ -972,11 +972,14 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         }
 
         let confirm: (BatchRenameSheetController.RenameParameters) -> Void = { [weak self] parameters in
-            self?.folderBrowserViewModel.renameSelected(
-                baseName: parameters.baseName,
-                startNumber: parameters.startNumber,
-                padding: parameters.padding
-            )
+            guard let self else { return }
+            self.confirmUnsavedEditsForSelectedViewerIfNeeded(selectedItems, transition: .renaming) {
+                self.folderBrowserViewModel.renameSelected(
+                    baseName: parameters.baseName,
+                    startNumber: parameters.startNumber,
+                    padding: parameters.padding
+                )
+            }
         }
 
         if let requestRenameParameters = batchActionDialogProviderForTesting?.requestRenameParameters {

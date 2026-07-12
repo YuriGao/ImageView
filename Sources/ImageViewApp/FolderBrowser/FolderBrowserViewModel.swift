@@ -167,7 +167,12 @@ final class FolderBrowserViewModel: ObservableObject {
     }
 
     func setSelection(_ selectedItemIDs: [ImageItem.ID]) {
-        session?.selectedItemIDs = selectedItemIDs
+        guard let session else { return }
+        let selectedIDs = Set(selectedItemIDs)
+        let orderedIDs = session.visibleItems
+            .map(\.id)
+            .filter(selectedIDs.contains)
+        self.session?.selectedItemIDs = orderedIDs
     }
 
     func recordOpenedItem(_ item: ImageItem) {

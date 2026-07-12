@@ -153,6 +153,55 @@ final class FolderBrowserViewTests: XCTestCase {
         XCTAssertEqual(view.testingSelectedIDs, [first.id])
     }
 
+    func testCommandASelectsAllVisibleItemsAndPublishesSelection() {
+        let first = ImageItem(url: URL(fileURLWithPath: "/tmp/first.png"), format: .png)
+        let second = ImageItem(url: URL(fileURLWithPath: "/tmp/second.jpg"), format: .jpeg)
+        let third = ImageItem(url: URL(fileURLWithPath: "/tmp/third.webp"), format: .webp)
+        let view = FolderBrowserView(thumbnailProvider: .stub)
+        var selectedIDs: Set<ImageItem.ID> = []
+        view.onSelectionChanged = { selectedIDs = $0 }
+        view.apply(items: [first, second, third], selectedIDs: [first.id])
+
+        view.testingPerformKeyDown(
+            keyCode: 0,
+            modifierFlags: [.command],
+            characters: "a"
+        )
+
+        XCTAssertEqual(view.testingSelectedIDs, [first.id, second.id, third.id])
+        XCTAssertEqual(selectedIDs, [first.id, second.id, third.id])
+    }
+
+    func testCommandAStillSelectsAllWhenCapsLockIsEnabled() {
+        let first = ImageItem(url: URL(fileURLWithPath: "/tmp/first.png"), format: .png)
+        let second = ImageItem(url: URL(fileURLWithPath: "/tmp/second.jpg"), format: .jpeg)
+        let view = FolderBrowserView(thumbnailProvider: .stub)
+        view.apply(items: [first, second], selectedIDs: [first.id])
+
+        view.testingPerformKeyDown(
+            keyCode: 0,
+            modifierFlags: [.command, .capsLock],
+            characters: "A"
+        )
+
+        XCTAssertEqual(view.testingSelectedIDs, [first.id, second.id])
+    }
+
+    func testDeleteKeyTriggersTrashOnlyWhenSelectionExists() {
+        let item = ImageItem(url: URL(fileURLWithPath: "/tmp/delete.png"), format: .png)
+        let view = FolderBrowserView(thumbnailProvider: .stub)
+        var trashRequestCount = 0
+        view.onMoveToTrash = { trashRequestCount += 1 }
+        view.apply(items: [item], selectedIDs: [item.id])
+
+        view.testingPerformKeyDown(keyCode: 51, characters: "\u{7f}")
+        XCTAssertEqual(trashRequestCount, 1)
+
+        view.applySelection([])
+        view.testingPerformKeyDown(keyCode: 51, characters: "\u{7f}")
+        XCTAssertEqual(trashRequestCount, 1)
+    }
+
     func testOpenActionInvokesOpenCallbackForSelectedItem() {
         let item = ImageItem(url: URL(fileURLWithPath: "/tmp/open.png"), format: .png)
         let view = FolderBrowserView(thumbnailProvider: .stub)

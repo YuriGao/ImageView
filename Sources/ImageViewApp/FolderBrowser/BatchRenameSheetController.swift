@@ -141,13 +141,13 @@ final class BatchRenameSheetController: NSWindowController {
     @objc private func confirm(_ sender: Any?) {
         switch validateParameters() {
         case .valid(let parameters):
+            closeSheet()
             onConfirm?(parameters)
         case .invalid(let message):
             errorLabel.stringValue = message
             errorLabel.isHidden = false
             return
         }
-        closeSheet()
     }
 
     private func parameters() -> RenameParameters {

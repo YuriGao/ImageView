@@ -244,6 +244,26 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
         collectionView.openSelectedItem?()
     }
 
+    func testingPerformKeyDown(
+        keyCode: UInt16,
+        modifierFlags: NSEvent.ModifierFlags = [],
+        characters: String
+    ) {
+        guard let event = NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: modifierFlags,
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            characters: characters,
+            charactersIgnoringModifiers: characters,
+            isARepeat: false,
+            keyCode: keyCode
+        ) else { return }
+        collectionView.keyDown(with: event)
+    }
+
     func testingSetSearchText(_ text: String) {
         searchField.stringValue = text
         searchChanged(searchField)
@@ -386,6 +406,13 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
         collectionView.openSelectedItem = { [weak self] in
             self?.openFirstSelectedItem()
         }
+        collectionView.selectAllItems = { [weak self] in
+            self?.selectAllVisibleItems()
+        }
+        collectionView.deleteSelectedItems = { [weak self] in
+            guard let self, !self.collectionView.selectionIndexPaths.isEmpty else { return }
+            self.onMoveToTrash?()
+        }
         let doubleClickRecognizer = NSClickGestureRecognizer(target: self, action: #selector(openSelectedItem(_:)))
         doubleClickRecognizer.numberOfClicksRequired = 2
         collectionView.addGestureRecognizer(doubleClickRecognizer)
@@ -509,6 +536,12 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
         onOpenItem?(item)
     }
 
+    private func selectAllVisibleItems() {
+        let indexPaths = Set(items.indices.map { IndexPath(item: $0, section: 0) })
+        collectionView.selectionIndexPaths = indexPaths
+        onSelectionChanged?(Set(items.map(\.id)))
+    }
+
     private func selectedIDs(from indexPaths: Set<IndexPath>) -> Set<ImageItem.ID> {
         Set(indexPaths.compactMap { item(at: $0)?.id })
     }
@@ -620,6 +653,8 @@ private enum RecoveryAction {
 
 private final class ReturnOpeningCollectionView: NSCollectionView {
     var openSelectedItem: (() -> Void)?
+    var selectAllItems: (() -> Void)?
+    var deleteSelectedItems: (() -> Void)?
     private(set) var reloadCount = 0
 
     override func reloadData() {
@@ -628,7 +663,15 @@ private final class ReturnOpeningCollectionView: NSCollectionView {
     }
 
     override func keyDown(with event: NSEvent) {
-        if event.keyCode == 36 {
+        let ignoredModifiers: NSEvent.ModifierFlags = [.capsLock, .numericPad, .function]
+        let modifiers = event.modifierFlags
+            .intersection(.deviceIndependentFlagsMask)
+            .subtracting(ignoredModifiers)
+        if event.keyCode == 0, modifiers == .command {
+            selectAllItems?()
+        } else if event.keyCode == 51 || event.keyCode == 117 {
+            deleteSelectedItems?()
+        } else if event.keyCode == 36 {
             openSelectedItem?()
         } else {
             super.keyDown(with: event)
