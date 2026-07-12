@@ -944,6 +944,55 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertTrue(fixture.controller.isCanvasVisibleForTesting)
     }
 
+    func testGridToggleReturnsToDirectViewerWhileNewFolderScanIsStillLoading() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let oldFolder = root.appendingPathComponent("old", isDirectory: true)
+        let newFolder = root.appendingPathComponent("new", isDirectory: true)
+        try FileManager.default.createDirectory(at: oldFolder, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: newFolder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let oldURL = oldFolder.appendingPathComponent("x1.png")
+        let newURL = newFolder.appendingPathComponent("y1.png")
+        try writeTestPNG(to: oldURL)
+        try writeTestPNG(to: newURL)
+        let oldItem = ImageItem(url: oldURL, format: .png)
+        let newItem = ImageItem(url: newURL, format: .png)
+        let scanner = MainWindowControlledFolderScanner(
+            oldFolder: oldFolder,
+            oldItems: [oldItem],
+            newFolder: newFolder,
+            newItems: [newItem]
+        )
+        let folderViewModel = FolderBrowserViewModel(scanFolder: { folder in
+            await scanner.scan(folder)
+        })
+        let controller = MainWindowController(
+            settings: AppSettings(defaults: makeIsolatedDefaults()),
+            folderBrowserViewModel: folderViewModel
+        )
+        await controller.openFolderForTesting(oldFolder, scannerItems: [oldItem])
+        controller.openFirstFolderBrowserItemForTesting()
+        for _ in 0..<100 where controller.viewerNavigationURLForTesting != oldURL {
+            await Task.yield()
+        }
+        controller.open(url: newURL)
+        for _ in 0..<100 where controller.viewerNavigationURLForTesting != newURL {
+            await Task.yield()
+        }
+
+        controller.performTitleBarGridToggleForTesting()
+        await scanner.waitUntilNewScanStarts()
+        controller.performTitleBarGridToggleForTesting()
+
+        let expectedURL = newURL.standardizedFileURL
+        XCTAssertEqual(controller.currentViewerRouteURLForTesting, expectedURL)
+        XCTAssertEqual(controller.viewerNavigationURLForTesting, expectedURL)
+        XCTAssertEqual(controller.displayedItemURLForTesting, expectedURL)
+        XCTAssertTrue(controller.isCanvasVisibleForTesting)
+        await scanner.finishNewScan()
+    }
+
     func testOpeningGridItemEnablesBackAndBackForwardReuseLiveViews() async throws {
         let fixture = try makeFolderNavigationFixture()
         defer { try? FileManager.default.removeItem(at: fixture.folder) }
@@ -1319,5 +1368,44 @@ private actor MainWindowAsyncStartFlag {
     func wait() async {
         guard !isStarted else { return }
         await withCheckedContinuation { waiters.append($0) }
+    }
+}
+
+private actor MainWindowControlledFolderScanner {
+    private let oldFolder: URL
+    private let oldItems: [ImageItem]
+    private let newFolder: URL
+    private let newItems: [ImageItem]
+    private var newScanStarted = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+    private var newScanContinuation: CheckedContinuation<[ImageItem], Never>?
+
+    init(oldFolder: URL, oldItems: [ImageItem], newFolder: URL, newItems: [ImageItem]) {
+        self.oldFolder = oldFolder.standardizedFileURL
+        self.oldItems = oldItems
+        self.newFolder = newFolder.standardizedFileURL
+        self.newItems = newItems
+    }
+
+    func scan(_ folder: URL) async -> [ImageItem] {
+        if folder.standardizedFileURL == oldFolder {
+            return oldItems
+        }
+        guard folder.standardizedFileURL == newFolder else { return [] }
+        newScanStarted = true
+        let pending = startWaiters
+        startWaiters.removeAll()
+        pending.forEach { $0.resume() }
+        return await withCheckedContinuation { newScanContinuation = $0 }
+    }
+
+    func waitUntilNewScanStarts() async {
+        guard !newScanStarted else { return }
+        await withCheckedContinuation { startWaiters.append($0) }
+    }
+
+    func finishNewScan() {
+        newScanContinuation?.resume(returning: newItems)
+        newScanContinuation = nil
     }
 }

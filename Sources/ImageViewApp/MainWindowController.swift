@@ -713,14 +713,26 @@ final class MainWindowController: NSWindowController {
     }
 
     private func associatedViewerRoute() -> ContentRoute? {
-        if let displayedItemURL,
-           folderBrowserViewModel.session?.items.contains(where: {
-               $0.url.standardizedFileURL == displayedItemURL.standardizedFileURL
-           }) != false {
-            return .viewer(displayedItemURL.standardizedFileURL)
+        let matchingLoadedSession: FolderSession?
+        if case let .folder(folderURL) = currentRoute,
+           !folderBrowserViewModel.isLoading,
+           let session = folderBrowserViewModel.session,
+           session.folderURL.standardizedFileURL == folderURL.standardizedFileURL {
+            matchingLoadedSession = session
+        } else {
+            matchingLoadedSession = nil
         }
-        if let lastOpenedItemID = folderBrowserViewModel.session?.lastOpenedItemID,
-           let item = folderBrowserViewModel.session?.items.first(where: { $0.id == lastOpenedItemID }) {
+
+        if let displayedItemURL {
+            let displayedURL = displayedItemURL.standardizedFileURL
+            if matchingLoadedSession == nil || matchingLoadedSession?.items.contains(where: {
+                $0.url.standardizedFileURL == displayedURL
+            }) == true {
+                return .viewer(displayedURL)
+            }
+        }
+        if let lastOpenedItemID = matchingLoadedSession?.lastOpenedItemID,
+           let item = matchingLoadedSession?.items.first(where: { $0.id == lastOpenedItemID }) {
             return .viewer(item.url.standardizedFileURL)
         }
         if case let .viewer(url)? = backRoute ?? forwardRoute {
