@@ -2,7 +2,9 @@ import AppKit
 import ImageViewCore
 
 @MainActor
-final class BatchRenameSheetController: NSWindowController {
+final class BatchRenameSheetController: NSWindowController, NSTextFieldDelegate {
+    typealias PlanRename = ([URL], String, Int, Int) -> BatchRenamePlan
+
     struct RenameParameters: Equatable {
         let baseName: String
         let startNumber: Int
@@ -14,15 +16,18 @@ final class BatchRenameSheetController: NSWindowController {
         let newName: String
     }
 
-    var onConfirm: ((RenameParameters) -> Void)?
+    var onConfirm: ((RenameParameters, BatchRenamePlan) -> Void)?
 
     private let items: [ImageItem]
+    private let planRename: PlanRename
     private let baseNameField = NSTextField(string: AppStrings.text("batchRename.defaultBaseName"))
     private let startNumberField = NSTextField(string: "1")
-    private let paddingField = NSTextField(string: "2")
+    private let paddingField: NSTextField
     private let previewStack = NSStackView()
     private let errorLabel = NSTextField(labelWithString: "")
     private let renameButton = NSButton(title: AppStrings.text("batchRename.button.rename"), target: nil, action: nil)
+    private var validatedParameters: RenameParameters?
+    private var validatedPlan = BatchRenamePlan(proposals: [], failures: [])
 
     var previewRowsForTesting: [PreviewRow] {
         previewRows()
@@ -30,9 +35,14 @@ final class BatchRenameSheetController: NSWindowController {
     var validationErrorForTesting: String? {
         errorLabel.isHidden ? nil : errorLabel.stringValue
     }
+    var renameButtonEnabledForTesting: Bool {
+        renameButton.isEnabled
+    }
 
-    init(items: [ImageItem]) {
+    init(items: [ImageItem], planRename: @escaping PlanRename) {
         self.items = items
+        self.planRename = planRename
+        self.paddingField = NSTextField(string: "\(max(1, String(items.count).count))")
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 480, height: 360),
             styleMask: [.titled],
@@ -82,8 +92,7 @@ final class BatchRenameSheetController: NSWindowController {
         form.columnSpacing = 12
         form.translatesAutoresizingMaskIntoConstraints = false
         for field in [baseNameField, startNumberField, paddingField] {
-            field.target = self
-            field.action = #selector(inputChanged(_:))
+            field.delegate = self
         }
 
         let previewTitle = NSTextField(labelWithString: AppStrings.text("batchRename.preview"))
@@ -129,8 +138,7 @@ final class BatchRenameSheetController: NSWindowController {
         ])
     }
 
-    @objc private func inputChanged(_ sender: Any?) {
-        errorLabel.isHidden = true
+    func controlTextDidChange(_ notification: Notification) {
         updatePreview()
     }
 
@@ -139,15 +147,9 @@ final class BatchRenameSheetController: NSWindowController {
     }
 
     @objc private func confirm(_ sender: Any?) {
-        switch validateParameters() {
-        case .valid(let parameters):
-            closeSheet()
-            onConfirm?(parameters)
-        case .invalid(let message):
-            errorLabel.stringValue = message
-            errorLabel.isHidden = false
-            return
-        }
+        guard let validatedParameters, validatedPlan.isExecutable else { return }
+        closeSheet()
+        onConfirm?(validatedParameters, validatedPlan)
     }
 
     private func parameters() -> RenameParameters {
@@ -178,22 +180,53 @@ final class BatchRenameSheetController: NSWindowController {
     }
 
     private func previewRows() -> [PreviewRow] {
-        let parameters = parameters()
-        let trimmedBaseName = parameters.baseName.trimmingCharacters(in: .whitespacesAndNewlines)
-        return items.enumerated().map { offset, item in
-            let number = parameters.startNumber + offset
-            let formattedNumber = parameters.padding > 0
-                ? String(format: "%0\(parameters.padding)d", number)
-                : "\(number)"
-            var newName = "\(trimmedBaseName) \(formattedNumber)"
-            if !item.url.pathExtension.isEmpty {
-                newName += ".\(item.url.pathExtension)"
-            }
-            return PreviewRow(oldName: item.url.lastPathComponent, newName: newName)
+        validatedPlan.proposals.map { proposal in
+            PreviewRow(
+                oldName: proposal.source.lastPathComponent,
+                newName: proposal.destination.lastPathComponent
+            )
         }
     }
 
     private func updatePreview() {
+        let validation = validateParameters()
+        let plannedParameters: RenameParameters
+        switch validation {
+        case .valid(let parameters):
+            plannedParameters = parameters
+            validatedParameters = parameters
+        case .invalid:
+            let rawParameters = parameters()
+            plannedParameters = RenameParameters(
+                baseName: rawParameters.baseName.trimmingCharacters(in: .whitespacesAndNewlines),
+                startNumber: rawParameters.startNumber,
+                padding: rawParameters.padding
+            )
+            validatedParameters = nil
+        }
+        validatedPlan = planRename(
+            items.map(\.url),
+            plannedParameters.baseName,
+            plannedParameters.startNumber,
+            plannedParameters.padding
+        )
+
+        let validationMessage: String?
+        switch validation {
+        case .invalid(let message):
+            validationMessage = message
+        case .valid:
+            validationMessage = planFailureMessage(validatedPlan)
+        }
+        if let validationMessage {
+            errorLabel.stringValue = validationMessage
+            errorLabel.isHidden = false
+        } else {
+            errorLabel.stringValue = ""
+            errorLabel.isHidden = true
+        }
+        renameButton.isEnabled = validatedParameters != nil && validatedPlan.isExecutable
+
         previewStack.arrangedSubviews.forEach {
             previewStack.removeArrangedSubview($0)
             $0.removeFromSuperview()
@@ -201,6 +234,44 @@ final class BatchRenameSheetController: NSWindowController {
 
         for row in previewRows().prefix(8) {
             previewStack.addArrangedSubview(NSTextField(labelWithString: "\(row.oldName) → \(row.newName)"))
+        }
+    }
+
+    private func planFailureMessage(_ plan: BatchRenamePlan) -> String? {
+        guard !plan.failures.isEmpty else { return nil }
+        let destinationsBySource = Dictionary(
+            uniqueKeysWithValues: plan.proposals.map { ($0.source.standardizedFileURL, $0.destination) }
+        )
+        return plan.failures.map { failure in
+            let source = failure.url.standardizedFileURL
+            let names: String
+            if let destination = destinationsBySource[source] {
+                names = "\(failure.url.lastPathComponent) → \(destination.lastPathComponent)"
+            } else {
+                names = failure.url.lastPathComponent
+            }
+            return "\(names): \(failureReasonText(failure.reason))"
+        }.joined(separator: "\n")
+    }
+
+    private func failureReasonText(_ reason: BatchFileFailureReason) -> String {
+        switch reason {
+        case .emptyName:
+            return AppStrings.text("folderBrowser.failure.emptyName")
+        case .invalidName:
+            return AppStrings.text("folderBrowser.failure.invalidName")
+        case .sourceMissing:
+            return AppStrings.text("folderBrowser.failure.sourceMissing")
+        case .destinationExists:
+            return AppStrings.text("folderBrowser.failure.destinationExists")
+        case .duplicateDestination:
+            return AppStrings.text("folderBrowser.failure.duplicateDestination")
+        case .trashFailed(let detail):
+            return String(format: AppStrings.text("folderBrowser.failure.trashFailed"), detail)
+        case .moveFailed(let detail):
+            return String(format: AppStrings.text("folderBrowser.failure.moveFailed"), detail)
+        case .renameFailed(let detail):
+            return String(format: AppStrings.text("folderBrowser.failure.renameFailed"), detail)
         }
     }
 

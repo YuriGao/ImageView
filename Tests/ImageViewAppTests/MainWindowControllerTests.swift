@@ -865,41 +865,61 @@ final class MainWindowControllerTests: XCTestCase {
         }
     }
 
-    func testFolderBrowserRenameCallbackUsesRenameSheetParametersAndStaysInFolderMode() async {
+    func testFolderBrowserRenameExecutesExactValidatedPlanAndStaysInFolderMode() async {
         let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
         let item = ImageItem(url: folder.appendingPathComponent("one.png"), format: .png)
         let renamedURL = folder.appendingPathComponent("Batch 05.png")
         let receivedParameters = MainWindowLockedValue<BatchRenameSheetController.RenameParameters?>(nil)
+        let plannedCount = MainWindowLockedValue(0)
+        let executedPlan = MainWindowLockedValue<BatchRenamePlan?>(nil)
         let folderViewModel = FolderBrowserViewModel(
             scanFolder: { _ in [item] },
             planBatchRename: { urls, baseName, startNumber, padding in
+                plannedCount.update { $0 += 1 }
                 receivedParameters.set(.init(baseName: baseName, startNumber: startNumber, padding: padding))
                 return BatchRenamePlan(
                     proposals: [RenameProposal(source: urls[0], destination: renamedURL)],
                     failures: []
                 )
             },
-            executeRenamePlan: { _ in BatchOperationResult(succeeded: [item.url]) }
+            executeRenamePlan: { plan in
+                executedPlan.set(plan)
+                return BatchOperationResult(succeeded: [item.url])
+            }
         )
         let controller = MainWindowController(
             settings: AppSettings(defaults: makeIsolatedDefaults()),
             folderBrowserViewModel: folderViewModel
         )
         controller.batchActionDialogProviderForTesting = .init(
-            requestRenameParameters: { items, confirm in
+            requestRenameParameters: { items, planRename, confirm in
                 XCTAssertEqual(items, [item])
-                confirm(.init(baseName: "Batch", startNumber: 5, padding: 2))
+                let parameters = BatchRenameSheetController.RenameParameters(
+                    baseName: "Batch",
+                    startNumber: 5,
+                    padding: 2
+                )
+                let plan = planRename(items.map(\.url), parameters.baseName, parameters.startNumber, parameters.padding)
+                confirm(parameters, plan)
             }
         )
         await controller.openFolderForTesting(folder, scannerItems: [item])
         controller.selectFolderBrowserItemsForTesting([item.id])
 
         controller.triggerFolderBrowserRenameForTesting()
-        for _ in 0..<100 where receivedParameters.value == nil {
+        for _ in 0..<100 where executedPlan.value == nil {
             await Task.yield()
         }
 
         XCTAssertEqual(receivedParameters.value, .init(baseName: "Batch", startNumber: 5, padding: 2))
+        XCTAssertEqual(plannedCount.value, 1)
+        XCTAssertEqual(
+            executedPlan.value,
+            BatchRenamePlan(
+                proposals: [RenameProposal(source: item.url, destination: renamedURL)],
+                failures: []
+            )
+        )
         XCTAssertTrue(controller.isFolderBrowserVisibleForTesting)
         XCTAssertEqual(controller.folderBrowserItemCountForTesting, 1)
     }
@@ -935,7 +955,7 @@ final class MainWindowControllerTests: XCTestCase {
                 operationCount.update { $0 += 1 }
                 return folder
             },
-            requestRenameParameters: { _, _ in operationCount.update { $0 += 1 } }
+            requestRenameParameters: { _, _, _ in operationCount.update { $0 += 1 } }
         )
         await controller.openFolderForTesting(folder, scannerItems: [])
 
@@ -1401,8 +1421,13 @@ final class MainWindowControllerTests: XCTestCase {
         fixture.controller.goBackForTesting()
         fixture.controller.selectFolderBrowserItemsForTesting([fixture.items[0].id])
         fixture.controller.batchActionDialogProviderForTesting = .init(
-            requestRenameParameters: { _, confirm in
-                confirm(.init(baseName: "renamed", startNumber: 1, padding: 2))
+            requestRenameParameters: { items, planRename, confirm in
+                let parameters = BatchRenameSheetController.RenameParameters(
+                    baseName: "renamed",
+                    startNumber: 1,
+                    padding: 2
+                )
+                confirm(parameters, planRename(items.map(\.url), parameters.baseName, parameters.startNumber, parameters.padding))
             }
         )
 
@@ -1518,8 +1543,13 @@ final class MainWindowControllerTests: XCTestCase {
         fixture.controller.goBackForTesting()
         fixture.controller.selectFolderBrowserItemsForTesting([fixture.items[1].id])
         fixture.controller.batchActionDialogProviderForTesting = .init(
-            requestRenameParameters: { _, confirm in
-                confirm(.init(baseName: "renamed-b", startNumber: 1, padding: 2))
+            requestRenameParameters: { items, planRename, confirm in
+                let parameters = BatchRenameSheetController.RenameParameters(
+                    baseName: "renamed-b",
+                    startNumber: 1,
+                    padding: 2
+                )
+                confirm(parameters, planRename(items.map(\.url), parameters.baseName, parameters.startNumber, parameters.padding))
             }
         )
 
@@ -1867,8 +1897,13 @@ final class MainWindowControllerTests: XCTestCase {
             fixture.controller.batchActionDialogProviderForTesting = .init(
                 confirmTrash: { _ in true },
                 chooseDestinationFolder: { fixture.folder.appendingPathComponent("destination", isDirectory: true) },
-                requestRenameParameters: { _, confirm in
-                    confirm(.init(baseName: "Renamed", startNumber: 1, padding: 0))
+                requestRenameParameters: { items, planRename, confirm in
+                    let parameters = BatchRenameSheetController.RenameParameters(
+                        baseName: "Renamed",
+                        startNumber: 1,
+                        padding: 0
+                    )
+                    confirm(parameters, planRename(items.map(\.url), parameters.baseName, parameters.startNumber, parameters.padding))
                 }
             )
 

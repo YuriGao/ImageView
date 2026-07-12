@@ -268,11 +268,40 @@ final class FolderBrowserViewModel: ObservableObject {
         guard !isOperating else { return nil }
         let urls = selectedItems.map(\.url)
         guard !urls.isEmpty else { return nil }
-        let planOperation = planBatchRenameOperation
+        let plan = planBatchRename(
+            urls: urls,
+            baseName: baseName,
+            startNumber: startNumber,
+            padding: padding
+        )
+        guard plan.isExecutable else {
+            return runBatchOperation {
+                BatchRenameOperation(
+                    plan: plan,
+                    result: BatchOperationResult(failures: plan.failures)
+                )
+            } apply: { [weak self] operation in
+                self?.applyRenameResult(operation.result, plan: operation.plan)
+            }
+        }
+        return executeRenamePlan(plan)
+    }
+
+    func planBatchRename(
+        urls: [URL],
+        baseName: String,
+        startNumber: Int,
+        padding: Int
+    ) -> BatchRenamePlan {
+        planBatchRenameOperation(urls, baseName, startNumber, padding)
+    }
+
+    @discardableResult
+    func executeRenamePlan(_ plan: BatchRenamePlan) -> Task<Void, Never>? {
+        guard !isOperating, plan.isExecutable else { return nil }
         let executeOperation = executeRenamePlanOperation
         return runBatchOperation {
-            let plan = planOperation(urls, baseName, startNumber, padding)
-            let result = plan.isExecutable ? executeOperation(plan) : BatchOperationResult(failures: plan.failures)
+            let result = executeOperation(plan)
             return BatchRenameOperation(plan: plan, result: result)
         } apply: { [weak self] operation in
             self?.applyRenameResult(operation.result, plan: operation.plan)

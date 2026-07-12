@@ -71,13 +71,21 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         var confirmTrash: ((Int) -> Bool)?
         var chooseDestinationFolder: (() -> URL?)?
         var chooseMoveConflict: (([String]) -> MoveConflictChoice)?
-        var requestRenameParameters: (([ImageItem], @escaping (BatchRenameSheetController.RenameParameters) -> Void) -> Void)?
+        var requestRenameParameters: ((
+            [ImageItem],
+            BatchRenameSheetController.PlanRename,
+            @escaping (BatchRenameSheetController.RenameParameters, BatchRenamePlan) -> Void
+        ) -> Void)?
 
         init(
             confirmTrash: ((Int) -> Bool)? = nil,
             chooseDestinationFolder: (() -> URL?)? = nil,
             chooseMoveConflict: (([String]) -> MoveConflictChoice)? = nil,
-            requestRenameParameters: (([ImageItem], @escaping (BatchRenameSheetController.RenameParameters) -> Void) -> Void)? = nil
+            requestRenameParameters: ((
+                [ImageItem],
+                BatchRenameSheetController.PlanRename,
+                @escaping (BatchRenameSheetController.RenameParameters, BatchRenamePlan) -> Void
+            ) -> Void)? = nil
         ) {
             self.confirmTrash = confirmTrash
             self.chooseDestinationFolder = chooseDestinationFolder
@@ -1006,21 +1014,26 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
             return
         }
 
-        let confirm: (BatchRenameSheetController.RenameParameters) -> Void = { [weak self] parameters in
+        let folderBrowserViewModel = self.folderBrowserViewModel
+        let planRename: BatchRenameSheetController.PlanRename = { urls, baseName, startNumber, padding in
+            folderBrowserViewModel.planBatchRename(
+                urls: urls,
+                baseName: baseName,
+                startNumber: startNumber,
+                padding: padding
+            )
+        }
+        let confirm: (BatchRenameSheetController.RenameParameters, BatchRenamePlan) -> Void = { [weak self] _, plan in
             guard let self else { return }
             self.confirmUnsavedEditsForSelectedViewerIfNeeded(selectedItems, transition: .renaming) {
-                self.folderBrowserViewModel.renameSelected(
-                    baseName: parameters.baseName,
-                    startNumber: parameters.startNumber,
-                    padding: parameters.padding
-                )
+                self.folderBrowserViewModel.executeRenamePlan(plan)
             }
         }
 
         if let requestRenameParameters = batchActionDialogProviderForTesting?.requestRenameParameters {
-            requestRenameParameters(selectedItems, confirm)
+            requestRenameParameters(selectedItems, planRename, confirm)
         } else {
-            showBatchRenameSheet(items: selectedItems, onConfirm: confirm)
+            showBatchRenameSheet(items: selectedItems, planRename: planRename, onConfirm: confirm)
         }
     }
 
@@ -1321,11 +1334,12 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
 
     private func showBatchRenameSheet(
         items: [ImageItem],
-        onConfirm: @escaping (BatchRenameSheetController.RenameParameters) -> Void
+        planRename: @escaping BatchRenameSheetController.PlanRename,
+        onConfirm: @escaping (BatchRenameSheetController.RenameParameters, BatchRenamePlan) -> Void
     ) {
-        let controller = BatchRenameSheetController(items: items)
-        controller.onConfirm = { [weak self] parameters in
-            onConfirm(parameters)
+        let controller = BatchRenameSheetController(items: items, planRename: planRename)
+        controller.onConfirm = { [weak self] parameters, plan in
+            onConfirm(parameters, plan)
             self?.activeBatchRenameSheet = nil
         }
 
