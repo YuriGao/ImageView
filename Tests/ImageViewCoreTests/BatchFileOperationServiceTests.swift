@@ -168,6 +168,32 @@ final class BatchFileOperationServiceTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: second, encoding: .utf8), "first")
     }
 
+    func testExecuteRenamePlanFailsBeforeMutationWhenNoOpSourceDisappearsAfterPlanning() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let missingNoOpSource = try writeFile(named: "same.jpg", contents: "same", in: root)
+        let activeSource = try writeFile(named: "active.jpg", contents: "active", in: root)
+        let activeDestination = root.appendingPathComponent("renamed.jpg")
+        let plan = BatchRenamePlan(
+            proposals: [
+                RenameProposal(source: missingNoOpSource, destination: missingNoOpSource),
+                RenameProposal(source: activeSource, destination: activeDestination)
+            ],
+            failures: []
+        )
+        try FileManager.default.removeItem(at: missingNoOpSource)
+
+        let result = BatchFileOperationService().executeRenamePlan(plan)
+
+        XCTAssertTrue(result.succeeded.isEmpty)
+        XCTAssertEqual(result.failures, [
+            BatchFileFailure(url: missingNoOpSource, reason: .sourceMissing)
+        ])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: activeSource.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: activeDestination.path))
+        XCTAssertEqual(try String(contentsOf: activeSource, encoding: .utf8), "active")
+    }
+
     func testExecuteRenamePlanRestoresEveryOriginalWhenPhaseOneMoveFails() throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

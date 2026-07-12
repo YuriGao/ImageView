@@ -76,6 +76,9 @@
 "folderBrowser.failure.trashFailed" = "移到废纸篓失败：%@";
 "folderBrowser.failure.moveFailed" = "移动失败：%@";
 "folderBrowser.failure.renameFailed" = "重命名失败：%@";
+"folderBrowser.recovery.heading" = "需要手动恢复：";
+"folderBrowser.recovery.item" = "%@ → %@：%@";
+"folderBrowser.recovery.hiddenTemporaryHint" = "恢复文件仍是隐藏的 .batch-rename 临时文件。请在访达中显示隐藏文件，并先将它改为安全的可见名称，再重试。";
 "folderBrowser.operation.succeeded" = "%d 个成功";
 "folderBrowser.operation.failed" = "%d 个失败";
 "folderBrowser.operation.succeededAndFailed" = "%d 个成功，%d 个失败";

@@ -72,6 +72,7 @@ final class FolderBrowserViewModel: ObservableObject {
     private let planBatchRenameOperation: PlanBatchRename
     private let executeRenamePlanOperation: ExecuteRenamePlan
     nonisolated private let openFolderRequestTracker = OpenFolderRequestTracker()
+    private var sessionGeneration: UInt64 = 0
     var beforeOpenFolderCommitForTesting: (() -> Void)?
 
     init(
@@ -112,6 +113,7 @@ final class FolderBrowserViewModel: ObservableObject {
                 return
             }
             guard openFolderRequestTracker.withCurrent(requestID, perform: {
+                sessionGeneration &+= 1
                 requestedFolderURL = folderURL
                 isLoading = true
                 loadErrorMessage = nil
@@ -165,6 +167,7 @@ final class FolderBrowserViewModel: ObservableObject {
 
     func cancelOpenFolderRequest() {
         invalidateOpenFolderRequest()
+        sessionGeneration &+= 1
         requestedFolderURL = nil
         isLoading = false
         loadErrorMessage = nil
@@ -278,6 +281,7 @@ final class FolderBrowserViewModel: ObservableObject {
             padding: padding
         )
         guard plan.isExecutable else {
+            let operationSessionGeneration = sessionGeneration
             return runBatchOperation {
                 BatchRenameOperation(
                     plan: plan,
@@ -285,6 +289,7 @@ final class FolderBrowserViewModel: ObservableObject {
                     rescanOutcome: .notRequired
                 )
             } apply: { [weak self] operation in
+                guard self?.sessionGeneration == operationSessionGeneration else { return }
                 self?.applyRenameResult(operation.result, plan: operation.plan)
             }
         }
@@ -302,15 +307,17 @@ final class FolderBrowserViewModel: ObservableObject {
 
     @discardableResult
     func executeRenamePlan(_ plan: BatchRenamePlan) -> Task<Void, Never>? {
-        guard !isOperating, plan.isExecutable else { return nil }
+        guard !isOperating,
+              plan.isExecutable,
+              let activeFolderURL = session?.folderURL else { return nil }
         let executeOperation = executeRenamePlanOperation
         let scanFolder = scanFolder
-        let activeFolderURL = session?.folderURL
+        let operationSessionGeneration = sessionGeneration
         return runBatchOperation {
             let result = executeOperation(plan)
             let needsRescan = !result.failures.isEmpty || !result.recoveryFailures.isEmpty
             let rescanOutcome: RenameRescanOutcome
-            if needsRescan, let activeFolderURL {
+            if needsRescan {
                 do {
                     let items = try await scanFolder(activeFolderURL)
                     rescanOutcome = .success(folderURL: activeFolderURL, items: items)
@@ -324,8 +331,11 @@ final class FolderBrowserViewModel: ObservableObject {
                 rescanOutcome = .notRequired
             }
             return BatchRenameOperation(plan: plan, result: result, rescanOutcome: rescanOutcome)
-        } apply: { [weak self] operation in
-            self?.applyRenameResult(
+        } apply: { [weak self] (operation: BatchRenameOperation) in
+            guard let self,
+                  self.sessionGeneration == operationSessionGeneration,
+                  self.session?.folderURL == activeFolderURL else { return }
+            self.applyRenameResult(
                 operation.result,
                 plan: operation.plan,
                 rescanOutcome: operation.rescanOutcome

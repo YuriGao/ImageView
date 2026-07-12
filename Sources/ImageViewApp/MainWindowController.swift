@@ -493,15 +493,17 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
             }
             .store(in: &cancellables)
 
-        Publishers.CombineLatest3(
+        Publishers.CombineLatest4(
             folderBrowserViewModel.$operationMessage,
             folderBrowserViewModel.$operationFailures,
+            folderBrowserViewModel.$operationRecoveryFailures,
             folderBrowserViewModel.$isOperating
         )
-            .sink { [weak self] message, failures, isOperating in
+            .sink { [weak self] message, failures, recoveryFailures, isOperating in
                 self?.folderBrowserView.applyOperationStatus(
                     message: message,
                     failures: failures,
+                    recoveryFailures: recoveryFailures,
                     isOperating: isOperating
                 )
             }

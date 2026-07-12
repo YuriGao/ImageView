@@ -1609,6 +1609,38 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertEqual(controller.folderBrowserItemCountForTesting, 1)
     }
 
+    func testFolderBrowserOperationRecoveryFailuresAreVisibleThroughControllerBinding() async {
+        let viewModel = FolderBrowserViewModel(scanFolder: { _ in [] })
+        let controller = MainWindowController(
+            settings: AppSettings(defaults: makeIsolatedDefaults()),
+            folderBrowserViewModel: viewModel
+        )
+        let expected = URL(fileURLWithPath: "/tmp/photos/original.png")
+        let actual = URL(fileURLWithPath: "/tmp/photos/.batch-rename-stranded.tmp")
+        viewModel.applyOperationResult(
+            BatchOperationResult(
+                failures: [BatchFileFailure(url: expected, reason: .renameFailed("locked"))],
+                recoveryFailures: [BatchRecoveryFailure(
+                    expectedURL: expected,
+                    actualURL: actual,
+                    reason: "rollback permission denied"
+                )]
+            ),
+            removingSucceeded: false
+        )
+        await Task.yield()
+
+        let status = controller.folderBrowserOperationStatusTextForTesting
+        XCTAssertTrue(status?.contains("original.png → .batch-rename-stranded.tmp") == true)
+        XCTAssertTrue(status?.contains("rollback permission denied") == true)
+        XCTAssertTrue(status?.contains(AppStrings.text("folderBrowser.recovery.hiddenTemporaryHint")) == true)
+        let ordinaryFailure = "original.png: " + String(
+            format: AppStrings.text("folderBrowser.failure.renameFailed"),
+            "locked"
+        )
+        XCTAssertTrue(status?.contains(ordinaryFailure) == true, "ordinary failure details must remain visible")
+    }
+
     func testFolderBrowserClearFiltersAndChooseAnotherFolderCallbacksAreIntegrated() async throws {
         let folder = URL(fileURLWithPath: "/tmp/filtered", isDirectory: true)
         let item = ImageItem(url: folder.appendingPathComponent("one.png"), format: .png)

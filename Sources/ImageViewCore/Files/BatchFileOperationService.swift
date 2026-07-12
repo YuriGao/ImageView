@@ -293,6 +293,15 @@ public final class BatchFileOperationService {
             return BatchOperationResult(failures: plan.failures)
         }
 
+        let missingSources = plan.proposals.compactMap { proposal in
+            fileSystem.fileExists(at: proposal.source)
+                ? nil
+                : BatchFileFailure(url: proposal.source, reason: .sourceMissing)
+        }
+        guard missingSources.isEmpty else {
+            return BatchOperationResult(failures: missingSources)
+        }
+
         let activeProposals = plan.proposals.filter {
             normalizedPath($0.source) != normalizedPath($0.destination)
         }

@@ -204,9 +204,15 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
         updateBatchActionAvailability()
     }
 
-    func applyOperationStatus(message: String?, failures: [BatchFileFailure], isOperating: Bool) {
+    func applyOperationStatus(
+        message: String?,
+        failures: [BatchFileFailure],
+        recoveryFailures: [BatchRecoveryFailure] = [],
+        isOperating: Bool
+    ) {
         currentIsOperating = isOperating
         let failureText = failureSummary(for: failures)
+        let recoveryText = recoverySummary(for: recoveryFailures)
         let statusText: String?
         switch (isOperating, message, failureText) {
         case (true, let message?, let failureText?):
@@ -227,8 +233,12 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
             statusText = nil
         }
 
-        operationStatusLabel.stringValue = statusText ?? ""
-        operationStatusLabel.isHidden = statusText == nil
+        let completeStatusText = [statusText, recoveryText]
+            .compactMap { $0 }
+            .joined(separator: "\n")
+
+        operationStatusLabel.stringValue = completeStatusText
+        operationStatusLabel.isHidden = completeStatusText.isEmpty
         updateBatchActionAvailability()
     }
 
@@ -372,7 +382,8 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
         renameButton.action = #selector(renameClicked(_:))
         operationStatusLabel.font = .systemFont(ofSize: 11, weight: .medium)
         operationStatusLabel.textColor = .secondaryLabelColor
-        operationStatusLabel.lineBreakMode = .byTruncatingTail
+        operationStatusLabel.lineBreakMode = .byWordWrapping
+        operationStatusLabel.maximumNumberOfLines = 0
         operationStatusLabel.isHidden = true
 
         let toolbar = NSStackView(views: [
@@ -580,6 +591,25 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
         let countKey = failures.count == 1 ? "folderBrowser.status.failure.one" : "folderBrowser.status.failure.other"
         let countText = String(format: AppStrings.text(countKey), failures.count)
         return "\(countText) · \(firstFailure.url.lastPathComponent): \(failureReasonText(firstFailure.reason))"
+    }
+
+    private func recoverySummary(for failures: [BatchRecoveryFailure]) -> String? {
+        guard !failures.isEmpty else { return nil }
+        let heading = AppStrings.text("folderBrowser.recovery.heading")
+        let lines = failures.flatMap { failure -> [String] in
+            let detail = String(
+                format: AppStrings.text("folderBrowser.recovery.item"),
+                failure.expectedURL.lastPathComponent,
+                failure.actualURL.lastPathComponent,
+                failure.reason
+            )
+            guard failure.actualURL.lastPathComponent.hasPrefix(".batch-rename-"),
+                  failure.actualURL.pathExtension == "tmp" else {
+                return [detail]
+            }
+            return [detail, AppStrings.text("folderBrowser.recovery.hiddenTemporaryHint")]
+        }
+        return ([heading] + lines).joined(separator: "\n")
     }
 
     private func configureState(

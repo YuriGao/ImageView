@@ -540,6 +540,123 @@ final class FolderBrowserViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.loadErrorMessage)
     }
 
+    func testRenameFailureIgnoresLateRescanSuccessAfterOpeningDifferentFolder() async {
+        let folderA = URL(fileURLWithPath: "/tmp/photos-a", isDirectory: true)
+        let folderB = URL(fileURLWithPath: "/tmp/photos-b", isDirectory: true)
+        let itemA = ImageItem(url: folderA.appendingPathComponent("a.png"), format: .png)
+        let recoveredA = ImageItem(url: folderA.appendingPathComponent("a recovered.png"), format: .png)
+        let itemB = ImageItem(url: folderB.appendingPathComponent("b.png"), format: .png)
+        let scanner = RenameRescanSessionScanner(
+            folderA: folderA,
+            initialItemsA: [itemA],
+            folderB: folderB,
+            itemsB: [itemB]
+        )
+        let failure = BatchFileFailure(url: itemA.url, reason: .renameFailed("injected"))
+        let plan = BatchRenamePlan(
+            proposals: [RenameProposal(source: itemA.url, destination: folderA.appendingPathComponent("new.png"))],
+            failures: []
+        )
+        let viewModel = FolderBrowserViewModel(
+            scanFolder: { try await scanner.scan($0) },
+            planBatchRename: { _, _, _, _ in plan },
+            executeRenamePlan: { _ in BatchOperationResult(failures: [failure]) }
+        )
+        await viewModel.openFolder(folderA)
+        viewModel.setSelection([itemA.id])
+
+        let renameTask = viewModel.renameSelected(baseName: "new")
+        await scanner.waitUntilRescanStarts()
+        await viewModel.openFolder(folderB)
+        await scanner.finishRescan(with: .success([recoveredA]))
+        await renameTask?.value
+
+        XCTAssertEqual(viewModel.session?.folderURL, folderB)
+        XCTAssertEqual(viewModel.visibleItems, [itemB])
+        XCTAssertTrue(viewModel.selectedItems.isEmpty)
+        XCTAssertTrue(viewModel.operationFailures.isEmpty)
+        XCTAssertNil(viewModel.operationMessage)
+        XCTAssertNil(viewModel.loadErrorMessage)
+        XCTAssertFalse(viewModel.isOperating)
+    }
+
+    func testRenameFailureIgnoresLateRescanFailureAfterOpeningDifferentFolder() async {
+        let folderA = URL(fileURLWithPath: "/tmp/photos-a", isDirectory: true)
+        let folderB = URL(fileURLWithPath: "/tmp/photos-b", isDirectory: true)
+        let itemA = ImageItem(url: folderA.appendingPathComponent("a.png"), format: .png)
+        let itemB = ImageItem(url: folderB.appendingPathComponent("b.png"), format: .png)
+        let scanner = RenameRescanSessionScanner(
+            folderA: folderA,
+            initialItemsA: [itemA],
+            folderB: folderB,
+            itemsB: [itemB]
+        )
+        let failure = BatchFileFailure(url: itemA.url, reason: .renameFailed("injected"))
+        let plan = BatchRenamePlan(
+            proposals: [RenameProposal(source: itemA.url, destination: folderA.appendingPathComponent("new.png"))],
+            failures: []
+        )
+        let viewModel = FolderBrowserViewModel(
+            scanFolder: { try await scanner.scan($0) },
+            planBatchRename: { _, _, _, _ in plan },
+            executeRenamePlan: { _ in BatchOperationResult(failures: [failure]) }
+        )
+        await viewModel.openFolder(folderA)
+        viewModel.setSelection([itemA.id])
+
+        let renameTask = viewModel.renameSelected(baseName: "new")
+        await scanner.waitUntilRescanStarts()
+        await viewModel.openFolder(folderB)
+        await scanner.finishRescan(with: .failure(TestFolderError.denied))
+        await renameTask?.value
+
+        XCTAssertEqual(viewModel.session?.folderURL, folderB)
+        XCTAssertEqual(viewModel.visibleItems, [itemB])
+        XCTAssertTrue(viewModel.selectedItems.isEmpty)
+        XCTAssertTrue(viewModel.operationFailures.isEmpty)
+        XCTAssertNil(viewModel.operationMessage)
+        XCTAssertNil(viewModel.loadErrorMessage)
+        XCTAssertFalse(viewModel.isOperating)
+    }
+
+    func testSuccessfulRenameIgnoresLateResultAfterOpeningDifferentFolder() async {
+        let folderA = URL(fileURLWithPath: "/tmp/photos-a", isDirectory: true)
+        let folderB = URL(fileURLWithPath: "/tmp/photos-b", isDirectory: true)
+        let itemA = ImageItem(url: folderA.appendingPathComponent("a.png"), format: .png)
+        let renamedA = folderA.appendingPathComponent("new.png")
+        let itemB = ImageItem(url: folderB.appendingPathComponent("b.png"), format: .png)
+        let gate = BlockingBatchOperation(result: BatchOperationResult(succeeded: [itemA.url]))
+        let mutations = LockedValue<[FolderItemURLMutation]>([])
+        let plan = BatchRenamePlan(
+            proposals: [RenameProposal(source: itemA.url, destination: renamedA)],
+            failures: []
+        )
+        let viewModel = FolderBrowserViewModel(
+            scanFolder: { folder in folder == folderA ? [itemA] : [itemB] },
+            planBatchRename: { _, _, _, _ in plan },
+            executeRenamePlan: { _ in gate.run() }
+        )
+        viewModel.onItemURLMutation = { mutation in
+            mutations.withValue { $0.append(mutation) }
+        }
+        await viewModel.openFolder(folderA)
+        viewModel.setSelection([itemA.id])
+
+        let renameTask = viewModel.renameSelected(baseName: "new")
+        await gate.waitUntilStarted()
+        await viewModel.openFolder(folderB)
+        gate.finish()
+        await renameTask?.value
+
+        XCTAssertEqual(viewModel.session?.folderURL, folderB)
+        XCTAssertEqual(viewModel.visibleItems, [itemB])
+        XCTAssertTrue(viewModel.selectedItems.isEmpty)
+        XCTAssertTrue(viewModel.operationFailures.isEmpty)
+        XCTAssertNil(viewModel.operationMessage)
+        XCTAssertEqual(mutations.value, [])
+        XCTAssertFalse(viewModel.isOperating)
+    }
+
     func testMoveSelectedToTrashSetsOperatingWhileBackgroundOperationRunsAndClearsAfterResult() async {
         let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
         let item = ImageItem(url: folder.appendingPathComponent("one.png"), format: .png)
@@ -622,6 +739,12 @@ private final class LockedValue<Value>: @unchecked Sendable {
     func set(_ value: Value) {
         lock.lock()
         storedValue = value
+        lock.unlock()
+    }
+
+    func withValue(_ update: (inout Value) -> Void) {
+        lock.lock()
+        update(&storedValue)
         lock.unlock()
     }
 }
@@ -729,6 +852,44 @@ private actor CancelledOpenFolderScanner {
     func finish(with result: Result<[ImageItem], Error>) {
         pendingContinuation?.resume(with: result)
         pendingContinuation = nil
+    }
+}
+
+private actor RenameRescanSessionScanner {
+    private let folderA: URL
+    private let initialItemsA: [ImageItem]
+    private let folderB: URL
+    private let itemsB: [ImageItem]
+    private var scanCountA = 0
+    private var rescanContinuation: CheckedContinuation<[ImageItem], Error>?
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+
+    init(folderA: URL, initialItemsA: [ImageItem], folderB: URL, itemsB: [ImageItem]) {
+        self.folderA = folderA
+        self.initialItemsA = initialItemsA
+        self.folderB = folderB
+        self.itemsB = itemsB
+    }
+
+    func scan(_ folder: URL) async throws -> [ImageItem] {
+        if folder == folderB { return itemsB }
+        precondition(folder == folderA)
+        scanCountA += 1
+        if scanCountA == 1 { return initialItemsA }
+        let waiters = startWaiters
+        startWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+        return try await withCheckedThrowingContinuation { rescanContinuation = $0 }
+    }
+
+    func waitUntilRescanStarts() async {
+        guard rescanContinuation == nil else { return }
+        await withCheckedContinuation { startWaiters.append($0) }
+    }
+
+    func finishRescan(with result: Result<[ImageItem], Error>) {
+        rescanContinuation?.resume(with: result)
+        rescanContinuation = nil
     }
 }
 
