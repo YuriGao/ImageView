@@ -134,6 +134,8 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
     private var pageControlsHideTimer: Timer?
     private var pageControlsVisibilityGeneration = 0
     private var isPointerOverPageControls = false
+    private var folderRetryTask: Task<Void, Never>?
+    private var folderRetryGeneration: UInt64 = 0
     private var isFolderBrowserMode = false
     private var currentFolderBrowserItems: [ImageItem] = []
     private var currentRoute: ContentRoute? {
@@ -179,6 +181,10 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         nil
     }
 
+    deinit {
+        folderRetryTask?.cancel()
+    }
+
     func open(url: URL) {
         hasAssignedOpenRequest = true
         confirmUnsavedEditsIfNeeded(for: .opening) { [weak self] in
@@ -197,6 +203,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
     }
 
     func openFolder(url: URL) {
+        cancelFolderRetry()
         hasAssignedOpenRequest = true
         currentRoute = .folder(url.standardizedFileURL)
         backRoute = nil
@@ -401,9 +408,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
             self?.folderBrowserViewModel.clearFilters()
         }
         folderBrowserView.onRetryFolder = { [weak self] in
-            Task { [weak self] in
-                await self?.folderBrowserViewModel.retryOpenFolder()
-            }
+            self?.startFolderRetry()
         }
         folderBrowserView.onChooseAnotherFolder = { [weak self] in
             self?.onBrowseFolderRequested?()
@@ -451,6 +456,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
                     self.folderBrowserView.applyItems(items)
                 }
                 self.folderBrowserView.applySelection(Set(session?.selectedItemIDs ?? []))
+                self.folderBrowserView.applyFilter(session?.filter ?? FolderFilter())
                 self.folderBrowserView.applyPresentation(Self.folderBrowserPresentation(
                     session: session,
                     isLoading: isLoading,
@@ -748,6 +754,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
 
         currentRoute = .folder(folderURL)
         enterFolderBrowserMode()
+        cancelFolderRetry()
         Task { [weak self] in
             guard let self else { return }
             await self.folderBrowserViewModel.openFolder(folderURL)
@@ -1484,6 +1491,25 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         }
     }
 
+    private func startFolderRetry() {
+        guard folderRetryTask == nil else { return }
+        folderRetryGeneration &+= 1
+        let generation = folderRetryGeneration
+        let folderBrowserViewModel = folderBrowserViewModel
+        folderRetryTask = Task { [weak self, folderBrowserViewModel] in
+            guard !Task.isCancelled else { return }
+            await folderBrowserViewModel.retryOpenFolder()
+            guard let self, self.folderRetryGeneration == generation else { return }
+            self.folderRetryTask = nil
+        }
+    }
+
+    private func cancelFolderRetry() {
+        folderRetryGeneration &+= 1
+        folderRetryTask?.cancel()
+        folderRetryTask = nil
+    }
+
     private static func folderBrowserPresentation(
         session: FolderSession?,
         isLoading: Bool,
@@ -1633,6 +1659,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
     }
 
     func openFolderForTesting(_ folderURL: URL, items: [ImageItem]) {
+        cancelFolderRetry()
         hasAssignedOpenRequest = true
         currentRoute = .folder(folderURL.standardizedFileURL)
         backRoute = nil
@@ -1643,6 +1670,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
     }
 
     func openFolderForTesting(_ folderURL: URL, scannerItems: [ImageItem]) async {
+        cancelFolderRetry()
         hasAssignedOpenRequest = true
         currentRoute = .folder(folderURL.standardizedFileURL)
         backRoute = nil
@@ -1673,6 +1701,10 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
 
     func triggerSecondaryFolderBrowserRecoveryForTesting() {
         folderBrowserView.testingTriggerSecondaryRecovery()
+    }
+
+    func requestFolderRetryForTesting() {
+        startFolderRetry()
     }
 
     func openFirstFolderBrowserItemForTesting() {
@@ -1894,6 +1926,7 @@ extension MainWindowController: NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        cancelFolderRetry()
         externalFileCheckTimer?.invalidate()
         externalFileCheckTimer = nil
         onWindowDidClose?(self)

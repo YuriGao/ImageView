@@ -914,10 +914,26 @@ final class MainWindowControllerTests: XCTestCase {
         fixture.controller.openFirstFolderBrowserItemForTesting()
 
         XCTAssertEqual(fixture.controller.titleBarGridButtonForTesting.toolTip, AppStrings.text("titleBar.showFolder"))
+        XCTAssertEqual(
+            fixture.controller.titleBarGridButtonForTesting.accessibilityLabel(),
+            AppStrings.text("titleBar.showFolder")
+        )
+        XCTAssertEqual(
+            fixture.controller.titleBarGridButtonForTesting.image?.accessibilityDescription,
+            AppStrings.text("titleBar.showFolder")
+        )
 
         fixture.controller.performTitleBarGridToggleForTesting()
         XCTAssertTrue(fixture.controller.isFolderBrowserVisibleForTesting)
         XCTAssertEqual(fixture.controller.titleBarGridButtonForTesting.toolTip, AppStrings.text("titleBar.showImage"))
+        XCTAssertEqual(
+            fixture.controller.titleBarGridButtonForTesting.accessibilityLabel(),
+            AppStrings.text("titleBar.showImage")
+        )
+        XCTAssertEqual(
+            fixture.controller.titleBarGridButtonForTesting.image?.accessibilityDescription,
+            AppStrings.text("titleBar.showImage")
+        )
 
         fixture.controller.performTitleBarGridToggleForTesting()
         XCTAssertTrue(fixture.controller.isCanvasVisibleForTesting)
@@ -1416,6 +1432,9 @@ final class MainWindowControllerTests: XCTestCase {
         await controller.openFolderForTesting(folder, scannerItems: [item])
         viewModel.searchText = "missing"
         viewModel.setAllowedFormats([.png])
+        let contentView = try XCTUnwrap(controller.window?.contentView)
+        let searchField = try XCTUnwrap(findSearchField(in: contentView))
+        let typeFilter = try XCTUnwrap(findTypeFilterPopUp(in: contentView))
         XCTAssertEqual(
             controller.folderBrowserPresentationTitleForTesting,
             AppStrings.text("folderBrowser.state.filteredEmpty.title")
@@ -1423,6 +1442,8 @@ final class MainWindowControllerTests: XCTestCase {
         controller.triggerPrimaryFolderBrowserRecoveryForTesting()
         XCTAssertEqual(viewModel.presentation, .content)
         XCTAssertEqual(viewModel.session?.filter.allowedFormats, Set(SupportedImageFormat.allCases))
+        XCTAssertEqual(searchField.stringValue, "")
+        XCTAssertEqual(typeFilter.selectedTag(), -1)
 
         let emptyViewModel = FolderBrowserViewModel(scanFolder: { _ in [] })
         let emptyController = MainWindowController(
@@ -1438,6 +1459,95 @@ final class MainWindowControllerTests: XCTestCase {
         emptyController.triggerPrimaryFolderBrowserRecoveryForTesting()
 
         XCTAssertEqual(browseRequests, 1)
+    }
+
+    func testOpeningNewFolderSessionResetsSearchAndTypeFilterControls() async throws {
+        let firstFolder = URL(fileURLWithPath: "/tmp/first-filtered", isDirectory: true)
+        let secondFolder = URL(fileURLWithPath: "/tmp/second-default", isDirectory: true)
+        let firstItem = ImageItem(url: firstFolder.appendingPathComponent("first.png"), format: .png)
+        let secondItem = ImageItem(url: secondFolder.appendingPathComponent("second.jpg"), format: .jpeg)
+        let viewModel = FolderBrowserViewModel(scanFolder: { folder in
+            folder == firstFolder ? [firstItem] : [secondItem]
+        })
+        let controller = MainWindowController(
+            settings: AppSettings(defaults: makeIsolatedDefaults()),
+            folderBrowserViewModel: viewModel
+        )
+
+        await controller.openFolderForTesting(firstFolder, scannerItems: [firstItem])
+        viewModel.searchText = "first"
+        viewModel.setAllowedFormats([.png])
+        let contentView = try XCTUnwrap(controller.window?.contentView)
+        let searchField = try XCTUnwrap(findSearchField(in: contentView))
+        let typeFilter = try XCTUnwrap(findTypeFilterPopUp(in: contentView))
+        XCTAssertEqual(searchField.stringValue, "first")
+        XCTAssertNotEqual(typeFilter.selectedTag(), -1)
+
+        await controller.openFolderForTesting(secondFolder, scannerItems: [secondItem])
+
+        XCTAssertEqual(searchField.stringValue, "")
+        XCTAssertEqual(typeFilter.selectedTag(), -1)
+    }
+
+    func testRapidRepeatedRetryStartsOnlyOneOwnedRetryTask() async throws {
+        let folder = URL(fileURLWithPath: "/tmp/retry-once", isDirectory: true)
+        let scanner = MainWindowRetryScanner(failingFolder: folder)
+        let viewModel = FolderBrowserViewModel(scanFolder: { folder in
+            try await scanner.scan(folder)
+        })
+        let controller = MainWindowController(
+            settings: AppSettings(defaults: makeIsolatedDefaults()),
+            folderBrowserViewModel: viewModel
+        )
+        await controller.openFolderForTesting(folder, scannerItems: [])
+
+        controller.requestFolderRetryForTesting()
+        controller.requestFolderRetryForTesting()
+        await scanner.waitForRetryToStart()
+
+        let retrySnapshot = await scanner.counts()
+        XCTAssertEqual(retrySnapshot.scans, 2, "initial load plus exactly one retry")
+        controller.windowWillClose(Notification(name: NSWindow.willCloseNotification, object: controller.window))
+        await scanner.waitForRetryCancellation()
+        let closedSnapshot = await scanner.counts()
+        XCTAssertEqual(closedSnapshot.cancellations, 1)
+    }
+
+    func testOpeningAnotherFolderCancelsOwnedRetryTask() async throws {
+        let failingFolder = URL(fileURLWithPath: "/tmp/retry-cancel", isDirectory: true)
+        let replacementFolder = URL(fileURLWithPath: "/tmp/replacement", isDirectory: true)
+        let scanner = MainWindowRetryScanner(failingFolder: failingFolder)
+        let viewModel = FolderBrowserViewModel(scanFolder: { folder in
+            try await scanner.scan(folder)
+        })
+        let controller = MainWindowController(
+            settings: AppSettings(defaults: makeIsolatedDefaults()),
+            folderBrowserViewModel: viewModel
+        )
+        await controller.openFolderForTesting(failingFolder, scannerItems: [])
+        controller.triggerPrimaryFolderBrowserRecoveryForTesting()
+        await scanner.waitForRetryToStart()
+
+        controller.openFolder(url: replacementFolder)
+        await scanner.waitForReplacementScan()
+        await scanner.waitForRetryCancellation()
+
+        let snapshot = await scanner.counts()
+        XCTAssertEqual(snapshot.scans, 3)
+        XCTAssertEqual(snapshot.cancellations, 1)
+    }
+
+    private func findSearchField(in view: NSView) -> NSSearchField? {
+        if let searchField = view as? NSSearchField { return searchField }
+        return view.subviews.lazy.compactMap { self.findSearchField(in: $0) }.first
+    }
+
+    private func findTypeFilterPopUp(in view: NSView) -> NSPopUpButton? {
+        if let popUp = view as? NSPopUpButton,
+           popUp.itemTitles.contains(AppStrings.text("folderBrowser.typeFilter.all")) {
+            return popUp
+        }
+        return view.subviews.lazy.compactMap { self.findTypeFilterPopUp(in: $0) }.first
     }
 
     private func writeTestPNG(to url: URL) throws {
@@ -1521,6 +1631,70 @@ private final class MainWindowLockedValue<Value>: @unchecked Sendable {
         lock.lock()
         update(&storedValue)
         lock.unlock()
+    }
+}
+
+private actor MainWindowRetryScanner {
+    let failingFolder: URL
+    private(set) var scanCount = 0
+    private(set) var cancellationCount = 0
+    private var retryStarted = false
+    private var retryStartWaiters: [CheckedContinuation<Void, Never>] = []
+    private var retryCancelled = false
+    private var retryCancellationWaiters: [CheckedContinuation<Void, Never>] = []
+    private var replacementScanned = false
+    private var replacementWaiters: [CheckedContinuation<Void, Never>] = []
+
+    init(failingFolder: URL) {
+        self.failingFolder = failingFolder.standardizedFileURL
+    }
+
+    func scan(_ folder: URL) async throws -> [ImageItem] {
+        scanCount += 1
+        guard folder.standardizedFileURL == failingFolder else {
+            replacementScanned = true
+            let pending = replacementWaiters
+            replacementWaiters.removeAll()
+            pending.forEach { $0.resume() }
+            return []
+        }
+        if scanCount == 1 {
+            throw NSError(domain: "MainWindowRetryScanner", code: 1)
+        }
+        retryStarted = true
+        let pending = retryStartWaiters
+        retryStartWaiters.removeAll()
+        pending.forEach { $0.resume() }
+        do {
+            try await Task.sleep(for: .milliseconds(500))
+            return []
+        } catch {
+            cancellationCount += 1
+            retryCancelled = true
+            let pending = retryCancellationWaiters
+            retryCancellationWaiters.removeAll()
+            pending.forEach { $0.resume() }
+            throw error
+        }
+    }
+
+    func waitForRetryToStart() async {
+        guard !retryStarted else { return }
+        await withCheckedContinuation { retryStartWaiters.append($0) }
+    }
+
+    func waitForReplacementScan() async {
+        guard !replacementScanned else { return }
+        await withCheckedContinuation { replacementWaiters.append($0) }
+    }
+
+    func waitForRetryCancellation() async {
+        guard !retryCancelled else { return }
+        await withCheckedContinuation { retryCancellationWaiters.append($0) }
+    }
+
+    func counts() -> (scans: Int, cancellations: Int) {
+        (scanCount, cancellationCount)
     }
 }
 

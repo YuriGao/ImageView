@@ -38,6 +38,8 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
     private var currentIsOperating = false
 
     var testingSearchPlaceholder: String? { searchField.placeholderString }
+    var testingSearchText: String { searchField.stringValue }
+    var testingSelectedTypeFilterTag: Int { typeFilterPopUpButton.selectedTag() }
     var testingHasSortControl: Bool { sortPopUpButton.superview != nil }
     var testingHasTypeFilterControl: Bool { typeFilterPopUpButton.superview != nil }
     var testingHasTrashButton: Bool { trashButton.superview != nil }
@@ -108,6 +110,25 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
         }
         collectionView.selectionIndexPaths = indexPaths
         updateBatchActionAvailability()
+    }
+
+    func applyFilter(_ filter: FolderFilter) {
+        applySearchText(filter.searchText)
+        applyTypeFilter(filter.allowedFormats)
+    }
+
+    func applySearchText(_ searchText: String) {
+        searchField.stringValue = searchText
+    }
+
+    func applyTypeFilter(_ allowedFormats: Set<SupportedImageFormat>) {
+        if allowedFormats.count == 1,
+           let format = allowedFormats.first,
+           let index = SupportedImageFormat.allCases.firstIndex(of: format) {
+            typeFilterPopUpButton.selectItem(withTag: index)
+        } else {
+            typeFilterPopUpButton.selectItem(withTag: -1)
+        }
     }
 
     func applyPresentation(_ presentation: FolderBrowserPresentation) {

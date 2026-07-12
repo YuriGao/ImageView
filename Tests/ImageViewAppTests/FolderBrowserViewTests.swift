@@ -206,6 +206,28 @@ final class FolderBrowserViewTests: XCTestCase {
         XCTAssertEqual(typeFilter, Set(SupportedImageFormat.allCases))
     }
 
+    func testApplyingModelFilterUpdatesControlsWithoutSendingUIChangeCallbacks() {
+        let view = FolderBrowserView(thumbnailProvider: .stub)
+        var searchCallbackCount = 0
+        var typeCallbackCount = 0
+        view.onSearchChanged = { _ in searchCallbackCount += 1 }
+        view.onTypeFilterChanged = { _ in typeCallbackCount += 1 }
+
+        view.applyFilter(FolderFilter(searchText: "cat", allowedFormats: [.png]))
+
+        XCTAssertEqual(view.testingSearchText, "cat")
+        XCTAssertEqual(view.testingSelectedTypeFilterTag, SupportedImageFormat.allCases.firstIndex(of: .png))
+        XCTAssertEqual(searchCallbackCount, 0)
+        XCTAssertEqual(typeCallbackCount, 0)
+
+        view.applyFilter(FolderFilter())
+
+        XCTAssertEqual(view.testingSearchText, "")
+        XCTAssertEqual(view.testingSelectedTypeFilterTag, -1)
+        XCTAssertEqual(searchCallbackCount, 0)
+        XCTAssertEqual(typeCallbackCount, 0)
+    }
+
     func testOperationStatusDisplaysMessageFailureCountAndOperatingState() {
         let view = FolderBrowserView(thumbnailProvider: .stub)
         let failedURL = URL(fileURLWithPath: "/tmp/photos/blocked.png")
