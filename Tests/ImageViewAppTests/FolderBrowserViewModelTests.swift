@@ -121,6 +121,67 @@ final class FolderBrowserViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.operationFailures, [])
         XCTAssertEqual(viewModel.operationMessage, "1 succeeded")
     }
+
+    func testMoveSelectedToFolderUsesInjectedOperationAndRemovesSucceededButKeepsFailuresSelected() async {
+        let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
+        let destination = URL(fileURLWithPath: "/tmp/archive", isDirectory: true)
+        let moved = ImageItem(url: folder.appendingPathComponent("moved.png"), format: .png)
+        let failed = ImageItem(url: folder.appendingPathComponent("failed.jpg"), format: .jpeg)
+        var receivedURLs: [URL] = []
+        var receivedDestination: URL?
+        var receivedPolicy: MoveConflictPolicy?
+        let expectedFailure = BatchFileFailure(url: failed.url, reason: .destinationExists)
+        let viewModel = FolderBrowserViewModel(
+            scanFolder: { _ in [moved, failed] },
+            moveToFolder: { urls, destinationFolder, policy in
+                receivedURLs = urls
+                receivedDestination = destinationFolder
+                receivedPolicy = policy
+                return BatchOperationResult(succeeded: [moved.url], failures: [expectedFailure])
+            }
+        )
+        await viewModel.openFolder(folder)
+        viewModel.setSelection([moved.id, failed.id])
+
+        viewModel.moveSelected(to: destination, conflictPolicy: .skip)
+
+        XCTAssertEqual(receivedURLs, [moved.url, failed.url])
+        XCTAssertEqual(receivedDestination, destination)
+        XCTAssertEqual(receivedPolicy, .skip)
+        XCTAssertEqual(viewModel.visibleItems, [failed])
+        XCTAssertEqual(viewModel.selectedItems, [failed])
+        XCTAssertEqual(viewModel.operationFailures, [expectedFailure])
+        XCTAssertEqual(viewModel.operationMessage, "1 succeeded, 1 failed")
+    }
+
+    func testRenameSelectedKeepsFailedItemsSelectedAndDoesNotRemoveThemFromSession() async {
+        let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
+        let renamed = ImageItem(url: folder.appendingPathComponent("old.png"), format: .png)
+        let failed = ImageItem(url: folder.appendingPathComponent("blocked.jpg"), format: .jpeg)
+        let renamedURL = folder.appendingPathComponent("Batch 01.png")
+        let plan = BatchRenamePlan(
+            proposals: [
+                RenameProposal(source: renamed.url, destination: renamedURL),
+                RenameProposal(source: failed.url, destination: folder.appendingPathComponent("Batch 02.jpg"))
+            ],
+            failures: []
+        )
+        let failure = BatchFileFailure(url: failed.url, reason: .renameFailed("locked"))
+        let viewModel = FolderBrowserViewModel(
+            scanFolder: { _ in [renamed, failed] },
+            planBatchRename: { _, _, _, _ in plan },
+            executeRenamePlan: { _ in BatchOperationResult(succeeded: [renamed.url], failures: [failure]) }
+        )
+        await viewModel.openFolder(folder)
+        viewModel.setSelection([renamed.id, failed.id])
+
+        viewModel.renameSelected(baseName: "Batch", startNumber: 1, padding: 2)
+
+        XCTAssertEqual(viewModel.visibleItems.map(\.url), [renamedURL, failed.url])
+        XCTAssertEqual(viewModel.selectedItems.map(\.url), [failed.url, renamedURL])
+        XCTAssertEqual(viewModel.operationFailures, [failure])
+        XCTAssertEqual(viewModel.operationMessage, "1 succeeded, 1 failed")
+    }
 }
 
 private actor ControlledFolderScanner {

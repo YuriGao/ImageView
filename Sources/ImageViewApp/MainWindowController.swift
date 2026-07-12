@@ -61,13 +61,29 @@ final class MainWindowController: NSWindowController {
         case stayOnCurrentImage
     }
 
+    struct BatchActionDialogProvider {
+        var confirmTrash: ((Int) -> Bool)?
+        var chooseDestinationFolder: (() -> URL?)?
+        var requestRenameParameters: (([ImageItem], @escaping (BatchRenameSheetController.RenameParameters) -> Void) -> Void)?
+
+        init(
+            confirmTrash: ((Int) -> Bool)? = nil,
+            chooseDestinationFolder: (() -> URL?)? = nil,
+            requestRenameParameters: (([ImageItem], @escaping (BatchRenameSheetController.RenameParameters) -> Void) -> Void)? = nil
+        ) {
+            self.confirmTrash = confirmTrash
+            self.chooseDestinationFolder = chooseDestinationFolder
+            self.requestRenameParameters = requestRenameParameters
+        }
+    }
+
     struct PageControlAvailability: Equatable {
         let previous: Bool
         let next: Bool
     }
 
     private let viewModel = ViewerViewModel()
-    private let folderBrowserViewModel = FolderBrowserViewModel()
+    private let folderBrowserViewModel: FolderBrowserViewModel
     private let settings: AppSettings
     private let rootView = RootInteractionView()
     private let titleBarView = NSVisualEffectView()
@@ -103,8 +119,13 @@ final class MainWindowController: NSWindowController {
     private var isPointerOverPageControls = false
     private var isFolderBrowserMode = false
     private var currentFolderBrowserItems: [ImageItem] = []
+    private var activeBatchRenameSheet: BatchRenameSheetController?
+    var batchActionDialogProviderForTesting: BatchActionDialogProvider?
 
-    convenience init(settings: AppSettings = .shared) {
+    convenience init(
+        settings: AppSettings = .shared,
+        folderBrowserViewModel: FolderBrowserViewModel = FolderBrowserViewModel()
+    ) {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1100, height: 760),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -112,12 +133,17 @@ final class MainWindowController: NSWindowController {
             defer: false
         )
         window.title = "ImageView"
-        self.init(window: window, settings: settings)
+        self.init(window: window, settings: settings, folderBrowserViewModel: folderBrowserViewModel)
         setup()
     }
 
-    init(window: NSWindow?, settings: AppSettings = .shared) {
+    init(
+        window: NSWindow?,
+        settings: AppSettings = .shared,
+        folderBrowserViewModel: FolderBrowserViewModel = FolderBrowserViewModel()
+    ) {
         self.settings = settings
+        self.folderBrowserViewModel = folderBrowserViewModel
         super.init(window: window)
     }
 
@@ -335,6 +361,15 @@ final class MainWindowController: NSWindowController {
         }
         folderBrowserView.onTypeFilterChanged = { [weak self] formats in
             self?.folderBrowserViewModel.setAllowedFormats(formats)
+        }
+        folderBrowserView.onMoveToTrash = { [weak self] in
+            self?.moveSelectedFolderBrowserItemsToTrash()
+        }
+        folderBrowserView.onMoveToFolder = { [weak self] in
+            self?.moveSelectedFolderBrowserItemsToFolder()
+        }
+        folderBrowserView.onBatchRename = { [weak self] in
+            self?.renameSelectedFolderBrowserItems()
         }
 
         viewModel.$currentImage
@@ -610,6 +645,55 @@ final class MainWindowController: NSWindowController {
         openFolder(url: displayedItemURL.deletingLastPathComponent())
     }
 
+    private func moveSelectedFolderBrowserItemsToTrash() {
+        let selectedItems = folderBrowserViewModel.selectedItems
+        guard !selectedItems.isEmpty else {
+            NSSound.beep()
+            return
+        }
+
+        let confirmed = batchActionDialogProviderForTesting?.confirmTrash?(selectedItems.count)
+            ?? confirmMoveSelectedFolderBrowserItemsToTrash(count: selectedItems.count)
+        guard confirmed else { return }
+
+        folderBrowserViewModel.moveSelectedToTrash()
+    }
+
+    private func moveSelectedFolderBrowserItemsToFolder() {
+        guard !folderBrowserViewModel.selectedItems.isEmpty else {
+            NSSound.beep()
+            return
+        }
+
+        let destination = batchActionDialogProviderForTesting?.chooseDestinationFolder?()
+            ?? chooseDestinationFolderForBatchMove()
+        guard let destination else { return }
+
+        folderBrowserViewModel.moveSelected(to: destination, conflictPolicy: .skip)
+    }
+
+    private func renameSelectedFolderBrowserItems() {
+        let selectedItems = folderBrowserViewModel.selectedItems
+        guard !selectedItems.isEmpty else {
+            NSSound.beep()
+            return
+        }
+
+        let confirm: (BatchRenameSheetController.RenameParameters) -> Void = { [weak self] parameters in
+            self?.folderBrowserViewModel.renameSelected(
+                baseName: parameters.baseName,
+                startNumber: parameters.startNumber,
+                padding: parameters.padding
+            )
+        }
+
+        if let requestRenameParameters = batchActionDialogProviderForTesting?.requestRenameParameters {
+            requestRenameParameters(selectedItems, confirm)
+        } else {
+            showBatchRenameSheet(items: selectedItems, onConfirm: confirm)
+        }
+    }
+
     private func installKeyMonitor() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, self.window?.isKeyWindow == true else {
@@ -847,6 +931,46 @@ final class MainWindowController: NSWindowController {
         alert.addButton(withTitle: "Cancel")
 
         return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    private func confirmMoveSelectedFolderBrowserItemsToTrash(count: Int) -> Bool {
+        guard settings.confirmsDelete else { return true }
+
+        let alert = NSAlert()
+        alert.messageText = "Move \(count) item\(count == 1 ? "" : "s") to Trash?"
+        alert.informativeText = "This will move the selected folder items to the Trash."
+        alert.addButton(withTitle: "Move to Trash")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    private func chooseDestinationFolderForBatchMove() -> URL? {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        panel.prompt = "Move"
+        return panel.runModal() == .OK ? panel.url : nil
+    }
+
+    private func showBatchRenameSheet(
+        items: [ImageItem],
+        onConfirm: @escaping (BatchRenameSheetController.RenameParameters) -> Void
+    ) {
+        let controller = BatchRenameSheetController(items: items)
+        controller.onConfirm = { [weak self] parameters in
+            onConfirm(parameters)
+            self?.activeBatchRenameSheet = nil
+        }
+        activeBatchRenameSheet = controller
+
+        guard let sheet = controller.window, let window else {
+            return
+        }
+        window.beginSheet(sheet) { [weak self] _ in
+            self?.activeBatchRenameSheet = nil
+        }
     }
 
     private func applySettings() {
@@ -1172,6 +1296,28 @@ final class MainWindowController: NSWindowController {
         enterFolderBrowserMode()
         currentFolderBrowserItems = items
         folderBrowserView.apply(items: items, selectedIDs: [])
+    }
+
+    func openFolderForTesting(_ folderURL: URL, scannerItems: [ImageItem]) async {
+        hasAssignedOpenRequest = true
+        enterFolderBrowserMode()
+        await folderBrowserViewModel.openFolder(folderURL)
+    }
+
+    func selectFolderBrowserItemsForTesting(_ selectedIDs: [ImageItem.ID]) {
+        folderBrowserView.testingSelectItems(with: Set(selectedIDs))
+    }
+
+    func triggerFolderBrowserTrashForTesting() {
+        folderBrowserView.testingTriggerTrash()
+    }
+
+    func triggerFolderBrowserMoveForTesting() {
+        folderBrowserView.testingTriggerMove()
+    }
+
+    func triggerFolderBrowserRenameForTesting() {
+        folderBrowserView.testingTriggerRename()
     }
 
     func openFirstFolderBrowserItemForTesting() {

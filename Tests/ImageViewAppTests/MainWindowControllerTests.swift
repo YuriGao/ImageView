@@ -708,6 +708,147 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertTrue(controller.isCanvasVisibleForTesting)
     }
 
+    func testFolderBrowserTrashCallbackUsesConfirmationAndKeepsFolderBrowserVisible() async {
+        let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
+        let item = ImageItem(url: folder.appendingPathComponent("one.png"), format: .png)
+        var movedToTrash: [URL] = []
+        let folderViewModel = FolderBrowserViewModel(
+            scanFolder: { _ in [item] },
+            moveToTrash: { urls in
+                movedToTrash = urls
+                return BatchOperationResult(succeeded: urls)
+            }
+        )
+        let controller = MainWindowController(
+            settings: AppSettings(defaults: makeIsolatedDefaults()),
+            folderBrowserViewModel: folderViewModel
+        )
+        controller.batchActionDialogProviderForTesting = .init(
+            confirmTrash: { count in
+                XCTAssertEqual(count, 1)
+                return true
+            }
+        )
+        await controller.openFolderForTesting(folder, scannerItems: [item])
+        controller.selectFolderBrowserItemsForTesting([item.id])
+
+        controller.triggerFolderBrowserTrashForTesting()
+
+        XCTAssertEqual(movedToTrash, [item.url])
+        XCTAssertTrue(controller.isFolderBrowserVisibleForTesting)
+        XCTAssertFalse(controller.isCanvasVisibleForTesting)
+        XCTAssertEqual(controller.folderBrowserItemCountForTesting, 0)
+    }
+
+    func testFolderBrowserMoveCallbackUsesDirectoryPickerSkipPolicyAndStaysInFolderMode() async {
+        let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
+        let destination = URL(fileURLWithPath: "/tmp/archive", isDirectory: true)
+        let item = ImageItem(url: folder.appendingPathComponent("one.png"), format: .png)
+        var moved: (urls: [URL], destination: URL, policy: MoveConflictPolicy)?
+        let folderViewModel = FolderBrowserViewModel(
+            scanFolder: { _ in [item] },
+            moveToFolder: { urls, destinationFolder, policy in
+                moved = (urls, destinationFolder, policy)
+                return BatchOperationResult(succeeded: urls)
+            }
+        )
+        let controller = MainWindowController(
+            settings: AppSettings(defaults: makeIsolatedDefaults()),
+            folderBrowserViewModel: folderViewModel
+        )
+        controller.batchActionDialogProviderForTesting = .init(
+            chooseDestinationFolder: { destination }
+        )
+        await controller.openFolderForTesting(folder, scannerItems: [item])
+        controller.selectFolderBrowserItemsForTesting([item.id])
+
+        controller.triggerFolderBrowserMoveForTesting()
+
+        XCTAssertEqual(moved?.urls, [item.url])
+        XCTAssertEqual(moved?.destination, destination)
+        XCTAssertEqual(moved?.policy, .skip)
+        XCTAssertTrue(controller.isFolderBrowserVisibleForTesting)
+    }
+
+    func testFolderBrowserRenameCallbackUsesRenameSheetParametersAndStaysInFolderMode() async {
+        let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
+        let item = ImageItem(url: folder.appendingPathComponent("one.png"), format: .png)
+        let renamedURL = folder.appendingPathComponent("Batch 05.png")
+        var receivedParameters: BatchRenameSheetController.RenameParameters?
+        let folderViewModel = FolderBrowserViewModel(
+            scanFolder: { _ in [item] },
+            planBatchRename: { urls, baseName, startNumber, padding in
+                receivedParameters = .init(baseName: baseName, startNumber: startNumber, padding: padding)
+                return BatchRenamePlan(
+                    proposals: [RenameProposal(source: urls[0], destination: renamedURL)],
+                    failures: []
+                )
+            },
+            executeRenamePlan: { _ in BatchOperationResult(succeeded: [item.url]) }
+        )
+        let controller = MainWindowController(
+            settings: AppSettings(defaults: makeIsolatedDefaults()),
+            folderBrowserViewModel: folderViewModel
+        )
+        controller.batchActionDialogProviderForTesting = .init(
+            requestRenameParameters: { items, confirm in
+                XCTAssertEqual(items, [item])
+                confirm(.init(baseName: "Batch", startNumber: 5, padding: 2))
+            }
+        )
+        await controller.openFolderForTesting(folder, scannerItems: [item])
+        controller.selectFolderBrowserItemsForTesting([item.id])
+
+        controller.triggerFolderBrowserRenameForTesting()
+
+        XCTAssertEqual(receivedParameters, .init(baseName: "Batch", startNumber: 5, padding: 2))
+        XCTAssertTrue(controller.isFolderBrowserVisibleForTesting)
+        XCTAssertEqual(controller.folderBrowserItemCountForTesting, 1)
+    }
+
+    func testFolderBrowserBatchActionsReturnWhenSelectionIsEmpty() async {
+        let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
+        var operationCount = 0
+        let folderViewModel = FolderBrowserViewModel(
+            scanFolder: { _ in [] },
+            moveToTrash: { _ in
+                operationCount += 1
+                return BatchOperationResult()
+            },
+            moveToFolder: { _, _, _ in
+                operationCount += 1
+                return BatchOperationResult()
+            },
+            planBatchRename: { _, _, _, _ in
+                operationCount += 1
+                return BatchRenamePlan(proposals: [], failures: [])
+            }
+        )
+        let controller = MainWindowController(
+            settings: AppSettings(defaults: makeIsolatedDefaults()),
+            folderBrowserViewModel: folderViewModel
+        )
+        controller.batchActionDialogProviderForTesting = .init(
+            confirmTrash: { _ in
+                operationCount += 1
+                return true
+            },
+            chooseDestinationFolder: {
+                operationCount += 1
+                return folder
+            },
+            requestRenameParameters: { _, _ in operationCount += 1 }
+        )
+        await controller.openFolderForTesting(folder, scannerItems: [])
+
+        controller.triggerFolderBrowserTrashForTesting()
+        controller.triggerFolderBrowserMoveForTesting()
+        controller.triggerFolderBrowserRenameForTesting()
+
+        XCTAssertEqual(operationCount, 0)
+        XCTAssertTrue(controller.isFolderBrowserVisibleForTesting)
+    }
+
     func testTitleBarGridButtonOpensCurrentImageFolderWithoutChangingWindowTitle() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
