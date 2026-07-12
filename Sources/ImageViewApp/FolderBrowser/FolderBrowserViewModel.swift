@@ -33,6 +33,7 @@ final class FolderBrowserViewModel: ObservableObject {
     private let moveToFolderOperation: MoveToFolder
     private let planBatchRenameOperation: PlanBatchRename
     private let executeRenamePlanOperation: ExecuteRenamePlan
+    private var openFolderRequestID: UInt64 = 0
 
     init(
         scanFolder: @escaping ScanFolder = {
@@ -58,14 +59,22 @@ final class FolderBrowserViewModel: ObservableObject {
     }
 
     func openFolder(_ folderURL: URL) async {
+        openFolderRequestID += 1
+        let requestID = openFolderRequestID
         isLoading = true
         operationMessage = nil
         operationFailures = []
 
         do {
             let items = try await scanFolder(folderURL)
+            guard requestID == openFolderRequestID else {
+                return
+            }
             session = FolderSession(folderURL: folderURL, items: items)
         } catch {
+            guard requestID == openFolderRequestID else {
+                return
+            }
             session = FolderSession(folderURL: folderURL, items: [])
             operationMessage = "Failed to open folder: \(error.localizedDescription)"
         }
@@ -115,7 +124,7 @@ final class FolderBrowserViewModel: ObservableObject {
     func renameSelected(baseName: String, startNumber: Int = 1, padding: Int = 2) {
         let plan = planBatchRenameOperation(selectedItems.map(\.url), baseName, startNumber, padding)
         let result = plan.isExecutable ? executeRenamePlanOperation(plan) : BatchOperationResult(failures: plan.failures)
-        applyOperationResult(result, removingSucceeded: false)
+        applyRenameResult(result, plan: plan)
     }
 
     private func updateFilter(_ update: (inout FolderFilter) -> Void) {
@@ -137,5 +146,36 @@ final class FolderBrowserViewModel: ObservableObject {
         default:
             return "\(result.succeeded.count) succeeded, \(result.failures.count) failed"
         }
+    }
+
+    private func applyRenameResult(_ result: BatchOperationResult, plan: BatchRenamePlan) {
+        operationFailures = result.failures
+
+        let succeededSources = Set(result.succeeded)
+        let successfulDestinationsBySource = Dictionary(
+            uniqueKeysWithValues: plan.proposals
+                .filter { succeededSources.contains($0.source) }
+                .map { ($0.source, $0.destination) }
+        )
+
+        if !successfulDestinationsBySource.isEmpty, var session {
+            let updatedItems = session.items.map { item in
+                guard let destination = successfulDestinationsBySource[item.url] else {
+                    return item
+                }
+
+                return ImageItem(
+                    url: destination,
+                    format: SupportedImageFormat(fileExtension: destination.pathExtension) ?? item.format
+                )
+            }
+            session.replaceItems(updatedItems)
+            session.selectedItemIDs = result.failures.map(\.url) + successfulDestinationsBySource.values.map { $0 }
+            self.session = session
+        } else {
+            session?.selectedItemIDs = result.failures.map(\.url)
+        }
+
+        operationMessage = message(for: result)
     }
 }

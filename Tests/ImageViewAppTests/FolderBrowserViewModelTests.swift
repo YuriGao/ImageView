@@ -5,6 +5,38 @@ import XCTest
 
 @MainActor
 final class FolderBrowserViewModelTests: XCTestCase {
+    func testOpenFolderKeepsLatestRequestWhenEarlierScanFinishesLater() async {
+        let slowFolder = URL(fileURLWithPath: "/tmp/slow", isDirectory: true)
+        let fastFolder = URL(fileURLWithPath: "/tmp/fast", isDirectory: true)
+        let slowItem = ImageItem(url: slowFolder.appendingPathComponent("slow.png"), format: .png)
+        let fastItem = ImageItem(url: fastFolder.appendingPathComponent("fast.jpg"), format: .jpeg)
+        let scanner = ControlledFolderScanner(
+            slowFolder: slowFolder,
+            slowItems: [slowItem],
+            fastItems: [fastItem]
+        )
+        let viewModel = FolderBrowserViewModel(scanFolder: { folder in
+            try await scanner.scan(folder)
+        })
+
+        let slowTask = Task {
+            await viewModel.openFolder(slowFolder)
+        }
+        await scanner.waitForSlowScanToStart()
+
+        await viewModel.openFolder(fastFolder)
+        XCTAssertEqual(viewModel.session?.folderURL, fastFolder)
+        XCTAssertEqual(viewModel.visibleItems, [fastItem])
+        XCTAssertFalse(viewModel.isLoading)
+
+        await scanner.finishSlowScan()
+        await slowTask.value
+
+        XCTAssertEqual(viewModel.session?.folderURL, fastFolder)
+        XCTAssertEqual(viewModel.visibleItems, [fastItem])
+        XCTAssertFalse(viewModel.isLoading)
+    }
+
     func testOpenFolderLoadsSessionWithNoSelection() async {
         let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
         let items = [
@@ -56,5 +88,78 @@ final class FolderBrowserViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.selectedItems, [failed])
         XCTAssertEqual(viewModel.operationFailures, result.failures)
         XCTAssertEqual(viewModel.operationMessage, "1 succeeded, 1 failed")
+    }
+
+    func testRenameSelectedUpdatesVisibleItemsAndSelectionToNewURL() async {
+        let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
+        let old = ImageItem(url: folder.appendingPathComponent("old.png"), format: .png)
+        let newURL = folder.appendingPathComponent("renamed 01.png")
+        let proposal = RenameProposal(source: old.url, destination: newURL)
+        let plan = BatchRenamePlan(proposals: [proposal], failures: [])
+        let viewModel = FolderBrowserViewModel(
+            scanFolder: { _ in [old] },
+            planBatchRename: { urls, baseName, startNumber, padding in
+                XCTAssertEqual(urls, [old.url])
+                XCTAssertEqual(baseName, "renamed")
+                XCTAssertEqual(startNumber, 1)
+                XCTAssertEqual(padding, 2)
+                return plan
+            },
+            executeRenamePlan: { receivedPlan in
+                XCTAssertEqual(receivedPlan, plan)
+                return BatchOperationResult(succeeded: [old.url])
+            }
+        )
+        await viewModel.openFolder(folder)
+        viewModel.setSelection([old.id])
+
+        viewModel.renameSelected(baseName: "renamed", startNumber: 1, padding: 2)
+
+        XCTAssertEqual(viewModel.visibleItems.map(\.url), [newURL])
+        XCTAssertEqual(viewModel.visibleItems.map(\.url.lastPathComponent), ["renamed 01.png"])
+        XCTAssertEqual(viewModel.selectedItems.map(\.url), [newURL])
+        XCTAssertEqual(viewModel.operationFailures, [])
+        XCTAssertEqual(viewModel.operationMessage, "1 succeeded")
+    }
+}
+
+private actor ControlledFolderScanner {
+    private let slowFolder: URL
+    private let slowItems: [ImageItem]
+    private let fastItems: [ImageItem]
+    private var slowContinuation: CheckedContinuation<[ImageItem], Error>?
+    private var slowScanStartedContinuation: CheckedContinuation<Void, Never>?
+
+    init(slowFolder: URL, slowItems: [ImageItem], fastItems: [ImageItem]) {
+        self.slowFolder = slowFolder
+        self.slowItems = slowItems
+        self.fastItems = fastItems
+    }
+
+    func scan(_ folder: URL) async throws -> [ImageItem] {
+        guard folder == slowFolder else {
+            return fastItems
+        }
+
+        return try await withCheckedThrowingContinuation { continuation in
+            slowContinuation = continuation
+            slowScanStartedContinuation?.resume()
+            slowScanStartedContinuation = nil
+        }
+    }
+
+    func waitForSlowScanToStart() async {
+        guard slowContinuation == nil else {
+            return
+        }
+
+        await withCheckedContinuation { continuation in
+            slowScanStartedContinuation = continuation
+        }
+    }
+
+    func finishSlowScan() {
+        slowContinuation?.resume(returning: slowItems)
+        slowContinuation = nil
     }
 }
