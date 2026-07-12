@@ -45,3 +45,13 @@ scripts/install-app.sh
 - [产品需求文档](docs/superpowers/specs/2026-07-09-imageview-prd.md)
 - [默认应用关联设计](docs/superpowers/specs/2026-07-11-default-image-app-settings-design.md)
 - [多图片窗口设计](docs/superpowers/specs/2026-07-11-multiple-image-windows-design.md)
+
+## Support
+
+Slidr Free is open source and free to use. If it helps you, you can support the project via Alipay:
+
+<img src="docs/assets/alipay-qr.jpg" alt="Alipay donation QR code" width="220">
+
+## 开源许可
+
+本项目基于 [MIT License](LICENSE) 开源。
