@@ -41,6 +41,10 @@ enum AppStrings {
         "errorState.retry"
     ]
 
+    static let titleBarKeys = [
+        "titleBar.browseCurrentFolder"
+    ]
+
     static func text(_ key: String, preferredLanguages: [String] = Locale.preferredLanguages) -> String {
         let localization = preferredLanguages.contains { $0.lowercased().hasPrefix("zh") } ? "zh-hans" : "en"
         let resourceBundle = packagedResourceBundle ?? Bundle.module

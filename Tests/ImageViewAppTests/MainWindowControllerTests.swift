@@ -100,6 +100,34 @@ final class MainWindowControllerTests: XCTestCase {
         )
     }
 
+    func testFolderBrowserModePassesThroughViewerOnlyKeyActions() {
+        XCTAssertEqual(
+            MainWindowController.keyAction(for: 123, shouldEndEditing: false, isFolderBrowserMode: true),
+            .passThrough
+        )
+        XCTAssertEqual(
+            MainWindowController.keyAction(for: 124, shouldEndEditing: false, isFolderBrowserMode: true),
+            .passThrough
+        )
+        XCTAssertEqual(
+            MainWindowController.keyAction(for: 51, shouldEndEditing: false, isFolderBrowserMode: true),
+            .passThrough
+        )
+        XCTAssertEqual(
+            MainWindowController.keyAction(for: 49, shouldEndEditing: false, isFolderBrowserMode: true),
+            .passThrough
+        )
+        XCTAssertEqual(
+            MainWindowController.keyAction(
+                for: 40,
+                shouldEndEditing: false,
+                modifierFlags: [.command],
+                isFolderBrowserMode: true
+            ),
+            .passThrough
+        )
+    }
+
     func testMenuCommandMapsViewSelectors() {
         XCTAssertEqual(
             MainWindowController.menuCommand(for: #selector(MainWindowController.showPreviousImage(_:))),
@@ -280,6 +308,59 @@ final class MainWindowControllerTests: XCTestCase {
                 hasUnsavedEdits: false
             )
         )
+    }
+
+    func testFolderBrowserModeDisablesViewerOnlyMenuCommands() {
+        let viewerOnlyCommands: [MainWindowController.MenuCommand] = [
+            .fileOperationRequiringCurrentItem,
+            .navigation,
+            .canvasSizing,
+            .startCropping,
+            .editOperation(.rotateClockwise),
+            .saveEdits,
+            .saveEditsAs,
+            .discardEdits
+        ]
+
+        for command in viewerOnlyCommands {
+            XCTAssertFalse(
+                MainWindowController.isMenuCommandEnabled(
+                    command,
+                    hasCurrentItem: true,
+                    hasCurrentImage: true,
+                    canEditCurrentImage: true,
+                    hasUnsavedEdits: true,
+                    isFolderBrowserMode: true
+                ),
+                "\(command) should be disabled while the folder browser owns the canvas"
+            )
+        }
+    }
+
+    func testValidateMenuItemDisablesHiddenViewerCommandsInFolderMode() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let imageURL = root.appendingPathComponent("one.png")
+        try writeTestPNG(to: imageURL)
+        let controller = MainWindowController(settings: AppSettings(defaults: makeIsolatedDefaults()))
+        controller.open(url: imageURL)
+        for _ in 0..<100 where !controller.hasLoadedImageForTesting {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(controller.hasLoadedImageForTesting)
+        controller.openFolderForTesting(root, items: [ImageItem(url: imageURL, format: .png)])
+
+        let rename = NSMenuItem(title: "Rename", action: #selector(MainWindowController.renameCurrentImage(_:)), keyEquivalent: "")
+        let reveal = NSMenuItem(title: "Reveal", action: #selector(MainWindowController.revealCurrentImageInFinder(_:)), keyEquivalent: "")
+        let trash = NSMenuItem(title: "Trash", action: #selector(MainWindowController.moveCurrentImageToTrash(_:)), keyEquivalent: "")
+        let rotate = NSMenuItem(title: "Rotate", action: #selector(MainWindowController.rotateClockwise(_:)), keyEquivalent: "")
+        let crop = NSMenuItem(title: "Crop", action: #selector(MainWindowController.startCropping(_:)), keyEquivalent: "")
+        let zoom = NSMenuItem(title: "Zoom", action: #selector(MainWindowController.zoomToFit(_:)), keyEquivalent: "")
+
+        for item in [rename, reveal, trash, rotate, crop, zoom] {
+            XCTAssertFalse(controller.validateMenuItem(item), "\(item.title) should not target the hidden viewer")
+        }
     }
 
     func testCanvasBackgroundAlwaysUsesSystemAppearance() {
@@ -628,19 +709,7 @@ final class MainWindowControllerTests: XCTestCase {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let imageURL = root.appendingPathComponent("one.png")
-        let representation = NSBitmapImageRep(
-            bitmapDataPlanes: nil,
-            pixelsWide: 2,
-            pixelsHigh: 2,
-            bitsPerSample: 8,
-            samplesPerPixel: 4,
-            hasAlpha: true,
-            isPlanar: false,
-            colorSpaceName: .deviceRGB,
-            bytesPerRow: 0,
-            bitsPerPixel: 0
-        )
-        try XCTUnwrap(representation?.representation(using: .png, properties: [:])).write(to: imageURL)
+        try writeTestPNG(to: imageURL)
         let controller = MainWindowController(settings: AppSettings(defaults: makeIsolatedDefaults()))
         controller.open(url: imageURL)
         for _ in 0..<100 where controller.window?.title == "ImageView" {
@@ -654,6 +723,33 @@ final class MainWindowControllerTests: XCTestCase {
 
         XCTAssertTrue(controller.isFolderBrowserVisibleForTesting)
         XCTAssertEqual(controller.window?.title, title)
+    }
+
+    func testTitleBarGridButtonTooltipIsLocalized() {
+        XCTAssertEqual(
+            MainWindowController.titleBarBrowseFolderToolTip(preferredLanguages: ["en"]),
+            "Browse Current Folder"
+        )
+        XCTAssertEqual(
+            MainWindowController.titleBarBrowseFolderToolTip(preferredLanguages: ["zh-Hans"]),
+            "浏览当前文件夹"
+        )
+    }
+
+    private func writeTestPNG(to url: URL) throws {
+        let representation = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 2,
+            pixelsHigh: 2,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        )
+        try XCTUnwrap(representation?.representation(using: .png, properties: [:])).write(to: url)
     }
 
     private func makeIsolatedDefaults() -> UserDefaults {

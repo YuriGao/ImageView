@@ -42,6 +42,7 @@
 "emptyState.open" = "Open Image…";
 "emptyState.browseFolder" = "Browse Folder…";
 "errorState.retry" = "Choose Another Image…";
+"titleBar.browseCurrentFolder" = "Browse Current Folder";
 "settings.title" = "ImageView Settings";
 "settings.general.title" = "General";
 "settings.general.showsFilmstrip" = "Show filmstrip";

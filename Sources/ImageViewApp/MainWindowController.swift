@@ -13,6 +13,10 @@ final class MainWindowController: NSWindowController {
     static let filmstripOverlayHeight: CGFloat = 98
     static let overlayAutoHideDelay: TimeInterval = 1.8
     static let overlayFadeOutDuration: TimeInterval = 0.18
+    static func titleBarBrowseFolderToolTip(preferredLanguages: [String] = Locale.preferredLanguages) -> String {
+        AppStrings.text("titleBar.browseCurrentFolder", preferredLanguages: preferredLanguages)
+    }
+
     var onSuccessfulOpen: ((URL) -> Void)? {
         didSet { viewModel.onSuccessfulOpen = onSuccessfulOpen }
     }
@@ -620,7 +624,8 @@ final class MainWindowController: NSWindowController {
             for: event.keyCode,
             shouldEndEditing: shouldEndEditing(for: event),
             isCropping: cropOverlay.isCropping,
-            modifierFlags: event.modifierFlags
+            modifierFlags: event.modifierFlags,
+            isFolderBrowserMode: isFolderBrowserMode
         ) {
         case .showPrevious:
             navigateToPreviousImage()
@@ -674,10 +679,22 @@ final class MainWindowController: NSWindowController {
         for keyCode: UInt16,
         shouldEndEditing: Bool,
         isCropping: Bool = false,
-        modifierFlags: NSEvent.ModifierFlags = []
+        modifierFlags: NSEvent.ModifierFlags = [],
+        isFolderBrowserMode: Bool = false
     ) -> KeyAction {
         if keyCode == 13, modifierFlags.contains(.command) {
             return .closeWindow
+        }
+
+        if isFolderBrowserMode {
+            switch keyCode {
+            case 36:
+                return .toggleFullscreen
+            case 53:
+                return shouldEndEditing ? .endEditing : .passThrough
+            default:
+                return .passThrough
+            }
         }
 
         if isCropping {
@@ -767,8 +784,13 @@ final class MainWindowController: NSWindowController {
         hasCurrentItem: Bool,
         hasCurrentImage: Bool,
         canEditCurrentImage: Bool,
-        hasUnsavedEdits: Bool
+        hasUnsavedEdits: Bool,
+        isFolderBrowserMode: Bool = false
     ) -> Bool {
+        if isFolderBrowserMode {
+            return false
+        }
+
         switch command {
         case .fileOperationRequiringCurrentItem:
             return hasCurrentItem
@@ -998,10 +1020,15 @@ final class MainWindowController: NSWindowController {
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleBarView.addSubview(titleLabel)
         titleBarGridButton.translatesAutoresizingMaskIntoConstraints = false
-        titleBarGridButton.image = NSImage(systemSymbolName: "square.grid.2x2", accessibilityDescription: "Browse Folder")
+        let browseCurrentFolderText = Self.titleBarBrowseFolderToolTip()
+        titleBarGridButton.image = NSImage(
+            systemSymbolName: "square.grid.2x2",
+            accessibilityDescription: browseCurrentFolderText
+        )
         titleBarGridButton.bezelStyle = .toolbar
         titleBarGridButton.isBordered = false
-        titleBarGridButton.toolTip = "Browse Current Folder"
+        titleBarGridButton.toolTip = browseCurrentFolderText
+        titleBarGridButton.setAccessibilityLabel(browseCurrentFolderText)
         titleBarGridButton.target = self
         titleBarGridButton.action = #selector(browseCurrentImageFolder(_:))
         titleBarView.addSubview(titleBarGridButton)
@@ -1123,6 +1150,7 @@ final class MainWindowController: NSWindowController {
     }
 
     var isInspectorVisibleForTesting: Bool { !inspectorView.isHidden }
+    var hasLoadedImageForTesting: Bool { viewModel.currentImage != nil }
     var isFolderBrowserVisibleForTesting: Bool { !folderBrowserView.isHidden }
     var isCanvasVisibleForTesting: Bool { !canvas.isHidden }
     var isFilmstripVisibleForTesting: Bool { !filmstripOverlayView.isHidden }
@@ -1285,10 +1313,12 @@ final class MainWindowController: NSWindowController {
 extension MainWindowController: NSMenuItemValidation {
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(toggleFilmstrip(_:)) {
+            guard !isFolderBrowserMode else { return false }
             menuItem.state = settings.showsFilmstrip ? .on : .off
             return true
         }
         if menuItem.action == #selector(toggleInspector(_:)) {
+            guard !isFolderBrowserMode else { return false }
             menuItem.state = settings.showsInspector ? .on : .off
             return true
         }
@@ -1302,7 +1332,8 @@ extension MainWindowController: NSMenuItemValidation {
             hasCurrentItem: viewModel.navigationState?.currentItem != nil,
             hasCurrentImage: viewModel.currentImage != nil,
             canEditCurrentImage: viewModel.canEditCurrentImage,
-            hasUnsavedEdits: viewModel.hasUnsavedEdits
+            hasUnsavedEdits: viewModel.hasUnsavedEdits,
+            isFolderBrowserMode: isFolderBrowserMode
         )
     }
 }

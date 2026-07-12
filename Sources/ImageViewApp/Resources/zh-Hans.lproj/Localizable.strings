@@ -42,6 +42,7 @@
 "emptyState.open" = "打开图片…";
 "emptyState.browseFolder" = "浏览文件夹…";
 "errorState.retry" = "重新选择图片…";
+"titleBar.browseCurrentFolder" = "浏览当前文件夹";
 "settings.title" = "ImageView 设置";
 "settings.general.title" = "通用";
 "settings.general.showsFilmstrip" = "显示胶片预览";
