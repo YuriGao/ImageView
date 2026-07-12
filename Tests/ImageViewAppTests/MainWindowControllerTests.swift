@@ -711,11 +711,11 @@ final class MainWindowControllerTests: XCTestCase {
     func testFolderBrowserTrashCallbackUsesConfirmationAndKeepsFolderBrowserVisible() async {
         let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
         let item = ImageItem(url: folder.appendingPathComponent("one.png"), format: .png)
-        var movedToTrash: [URL] = []
+        let movedToTrash = MainWindowLockedValue<[URL]>([])
         let folderViewModel = FolderBrowserViewModel(
             scanFolder: { _ in [item] },
             moveToTrash: { urls in
-                movedToTrash = urls
+                movedToTrash.set(urls)
                 return BatchOperationResult(succeeded: urls)
             }
         )
@@ -733,8 +733,11 @@ final class MainWindowControllerTests: XCTestCase {
         controller.selectFolderBrowserItemsForTesting([item.id])
 
         controller.triggerFolderBrowserTrashForTesting()
+        for _ in 0..<100 where controller.folderBrowserItemCountForTesting != 0 {
+            await Task.yield()
+        }
 
-        XCTAssertEqual(movedToTrash, [item.url])
+        XCTAssertEqual(movedToTrash.value, [item.url])
         XCTAssertTrue(controller.isFolderBrowserVisibleForTesting)
         XCTAssertFalse(controller.isCanvasVisibleForTesting)
         XCTAssertEqual(controller.folderBrowserItemCountForTesting, 0)
@@ -744,11 +747,11 @@ final class MainWindowControllerTests: XCTestCase {
         let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
         let destination = URL(fileURLWithPath: "/tmp/archive", isDirectory: true)
         let item = ImageItem(url: folder.appendingPathComponent("one.png"), format: .png)
-        var moved: (urls: [URL], destination: URL, policy: MoveConflictPolicy)?
+        let moved = MainWindowLockedValue<(urls: [URL], destination: URL, policy: MoveConflictPolicy)?>(nil)
         let folderViewModel = FolderBrowserViewModel(
             scanFolder: { _ in [item] },
             moveToFolder: { urls, destinationFolder, policy in
-                moved = (urls, destinationFolder, policy)
+                moved.set((urls, destinationFolder, policy))
                 return BatchOperationResult(succeeded: urls)
             }
         )
@@ -763,10 +766,13 @@ final class MainWindowControllerTests: XCTestCase {
         controller.selectFolderBrowserItemsForTesting([item.id])
 
         controller.triggerFolderBrowserMoveForTesting()
+        for _ in 0..<100 where moved.value == nil {
+            await Task.yield()
+        }
 
-        XCTAssertEqual(moved?.urls, [item.url])
-        XCTAssertEqual(moved?.destination, destination)
-        XCTAssertEqual(moved?.policy, .skip)
+        XCTAssertEqual(moved.value?.urls, [item.url])
+        XCTAssertEqual(moved.value?.destination, destination)
+        XCTAssertEqual(moved.value?.policy, .skip)
         XCTAssertTrue(controller.isFolderBrowserVisibleForTesting)
     }
 
@@ -774,11 +780,11 @@ final class MainWindowControllerTests: XCTestCase {
         let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
         let item = ImageItem(url: folder.appendingPathComponent("one.png"), format: .png)
         let renamedURL = folder.appendingPathComponent("Batch 05.png")
-        var receivedParameters: BatchRenameSheetController.RenameParameters?
+        let receivedParameters = MainWindowLockedValue<BatchRenameSheetController.RenameParameters?>(nil)
         let folderViewModel = FolderBrowserViewModel(
             scanFolder: { _ in [item] },
             planBatchRename: { urls, baseName, startNumber, padding in
-                receivedParameters = .init(baseName: baseName, startNumber: startNumber, padding: padding)
+                receivedParameters.set(.init(baseName: baseName, startNumber: startNumber, padding: padding))
                 return BatchRenamePlan(
                     proposals: [RenameProposal(source: urls[0], destination: renamedURL)],
                     failures: []
@@ -800,27 +806,30 @@ final class MainWindowControllerTests: XCTestCase {
         controller.selectFolderBrowserItemsForTesting([item.id])
 
         controller.triggerFolderBrowserRenameForTesting()
+        for _ in 0..<100 where receivedParameters.value == nil {
+            await Task.yield()
+        }
 
-        XCTAssertEqual(receivedParameters, .init(baseName: "Batch", startNumber: 5, padding: 2))
+        XCTAssertEqual(receivedParameters.value, .init(baseName: "Batch", startNumber: 5, padding: 2))
         XCTAssertTrue(controller.isFolderBrowserVisibleForTesting)
         XCTAssertEqual(controller.folderBrowserItemCountForTesting, 1)
     }
 
     func testFolderBrowserBatchActionsReturnWhenSelectionIsEmpty() async {
         let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
-        var operationCount = 0
+        let operationCount = MainWindowLockedValue(0)
         let folderViewModel = FolderBrowserViewModel(
             scanFolder: { _ in [] },
             moveToTrash: { _ in
-                operationCount += 1
+                operationCount.update { $0 += 1 }
                 return BatchOperationResult()
             },
             moveToFolder: { _, _, _ in
-                operationCount += 1
+                operationCount.update { $0 += 1 }
                 return BatchOperationResult()
             },
             planBatchRename: { _, _, _, _ in
-                operationCount += 1
+                operationCount.update { $0 += 1 }
                 return BatchRenamePlan(proposals: [], failures: [])
             }
         )
@@ -830,14 +839,14 @@ final class MainWindowControllerTests: XCTestCase {
         )
         controller.batchActionDialogProviderForTesting = .init(
             confirmTrash: { _ in
-                operationCount += 1
+                operationCount.update { $0 += 1 }
                 return true
             },
             chooseDestinationFolder: {
-                operationCount += 1
+                operationCount.update { $0 += 1 }
                 return folder
             },
-            requestRenameParameters: { _, _ in operationCount += 1 }
+            requestRenameParameters: { _, _ in operationCount.update { $0 += 1 } }
         )
         await controller.openFolderForTesting(folder, scannerItems: [])
 
@@ -845,7 +854,32 @@ final class MainWindowControllerTests: XCTestCase {
         controller.triggerFolderBrowserMoveForTesting()
         controller.triggerFolderBrowserRenameForTesting()
 
-        XCTAssertEqual(operationCount, 0)
+        XCTAssertEqual(operationCount.value, 0)
+        XCTAssertTrue(controller.isFolderBrowserVisibleForTesting)
+    }
+
+    func testFolderBrowserOperationStatusIsRenderedAfterFailure() async {
+        let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
+        let item = ImageItem(url: folder.appendingPathComponent("one.png"), format: .png)
+        let failure = BatchFileFailure(url: item.url, reason: .trashFailed("locked"))
+        let folderViewModel = FolderBrowserViewModel(
+            scanFolder: { _ in [item] },
+            moveToTrash: { _ in BatchOperationResult(failures: [failure]) }
+        )
+        let controller = MainWindowController(
+            settings: AppSettings(defaults: makeIsolatedDefaults()),
+            folderBrowserViewModel: folderViewModel
+        )
+        controller.batchActionDialogProviderForTesting = .init(confirmTrash: { _ in true })
+        await controller.openFolderForTesting(folder, scannerItems: [item])
+        controller.selectFolderBrowserItemsForTesting([item.id])
+
+        controller.triggerFolderBrowserTrashForTesting()
+        for _ in 0..<100 where controller.folderBrowserOperationStatusTextForTesting != "1 failed · 1 failure" {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(controller.folderBrowserOperationStatusTextForTesting, "1 failed · 1 failure")
         XCTAssertTrue(controller.isFolderBrowserVisibleForTesting)
     }
 
@@ -899,5 +933,32 @@ final class MainWindowControllerTests: XCTestCase {
 
     private func makeIsolatedDefaults() -> UserDefaults {
         UserDefaults(suiteName: "ImageViewAppTests.MainWindowController.\(UUID().uuidString)")!
+    }
+}
+
+private final class MainWindowLockedValue<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValue: Value
+
+    init(_ value: Value) {
+        self.storedValue = value
+    }
+
+    var value: Value {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedValue
+    }
+
+    func set(_ value: Value) {
+        lock.lock()
+        storedValue = value
+        lock.unlock()
+    }
+
+    func update(_ update: (inout Value) -> Void) {
+        lock.lock()
+        update(&storedValue)
+        lock.unlock()
     }
 }

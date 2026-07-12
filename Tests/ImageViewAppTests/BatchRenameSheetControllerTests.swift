@@ -31,4 +31,30 @@ final class BatchRenameSheetControllerTests: XCTestCase {
 
         XCTAssertEqual(try XCTUnwrap(received), .init(baseName: "Review", startNumber: 3, padding: 2))
     }
+
+    func testConfirmRejectsInvalidInputsWithoutCallingCallback() {
+        let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
+        let item = ImageItem(url: folder.appendingPathComponent("one.webp"), format: .webp)
+        let controller = BatchRenameSheetController(items: [item])
+        var confirmCount = 0
+        controller.onConfirm = { _ in confirmCount += 1 }
+
+        controller.setBatchRenameInputsForTesting(baseName: " ", startNumber: 1, padding: 2)
+        controller.confirmForTesting()
+        XCTAssertEqual(controller.validationErrorForTesting, "Base name is required.")
+
+        controller.setBatchRenameInputsForTesting(baseName: "bad/name", startNumber: 1, padding: 2)
+        controller.confirmForTesting()
+        XCTAssertEqual(controller.validationErrorForTesting, "Base name cannot contain / or :.")
+
+        controller.setBatchRenameInputsForTesting(baseName: "Batch", startNumber: 0, padding: 2)
+        controller.confirmForTesting()
+        XCTAssertEqual(controller.validationErrorForTesting, "Start number and padding must be positive.")
+
+        controller.setBatchRenameInputsForTesting(baseName: "Batch", startNumber: 1, padding: 0)
+        controller.confirmForTesting()
+        XCTAssertEqual(controller.validationErrorForTesting, "Start number and padding must be positive.")
+
+        XCTAssertEqual(confirmCount, 0)
+    }
 }

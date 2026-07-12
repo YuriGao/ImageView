@@ -400,6 +400,20 @@ final class MainWindowController: NSWindowController {
             }
             .store(in: &cancellables)
 
+        Publishers.CombineLatest3(
+            folderBrowserViewModel.$operationMessage,
+            folderBrowserViewModel.$operationFailures,
+            folderBrowserViewModel.$isOperating
+        )
+            .sink { [weak self] message, failures, isOperating in
+                self?.folderBrowserView.applyOperationStatus(
+                    message: message,
+                    failures: failures,
+                    isOperating: isOperating
+                )
+            }
+            .store(in: &cancellables)
+
         viewModel.$displayTitle
             .sink { [weak self] title in
                 self?.window?.title = title
@@ -963,11 +977,11 @@ final class MainWindowController: NSWindowController {
             onConfirm(parameters)
             self?.activeBatchRenameSheet = nil
         }
-        activeBatchRenameSheet = controller
 
         guard let sheet = controller.window, let window else {
             return
         }
+        activeBatchRenameSheet = controller
         window.beginSheet(sheet) { [weak self] _ in
             self?.activeBatchRenameSheet = nil
         }
@@ -1278,6 +1292,7 @@ final class MainWindowController: NSWindowController {
     var isFilmstripVisibleForTesting: Bool { !filmstripOverlayView.isHidden }
     var isPageControlsVisibleForTesting: Bool { !pageNavigationOverlayView.isHidden }
     var folderBrowserItemCountForTesting: Int { folderBrowserView.testingItemCount }
+    var folderBrowserOperationStatusTextForTesting: String? { folderBrowserView.testingOperationStatusText }
 
     func requestOpenFromEmptyStateForTesting() {
         emptyStateView.performOpenForTesting()

@@ -94,6 +94,20 @@ final class FolderBrowserViewTests: XCTestCase {
 
         XCTAssertEqual(typeFilter, Set(SupportedImageFormat.allCases))
     }
+
+    func testOperationStatusDisplaysMessageFailureCountAndOperatingState() {
+        let view = FolderBrowserView(thumbnailProvider: .stub)
+        let failedURL = URL(fileURLWithPath: "/tmp/photos/blocked.png")
+
+        view.applyOperationStatus(
+            message: "1 succeeded, 1 failed",
+            failures: [BatchFileFailure(url: failedURL, reason: .destinationExists)],
+            isOperating: true
+        )
+
+        XCTAssertEqual(view.testingOperationStatusText, "Working… 1 succeeded, 1 failed · 1 failure")
+        XCTAssertTrue(view.testingBatchActionButtonsDisabled)
+    }
 }
 
 private extension ThumbnailProvider {

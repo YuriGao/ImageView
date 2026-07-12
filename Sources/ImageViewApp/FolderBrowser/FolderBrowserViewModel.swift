@@ -2,16 +2,24 @@ import Combine
 import Foundation
 import ImageViewCore
 
+extension BatchFileFailureReason: @unchecked Sendable {}
+extension BatchFileFailure: @unchecked Sendable {}
+extension BatchOperationResult: @unchecked Sendable {}
+extension MoveConflictPolicy: @unchecked Sendable {}
+extension RenameProposal: @unchecked Sendable {}
+extension BatchRenamePlan: @unchecked Sendable {}
+
 @MainActor
 final class FolderBrowserViewModel: ObservableObject {
     typealias ScanFolder = @Sendable (URL) async throws -> [ImageItem]
-    typealias MoveToTrash = ([URL]) -> BatchOperationResult
-    typealias MoveToFolder = ([URL], URL, MoveConflictPolicy) -> BatchOperationResult
-    typealias PlanBatchRename = ([URL], String, Int, Int) -> BatchRenamePlan
-    typealias ExecuteRenamePlan = (BatchRenamePlan) -> BatchOperationResult
+    typealias MoveToTrash = @Sendable ([URL]) -> BatchOperationResult
+    typealias MoveToFolder = @Sendable ([URL], URL, MoveConflictPolicy) -> BatchOperationResult
+    typealias PlanBatchRename = @Sendable ([URL], String, Int, Int) -> BatchRenamePlan
+    typealias ExecuteRenamePlan = @Sendable (BatchRenamePlan) -> BatchOperationResult
 
     @Published private(set) var session: FolderSession?
     @Published private(set) var isLoading = false
+    @Published private(set) var isOperating = false
     @Published private(set) var operationMessage: String?
     @Published private(set) var operationFailures: [BatchFileFailure] = []
 
@@ -44,17 +52,16 @@ final class FolderBrowserViewModel: ObservableObject {
         planBatchRename: PlanBatchRename? = nil,
         executeRenamePlan: ExecuteRenamePlan? = nil
     ) {
-        let operationService = BatchFileOperationService()
         self.scanFolder = scanFolder
-        self.moveToTrashOperation = moveToTrash ?? { operationService.moveToTrash($0) }
+        self.moveToTrashOperation = moveToTrash ?? { BatchFileOperationService().moveToTrash($0) }
         self.moveToFolderOperation = moveToFolder ?? {
-            operationService.moveToFolder($0, destinationFolder: $1, conflictPolicy: $2)
+            BatchFileOperationService().moveToFolder($0, destinationFolder: $1, conflictPolicy: $2)
         }
         self.planBatchRenameOperation = planBatchRename ?? {
-            operationService.planBatchRename(urls: $0, baseName: $1, startNumber: $2, padding: $3)
+            BatchFileOperationService().planBatchRename(urls: $0, baseName: $1, startNumber: $2, padding: $3)
         }
         self.executeRenamePlanOperation = executeRenamePlan ?? {
-            operationService.executeRenamePlan($0)
+            BatchFileOperationService().executeRenamePlan($0)
         }
     }
 
@@ -111,20 +118,64 @@ final class FolderBrowserViewModel: ObservableObject {
         operationMessage = message(for: result)
     }
 
-    func moveSelectedToTrash() {
-        let result = moveToTrashOperation(selectedItems.map(\.url))
-        applyOperationResult(result, removingSucceeded: true)
+    @discardableResult
+    func moveSelectedToTrash() -> Task<Void, Never>? {
+        guard !isOperating else { return nil }
+        let urls = selectedItems.map(\.url)
+        guard !urls.isEmpty else { return nil }
+        let operation = moveToTrashOperation
+        return runBatchOperation {
+            operation(urls)
+        } apply: { [weak self] result in
+            self?.applyOperationResult(result, removingSucceeded: true)
+        }
     }
 
-    func moveSelected(to destinationFolder: URL, conflictPolicy: MoveConflictPolicy) {
-        let result = moveToFolderOperation(selectedItems.map(\.url), destinationFolder, conflictPolicy)
-        applyOperationResult(result, removingSucceeded: true)
+    @discardableResult
+    func moveSelected(to destinationFolder: URL, conflictPolicy: MoveConflictPolicy) -> Task<Void, Never>? {
+        guard !isOperating else { return nil }
+        let urls = selectedItems.map(\.url)
+        guard !urls.isEmpty else { return nil }
+        let operation = moveToFolderOperation
+        return runBatchOperation {
+            operation(urls, destinationFolder, conflictPolicy)
+        } apply: { [weak self] result in
+            self?.applyOperationResult(result, removingSucceeded: true)
+        }
     }
 
-    func renameSelected(baseName: String, startNumber: Int = 1, padding: Int = 2) {
-        let plan = planBatchRenameOperation(selectedItems.map(\.url), baseName, startNumber, padding)
-        let result = plan.isExecutable ? executeRenamePlanOperation(plan) : BatchOperationResult(failures: plan.failures)
-        applyRenameResult(result, plan: plan)
+    @discardableResult
+    func renameSelected(baseName: String, startNumber: Int = 1, padding: Int = 2) -> Task<Void, Never>? {
+        guard !isOperating else { return nil }
+        let urls = selectedItems.map(\.url)
+        guard !urls.isEmpty else { return nil }
+        let planOperation = planBatchRenameOperation
+        let executeOperation = executeRenamePlanOperation
+        return runBatchOperation {
+            let plan = planOperation(urls, baseName, startNumber, padding)
+            let result = plan.isExecutable ? executeOperation(plan) : BatchOperationResult(failures: plan.failures)
+            return BatchRenameOperation(plan: plan, result: result)
+        } apply: { [weak self] operation in
+            self?.applyRenameResult(operation.result, plan: operation.plan)
+        }
+    }
+
+    private func runBatchOperation<Value: Sendable>(
+        _ operation: @escaping @Sendable () -> Value,
+        apply: @escaping @MainActor (Value) -> Void
+    ) -> Task<Void, Never> {
+        isOperating = true
+        operationFailures = []
+        operationMessage = nil
+
+        return Task { [weak self] in
+            let value = await Task.detached(priority: .userInitiated) {
+                operation()
+            }.value
+            guard let self else { return }
+            apply(value)
+            self.isOperating = false
+        }
     }
 
     private func updateFilter(_ update: (inout FolderFilter) -> Void) {
@@ -178,4 +229,9 @@ final class FolderBrowserViewModel: ObservableObject {
 
         operationMessage = message(for: result)
     }
+}
+
+private struct BatchRenameOperation: Sendable {
+    let plan: BatchRenamePlan
+    let result: BatchOperationResult
 }

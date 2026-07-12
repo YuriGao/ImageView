@@ -113,7 +113,8 @@ final class FolderBrowserViewModelTests: XCTestCase {
         await viewModel.openFolder(folder)
         viewModel.setSelection([old.id])
 
-        viewModel.renameSelected(baseName: "renamed", startNumber: 1, padding: 2)
+        let task = viewModel.renameSelected(baseName: "renamed", startNumber: 1, padding: 2)
+        await task?.value
 
         XCTAssertEqual(viewModel.visibleItems.map(\.url), [newURL])
         XCTAssertEqual(viewModel.visibleItems.map(\.url.lastPathComponent), ["renamed 01.png"])
@@ -127,27 +128,24 @@ final class FolderBrowserViewModelTests: XCTestCase {
         let destination = URL(fileURLWithPath: "/tmp/archive", isDirectory: true)
         let moved = ImageItem(url: folder.appendingPathComponent("moved.png"), format: .png)
         let failed = ImageItem(url: folder.appendingPathComponent("failed.jpg"), format: .jpeg)
-        var receivedURLs: [URL] = []
-        var receivedDestination: URL?
-        var receivedPolicy: MoveConflictPolicy?
+        let received = LockedValue<(urls: [URL], destination: URL, policy: MoveConflictPolicy)?>(nil)
         let expectedFailure = BatchFileFailure(url: failed.url, reason: .destinationExists)
         let viewModel = FolderBrowserViewModel(
             scanFolder: { _ in [moved, failed] },
             moveToFolder: { urls, destinationFolder, policy in
-                receivedURLs = urls
-                receivedDestination = destinationFolder
-                receivedPolicy = policy
+                received.set((urls, destinationFolder, policy))
                 return BatchOperationResult(succeeded: [moved.url], failures: [expectedFailure])
             }
         )
         await viewModel.openFolder(folder)
         viewModel.setSelection([moved.id, failed.id])
 
-        viewModel.moveSelected(to: destination, conflictPolicy: .skip)
+        let task = viewModel.moveSelected(to: destination, conflictPolicy: .skip)
+        await task?.value
 
-        XCTAssertEqual(receivedURLs, [moved.url, failed.url])
-        XCTAssertEqual(receivedDestination, destination)
-        XCTAssertEqual(receivedPolicy, .skip)
+        XCTAssertEqual(received.value?.urls, [moved.url, failed.url])
+        XCTAssertEqual(received.value?.destination, destination)
+        XCTAssertEqual(received.value?.policy, .skip)
         XCTAssertEqual(viewModel.visibleItems, [failed])
         XCTAssertEqual(viewModel.selectedItems, [failed])
         XCTAssertEqual(viewModel.operationFailures, [expectedFailure])
@@ -175,12 +173,104 @@ final class FolderBrowserViewModelTests: XCTestCase {
         await viewModel.openFolder(folder)
         viewModel.setSelection([renamed.id, failed.id])
 
-        viewModel.renameSelected(baseName: "Batch", startNumber: 1, padding: 2)
+        let task = viewModel.renameSelected(baseName: "Batch", startNumber: 1, padding: 2)
+        await task?.value
 
         XCTAssertEqual(viewModel.visibleItems.map(\.url), [renamedURL, failed.url])
         XCTAssertEqual(viewModel.selectedItems.map(\.url), [failed.url, renamedURL])
         XCTAssertEqual(viewModel.operationFailures, [failure])
         XCTAssertEqual(viewModel.operationMessage, "1 succeeded, 1 failed")
+    }
+
+    func testMoveSelectedToTrashSetsOperatingWhileBackgroundOperationRunsAndClearsAfterResult() async {
+        let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
+        let item = ImageItem(url: folder.appendingPathComponent("one.png"), format: .png)
+        let gate = BlockingBatchOperation(result: BatchOperationResult(succeeded: [item.url]))
+        let viewModel = FolderBrowserViewModel(
+            scanFolder: { _ in [item] },
+            moveToTrash: { urls in
+                XCTAssertEqual(urls, [item.url])
+                return gate.run()
+            }
+        )
+        await viewModel.openFolder(folder)
+        viewModel.setSelection([item.id])
+
+        let task = viewModel.moveSelectedToTrash()
+
+        await gate.waitUntilStarted()
+        XCTAssertTrue(viewModel.isOperating)
+        XCTAssertNil(viewModel.moveSelectedToTrash(), "duplicate clicks should be ignored while an operation is running")
+
+        gate.finish()
+        await task?.value
+
+        XCTAssertFalse(viewModel.isOperating)
+        XCTAssertEqual(viewModel.visibleItems, [])
+        XCTAssertEqual(viewModel.operationMessage, "1 succeeded")
+    }
+}
+
+private final class BlockingBatchOperation: @unchecked Sendable {
+    private let result: BatchOperationResult
+    private let started = AsyncStartFlag()
+    private let finished = DispatchSemaphore(value: 0)
+
+    init(result: BatchOperationResult) {
+        self.result = result
+    }
+
+    func run() -> BatchOperationResult {
+        Task { await started.markStarted() }
+        finished.wait()
+        return result
+    }
+
+    func waitUntilStarted() async {
+        await started.wait()
+    }
+
+    func finish() {
+        finished.signal()
+    }
+}
+
+private final class LockedValue<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValue: Value
+
+    init(_ value: Value) {
+        self.storedValue = value
+    }
+
+    var value: Value {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedValue
+    }
+
+    func set(_ value: Value) {
+        lock.lock()
+        storedValue = value
+        lock.unlock()
+    }
+}
+
+private actor AsyncStartFlag {
+    private var started = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        if started { return }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func markStarted() {
+        started = true
+        waiters.forEach { $0.resume() }
+        waiters.removeAll()
     }
 }
 

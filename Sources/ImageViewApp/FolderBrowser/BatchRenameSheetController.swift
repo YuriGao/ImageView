@@ -21,9 +21,14 @@ final class BatchRenameSheetController: NSWindowController {
     private let startNumberField = NSTextField(string: "1")
     private let paddingField = NSTextField(string: "2")
     private let previewStack = NSStackView()
+    private let errorLabel = NSTextField(labelWithString: "")
+    private let renameButton = NSButton(title: "Rename", target: nil, action: nil)
 
     var previewRowsForTesting: [PreviewRow] {
         previewRows()
+    }
+    var validationErrorForTesting: String? {
+        errorLabel.isHidden ? nil : errorLabel.stringValue
     }
 
     init(items: [ImageItem]) {
@@ -94,13 +99,19 @@ final class BatchRenameSheetController: NSWindowController {
         buttonStack.alignment = .centerY
         buttonStack.spacing = 8
         let cancelButton = NSButton(title: "Cancel", target: self, action: #selector(cancel(_:)))
-        let renameButton = NSButton(title: "Rename", target: self, action: #selector(confirm(_:)))
+        renameButton.target = self
+        renameButton.action = #selector(confirm(_:))
         renameButton.keyEquivalent = "\r"
         buttonStack.addArrangedSubview(cancelButton)
         buttonStack.addArrangedSubview(renameButton)
 
+        errorLabel.textColor = .systemRed
+        errorLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        errorLabel.isHidden = true
+
         content.addArrangedSubview(title)
         content.addArrangedSubview(form)
+        content.addArrangedSubview(errorLabel)
         content.addArrangedSubview(previewTitle)
         content.addArrangedSubview(previewStack)
         content.addArrangedSubview(buttonStack)
@@ -119,6 +130,7 @@ final class BatchRenameSheetController: NSWindowController {
     }
 
     @objc private func inputChanged(_ sender: Any?) {
+        errorLabel.isHidden = true
         updatePreview()
     }
 
@@ -127,16 +139,42 @@ final class BatchRenameSheetController: NSWindowController {
     }
 
     @objc private func confirm(_ sender: Any?) {
-        onConfirm?(parameters())
+        switch validateParameters() {
+        case .valid(let parameters):
+            onConfirm?(parameters)
+        case .invalid(let message):
+            errorLabel.stringValue = message
+            errorLabel.isHidden = false
+            return
+        }
         closeSheet()
     }
 
     private func parameters() -> RenameParameters {
         RenameParameters(
             baseName: baseNameField.stringValue,
-            startNumber: max(0, startNumberField.integerValue),
-            padding: max(0, paddingField.integerValue)
+            startNumber: startNumberField.integerValue,
+            padding: paddingField.integerValue
         )
+    }
+
+    private func validateParameters() -> ValidationResult {
+        let parameters = parameters()
+        let trimmedBaseName = parameters.baseName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedBaseName.isEmpty else {
+            return .invalid("Base name is required.")
+        }
+        guard !trimmedBaseName.contains("/"), !trimmedBaseName.contains(":") else {
+            return .invalid("Base name cannot contain / or :.")
+        }
+        guard parameters.startNumber > 0, parameters.padding > 0 else {
+            return .invalid("Start number and padding must be positive.")
+        }
+        return .valid(RenameParameters(
+            baseName: trimmedBaseName,
+            startNumber: parameters.startNumber,
+            padding: parameters.padding
+        ))
     }
 
     private func previewRows() -> [PreviewRow] {
@@ -173,4 +211,9 @@ final class BatchRenameSheetController: NSWindowController {
             window.close()
         }
     }
+}
+
+private enum ValidationResult {
+    case valid(BatchRenameSheetController.RenameParameters)
+    case invalid(String)
 }

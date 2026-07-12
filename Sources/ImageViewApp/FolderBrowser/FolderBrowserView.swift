@@ -20,6 +20,7 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
     private let trashButton = NSButton(title: "Trash", target: nil, action: nil)
     private let moveButton = NSButton(title: "Move", target: nil, action: nil)
     private let renameButton = NSButton(title: "Rename", target: nil, action: nil)
+    private let operationStatusLabel = NSTextField(labelWithString: "")
     private let collectionView = ReturnOpeningCollectionView()
 
     var testingSearchPlaceholder: String? { searchField.placeholderString }
@@ -29,6 +30,12 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
     var testingHasMoveButton: Bool { moveButton.superview != nil }
     var testingHasRenameButton: Bool { renameButton.superview != nil }
     var testingHasCollectionView: Bool { collectionView.enclosingScrollView?.superview != nil }
+    var testingOperationStatusText: String? {
+        operationStatusLabel.isHidden ? nil : operationStatusLabel.stringValue
+    }
+    var testingBatchActionButtonsDisabled: Bool {
+        !trashButton.isEnabled && !moveButton.isEnabled && !renameButton.isEnabled
+    }
     var testingItemCount: Int { collectionView.numberOfItems(inSection: 0) }
     var testingSelectedIDs: Set<ImageItem.ID> {
         Set(collectionView.selectionIndexPaths.compactMap { item(at: $0)?.id })
@@ -53,6 +60,35 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
             selectedIDs.contains(item.id) ? IndexPath(item: index, section: 0) : nil
         })
         collectionView.selectionIndexPaths = indexPaths
+    }
+
+    func applyOperationStatus(message: String?, failures: [BatchFileFailure], isOperating: Bool) {
+        let failureText = failures.isEmpty ? nil : "\(failures.count) failure\(failures.count == 1 ? "" : "s")"
+        let statusText: String?
+        switch (isOperating, message, failureText) {
+        case (true, let message?, let failureText?):
+            statusText = "Working… \(message) · \(failureText)"
+        case (true, let message?, nil):
+            statusText = "Working… \(message)"
+        case (true, nil, let failureText?):
+            statusText = "Working… \(failureText)"
+        case (true, nil, nil):
+            statusText = "Working…"
+        case (false, let message?, let failureText?):
+            statusText = "\(message) · \(failureText)"
+        case (false, let message?, nil):
+            statusText = message
+        case (false, nil, let failureText?):
+            statusText = failureText
+        case (false, nil, nil):
+            statusText = nil
+        }
+
+        operationStatusLabel.stringValue = statusText ?? ""
+        operationStatusLabel.isHidden = statusText == nil
+        for button in [trashButton, moveButton, renameButton] {
+            button.isEnabled = !isOperating
+        }
     }
 
     func testingSelectItems(with ids: Set<ImageItem.ID>) {
@@ -165,6 +201,10 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
         moveButton.action = #selector(moveClicked(_:))
         renameButton.target = self
         renameButton.action = #selector(renameClicked(_:))
+        operationStatusLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        operationStatusLabel.textColor = .secondaryLabelColor
+        operationStatusLabel.lineBreakMode = .byTruncatingTail
+        operationStatusLabel.isHidden = true
 
         let toolbar = NSStackView(views: [
             searchField,
@@ -179,6 +219,7 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
         toolbar.alignment = .centerY
         toolbar.spacing = 8
         searchField.widthAnchor.constraint(greaterThanOrEqualToConstant: 180).isActive = true
+        operationStatusLabel.translatesAutoresizingMaskIntoConstraints = false
 
         let layout = NSCollectionViewFlowLayout()
         layout.itemSize = NSSize(width: 148, height: 168)
@@ -206,6 +247,7 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
         scrollView.documentView = collectionView
 
         addSubview(toolbar)
+        addSubview(operationStatusLabel)
         addSubview(scrollView)
 
         NSLayoutConstraint.activate([
@@ -213,7 +255,11 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
             toolbar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             toolbar.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
 
-            scrollView.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: 10),
+            operationStatusLabel.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: 6),
+            operationStatusLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            operationStatusLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
+
+            scrollView.topAnchor.constraint(equalTo: operationStatusLabel.bottomAnchor, constant: 8),
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor)
