@@ -128,6 +128,10 @@ final class FolderBrowserViewModel: ObservableObject {
         session?.selectedItemIDs = selectedItemIDs
     }
 
+    func recordOpenedItem(_ item: ImageItem) {
+        session?.recordOpenedItem(with: item.id)
+    }
+
     func setSortMode(_ sortMode: FolderSortMode) {
         session?.sortMode = sortMode
     }

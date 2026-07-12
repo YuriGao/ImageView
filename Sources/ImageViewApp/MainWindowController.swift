@@ -82,6 +82,11 @@ final class MainWindowController: NSWindowController {
         let next: Bool
     }
 
+    private enum ContentRoute: Equatable {
+        case viewer(URL)
+        case folder(URL)
+    }
+
     private let viewModel = ViewerViewModel()
     private let folderBrowserViewModel: FolderBrowserViewModel
     private let settings: AppSettings
@@ -119,6 +124,9 @@ final class MainWindowController: NSWindowController {
     private var isPointerOverPageControls = false
     private var isFolderBrowserMode = false
     private var currentFolderBrowserItems: [ImageItem] = []
+    private var currentRoute: ContentRoute?
+    private var backRoute: ContentRoute?
+    private var forwardRoute: ContentRoute?
     private var activeBatchRenameSheet: BatchRenameSheetController?
     var batchActionDialogProviderForTesting: BatchActionDialogProvider?
 
@@ -154,6 +162,13 @@ final class MainWindowController: NSWindowController {
 
     func open(url: URL) {
         hasAssignedOpenRequest = true
+        currentRoute = .viewer(url.standardizedFileURL)
+        backRoute = nil
+        forwardRoute = nil
+        openImageUsingExistingPipeline(url)
+    }
+
+    private func openImageUsingExistingPipeline(_ url: URL) {
         exitFolderBrowserMode()
         cancelCrop(nil)
         confirmUnsavedEditsIfNeeded(for: .opening) { [weak self] in
@@ -164,6 +179,9 @@ final class MainWindowController: NSWindowController {
 
     func openFolder(url: URL) {
         hasAssignedOpenRequest = true
+        currentRoute = .folder(url.standardizedFileURL)
+        backRoute = nil
+        forwardRoute = nil
         enterFolderBrowserMode()
         Task { [weak self] in
             guard let self else { return }
@@ -348,7 +366,7 @@ final class MainWindowController: NSWindowController {
             self?.selectImage(item)
         }
         folderBrowserView.onOpenItem = { [weak self] item in
-            self?.open(url: item.url)
+            self?.openFolderBrowserItem(item)
         }
         folderBrowserView.onSelectionChanged = { [weak self] selectedIDs in
             self?.folderBrowserViewModel.setSelection(Array(selectedIDs))
@@ -459,6 +477,9 @@ final class MainWindowController: NSWindowController {
                     self.canvas.resetViewTransform()
                 }
                 self.displayedItemURL = newURL?.standardizedFileURL
+                if case .viewer = self.currentRoute, let newURL {
+                    self.currentRoute = .viewer(newURL.standardizedFileURL)
+                }
                 self.filmstripView.apply(items: state?.items ?? [], current: state?.currentItem)
                 let availability = Self.pageControlAvailability(navigationState: state)
                 self.pageNavigationOverlayView.update(
@@ -653,11 +674,89 @@ final class MainWindowController: NSWindowController {
     }
 
     @objc func browseCurrentImageFolder(_ sender: Any?) {
-        guard let displayedItemURL else {
+        if case .folder = currentRoute {
+            guard let viewerRoute = associatedViewerRoute() else {
+                NSSound.beep()
+                return
+            }
+            showRoute(viewerRoute, recordHistory: false)
+            return
+        }
+
+        guard let viewerURL = currentViewerURL else {
             NSSound.beep()
             return
         }
-        openFolder(url: displayedItemURL.deletingLastPathComponent())
+        let folderURL = viewerURL.deletingLastPathComponent().standardizedFileURL
+        if folderBrowserViewModel.session?.folderURL.standardizedFileURL == folderURL {
+            showRoute(.folder(folderURL), recordHistory: false)
+            return
+        }
+
+        currentRoute = .folder(folderURL)
+        enterFolderBrowserMode()
+        Task { [weak self] in
+            guard let self else { return }
+            await self.folderBrowserViewModel.openFolder(folderURL)
+        }
+    }
+
+    private var currentViewerURL: URL? {
+        if case let .viewer(url) = currentRoute {
+            return url
+        }
+        return displayedItemURL
+    }
+
+    private func associatedViewerRoute() -> ContentRoute? {
+        if let lastOpenedItemID = folderBrowserViewModel.session?.lastOpenedItemID,
+           let item = folderBrowserViewModel.session?.items.first(where: { $0.id == lastOpenedItemID }) {
+            return .viewer(item.url.standardizedFileURL)
+        }
+        if let displayedItemURL {
+            return .viewer(displayedItemURL.standardizedFileURL)
+        }
+        if case let .viewer(url)? = backRoute ?? forwardRoute {
+            return .viewer(url)
+        }
+        return nil
+    }
+
+    private func openFolderBrowserItem(_ item: ImageItem) {
+        folderBrowserViewModel.recordOpenedItem(item)
+        showRoute(.viewer(item.url.standardizedFileURL), recordHistory: true)
+        hasAssignedOpenRequest = true
+        openImageUsingExistingPipeline(item.url)
+    }
+
+    private func showRoute(_ route: ContentRoute, recordHistory: Bool) {
+        if recordHistory, currentRoute != route {
+            backRoute = currentRoute
+            forwardRoute = nil
+        }
+        currentRoute = route
+        switch route {
+        case .viewer:
+            exitFolderBrowserMode()
+        case .folder:
+            enterFolderBrowserMode()
+        }
+    }
+
+    private func goBack() {
+        guard let target = backRoute, target != currentRoute else { return }
+        let previousRoute = currentRoute
+        backRoute = nil
+        forwardRoute = previousRoute
+        showRoute(target, recordHistory: false)
+    }
+
+    private func goForward() {
+        guard let target = forwardRoute, target != currentRoute else { return }
+        let previousRoute = currentRoute
+        forwardRoute = nil
+        backRoute = previousRoute
+        showRoute(target, recordHistory: false)
     }
 
     private func moveSelectedFolderBrowserItemsToTrash() {
@@ -1314,6 +1413,9 @@ final class MainWindowController: NSWindowController {
 
     func openFolderForTesting(_ folderURL: URL, items: [ImageItem]) {
         hasAssignedOpenRequest = true
+        currentRoute = .folder(folderURL.standardizedFileURL)
+        backRoute = nil
+        forwardRoute = nil
         enterFolderBrowserMode()
         currentFolderBrowserItems = items
         folderBrowserView.apply(items: items, selectedIDs: [])
@@ -1321,6 +1423,9 @@ final class MainWindowController: NSWindowController {
 
     func openFolderForTesting(_ folderURL: URL, scannerItems: [ImageItem]) async {
         hasAssignedOpenRequest = true
+        currentRoute = .folder(folderURL.standardizedFileURL)
+        backRoute = nil
+        forwardRoute = nil
         enterFolderBrowserMode()
         await folderBrowserViewModel.openFolder(folderURL)
     }
@@ -1344,6 +1449,29 @@ final class MainWindowController: NSWindowController {
     func openFirstFolderBrowserItemForTesting() {
         guard let firstItem = currentFolderBrowserItems.first else { return }
         folderBrowserView.onOpenItem?(firstItem)
+    }
+
+    func openFolderBrowserItemForTesting(at index: Int) {
+        guard currentFolderBrowserItems.indices.contains(index) else { return }
+        folderBrowserView.onOpenItem?(currentFolderBrowserItems[index])
+    }
+
+    var canGoBackForTesting: Bool { backRoute != nil && backRoute != currentRoute }
+    var canGoForwardForTesting: Bool { forwardRoute != nil && forwardRoute != currentRoute }
+    var lastOpenedFolderItemIDForTesting: ImageItem.ID? {
+        folderBrowserViewModel.session?.lastOpenedItemID
+    }
+
+    func performTitleBarGridToggleForTesting() {
+        browseCurrentImageFolder(nil)
+    }
+
+    func goBackForTesting() {
+        goBack()
+    }
+
+    func goForwardForTesting() {
+        goForward()
     }
 
     func performTitleBarBrowseCurrentFolderForTesting(items: [ImageItem]) {

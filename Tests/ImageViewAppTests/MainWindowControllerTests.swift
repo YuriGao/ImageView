@@ -907,6 +907,59 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertEqual(controller.window?.title, title)
     }
 
+    func testGridButtonTogglesBackToLiveViewerWithoutRescanning() async throws {
+        let fixture = try makeFolderNavigationFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.folder) }
+        await fixture.controller.openFolderForTesting(fixture.folder, scannerItems: [fixture.items[0]])
+        fixture.controller.openFirstFolderBrowserItemForTesting()
+
+        fixture.controller.performTitleBarGridToggleForTesting()
+        XCTAssertTrue(fixture.controller.isFolderBrowserVisibleForTesting)
+
+        fixture.controller.performTitleBarGridToggleForTesting()
+        XCTAssertTrue(fixture.controller.isCanvasVisibleForTesting)
+        XCTAssertEqual(fixture.scanCount.value, 1)
+    }
+
+    func testOpeningGridItemEnablesBackAndBackForwardReuseLiveViews() async throws {
+        let fixture = try makeFolderNavigationFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.folder) }
+        await fixture.controller.openFolderForTesting(fixture.folder, scannerItems: [fixture.items[0]])
+        fixture.controller.openFirstFolderBrowserItemForTesting()
+
+        XCTAssertTrue(fixture.controller.canGoBackForTesting)
+        fixture.controller.goBackForTesting()
+        XCTAssertTrue(fixture.controller.isFolderBrowserVisibleForTesting)
+        XCTAssertTrue(fixture.controller.canGoForwardForTesting)
+        fixture.controller.goForwardForTesting()
+        XCTAssertTrue(fixture.controller.isCanvasVisibleForTesting)
+        XCTAssertEqual(fixture.scanCount.value, 1)
+    }
+
+    func testDirectImageOpenDoesNotInventBackHistory() throws {
+        let fixture = try makeFolderNavigationFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.folder) }
+
+        fixture.controller.open(url: fixture.items[0].url)
+
+        XCTAssertFalse(fixture.controller.canGoBackForTesting)
+        XCTAssertFalse(fixture.controller.canGoForwardForTesting)
+    }
+
+    func testOpeningNewGridItemReplacesForwardRouteAndRecordsLastOpenedItem() async throws {
+        let fixture = try makeFolderNavigationFixture(itemNames: ["one.png", "two.png"])
+        defer { try? FileManager.default.removeItem(at: fixture.folder) }
+        await fixture.controller.openFolderForTesting(fixture.folder, scannerItems: fixture.items)
+        fixture.controller.openFirstFolderBrowserItemForTesting()
+        fixture.controller.goBackForTesting()
+        XCTAssertTrue(fixture.controller.canGoForwardForTesting)
+
+        fixture.controller.openFolderBrowserItemForTesting(at: 1)
+
+        XCTAssertFalse(fixture.controller.canGoForwardForTesting)
+        XCTAssertEqual(fixture.controller.lastOpenedFolderItemIDForTesting, fixture.items[1].id)
+    }
+
     func testTitleBarGridButtonTooltipIsLocalized() {
         XCTAssertEqual(
             MainWindowController.titleBarBrowseFolderToolTip(preferredLanguages: ["en"]),
@@ -932,6 +985,32 @@ final class MainWindowControllerTests: XCTestCase {
             bitsPerPixel: 0
         )
         try XCTUnwrap(representation?.representation(using: .png, properties: [:])).write(to: url)
+    }
+
+    private func makeFolderNavigationFixture(itemNames: [String] = ["one.png"]) throws -> (
+        folder: URL,
+        items: [ImageItem],
+        scanCount: MainWindowLockedValue<Int>,
+        controller: MainWindowController
+    ) {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let items = try itemNames.map { name -> ImageItem in
+            let imageURL = folder.appendingPathComponent(name)
+            try writeTestPNG(to: imageURL)
+            return ImageItem(url: imageURL, format: .png)
+        }
+        let scanCount = MainWindowLockedValue(0)
+        let viewModel = FolderBrowserViewModel(scanFolder: { _ in
+            scanCount.update { $0 += 1 }
+            return items
+        })
+        let controller = MainWindowController(
+            settings: AppSettings(defaults: makeIsolatedDefaults()),
+            folderBrowserViewModel: viewModel
+        )
+        return (folder, items, scanCount, controller)
     }
 
     private func makeIsolatedDefaults() -> UserDefaults {

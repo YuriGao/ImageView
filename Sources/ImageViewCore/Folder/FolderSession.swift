@@ -40,6 +40,11 @@ public struct FolderSession: Equatable, Sendable {
         return selectedItemIDs.compactMap { visibleByID[$0] }
     }
 
+    public mutating func recordOpenedItem(with id: ImageItem.ID) {
+        guard items.contains(where: { $0.id == id }) else { return }
+        lastOpenedItemID = id
+    }
+
     public mutating func removeItems(with ids: Set<ImageItem.ID>) {
         items.removeAll { ids.contains($0.id) }
         if let lastOpenedItemID, ids.contains(lastOpenedItemID) {
