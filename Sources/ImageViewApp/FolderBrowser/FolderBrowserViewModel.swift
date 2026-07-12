@@ -67,6 +67,7 @@ final class FolderBrowserViewModel: ObservableObject {
     private let planBatchRenameOperation: PlanBatchRename
     private let executeRenamePlanOperation: ExecuteRenamePlan
     nonisolated private let openFolderRequestTracker = OpenFolderRequestTracker()
+    var beforeOpenFolderCommitForTesting: (() -> Void)?
 
     init(
         scanFolder: @escaping ScanFolder = {
@@ -91,39 +92,57 @@ final class FolderBrowserViewModel: ObservableObject {
     }
 
     func openFolder(_ folderURL: URL) async {
-        requestedFolderURL = folderURL
         let requestID = openFolderRequestTracker.next()
-        isLoading = true
-        loadErrorMessage = nil
-        operationMessage = nil
-        operationFailures = []
+        await withTaskCancellationHandler {
+            guard !Task.isCancelled else {
+                openFolderRequestTracker.invalidate(requestID)
+                return
+            }
+            guard openFolderRequestTracker.withCurrent(requestID, perform: {
+                requestedFolderURL = folderURL
+                isLoading = true
+                loadErrorMessage = nil
+                operationMessage = nil
+                operationFailures = []
+            }) else {
+                return
+            }
 
-        do {
-            let items = try await scanFolder(folderURL)
-            guard openFolderRequestTracker.isCurrent(requestID) else {
-                return
+            do {
+                let items = try await scanFolder(folderURL)
+                guard !Task.isCancelled else {
+                    openFolderRequestTracker.invalidate(requestID)
+                    return
+                }
+                beforeOpenFolderCommitForTesting?()
+                _ = openFolderRequestTracker.withCurrent(requestID, perform: {
+                    session = FolderSession(folderURL: folderURL, items: items)
+                    loadErrorMessage = nil
+                    isLoading = false
+                })
+            } catch is CancellationError {
+                _ = openFolderRequestTracker.withCurrent(requestID, perform: {
+                    isLoading = false
+                    loadErrorMessage = nil
+                })
+            } catch {
+                guard !Task.isCancelled else {
+                    openFolderRequestTracker.invalidate(requestID)
+                    return
+                }
+                beforeOpenFolderCommitForTesting?()
+                _ = openFolderRequestTracker.withCurrent(requestID, perform: {
+                    session = FolderSession(folderURL: folderURL, items: [])
+                    loadErrorMessage = String(
+                        format: AppStrings.text("folderBrowser.error.openFolder"),
+                        error.localizedDescription
+                    )
+                    isLoading = false
+                })
             }
-            session = FolderSession(folderURL: folderURL, items: items)
-            loadErrorMessage = nil
-        } catch is CancellationError {
-            guard openFolderRequestTracker.isCurrent(requestID) else {
-                return
-            }
-            isLoading = false
-            loadErrorMessage = nil
-            return
-        } catch {
-            guard openFolderRequestTracker.isCurrent(requestID) else {
-                return
-            }
-            session = FolderSession(folderURL: folderURL, items: [])
-            loadErrorMessage = String(
-                format: AppStrings.text("folderBrowser.error.openFolder"),
-                error.localizedDescription
-            )
+        } onCancel: {
+            openFolderRequestTracker.invalidate(requestID)
         }
-
-        isLoading = false
     }
 
     nonisolated func invalidateOpenFolderRequest() {
@@ -312,7 +331,7 @@ final class FolderBrowserViewModel: ObservableObject {
 }
 
 private final class OpenFolderRequestTracker: @unchecked Sendable {
-    private let lock = NSLock()
+    private let lock = NSRecursiveLock()
     private var generation: UInt64 = 0
 
     func next() -> UInt64 {
@@ -328,10 +347,20 @@ private final class OpenFolderRequestTracker: @unchecked Sendable {
         lock.unlock()
     }
 
-    func isCurrent(_ requestID: UInt64) -> Bool {
+    func invalidate(_ requestID: UInt64) {
+        lock.lock()
+        if generation == requestID {
+            generation &+= 1
+        }
+        lock.unlock()
+    }
+
+    func withCurrent(_ requestID: UInt64, perform commit: () -> Void) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        return generation == requestID
+        guard generation == requestID else { return false }
+        commit()
+        return true
     }
 }
 

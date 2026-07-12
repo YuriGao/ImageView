@@ -171,6 +171,71 @@ final class FolderBrowserViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.loadErrorMessage)
     }
 
+    func testInvalidationBeforeCancelledTaskRegistersPreventsScanAndCommit() async {
+        let folder = URL(fileURLWithPath: "/tmp/cancel-before-register", isDirectory: true)
+        let scans = LockedValue(0)
+        let gate = OpenFolderRegistrationGate()
+        let viewModel = FolderBrowserViewModel(scanFolder: { _ in
+            _ = scans.increment()
+            return [ImageItem(url: folder.appendingPathComponent("late.png"), format: .png)]
+        })
+        let task = Task {
+            await gate.wait()
+            await viewModel.openFolder(folder)
+        }
+
+        task.cancel()
+        viewModel.invalidateOpenFolderRequest()
+        await gate.release()
+        await task.value
+
+        XCTAssertEqual(scans.value, 0)
+        XCTAssertNil(viewModel.session)
+        XCTAssertFalse(viewModel.isLoading)
+        XCTAssertNil(viewModel.loadErrorMessage)
+    }
+
+    func testInvalidationBetweenCurrentCheckAndCommitRejectsStaleSession() async {
+        let baselineFolder = URL(fileURLWithPath: "/tmp/linearized-baseline", isDirectory: true)
+        let staleFolder = URL(fileURLWithPath: "/tmp/linearized-stale", isDirectory: true)
+        let baselineItem = ImageItem(url: baselineFolder.appendingPathComponent("baseline.png"), format: .png)
+        let staleItem = ImageItem(url: staleFolder.appendingPathComponent("stale.png"), format: .png)
+        let viewModel = FolderBrowserViewModel(scanFolder: { folder in
+            folder == baselineFolder ? [baselineItem] : [staleItem]
+        })
+        await viewModel.openFolder(baselineFolder)
+        viewModel.beforeOpenFolderCommitForTesting = {
+            viewModel.invalidateOpenFolderRequest()
+        }
+
+        await viewModel.openFolder(staleFolder)
+
+        XCTAssertEqual(viewModel.session?.folderURL, baselineFolder)
+        XCTAssertEqual(viewModel.visibleItems, [baselineItem])
+        XCTAssertEqual(viewModel.presentation, .loading)
+    }
+
+    func testInvalidationBetweenCurrentCheckAndFailureCommitRejectsLoadError() async {
+        let baselineFolder = URL(fileURLWithPath: "/tmp/linearized-error-baseline", isDirectory: true)
+        let staleFolder = URL(fileURLWithPath: "/tmp/linearized-error-stale", isDirectory: true)
+        let baselineItem = ImageItem(url: baselineFolder.appendingPathComponent("baseline.png"), format: .png)
+        let viewModel = FolderBrowserViewModel(scanFolder: { folder in
+            if folder == staleFolder { throw TestFolderError.denied }
+            return [baselineItem]
+        })
+        await viewModel.openFolder(baselineFolder)
+        viewModel.beforeOpenFolderCommitForTesting = {
+            viewModel.invalidateOpenFolderRequest()
+        }
+
+        await viewModel.openFolder(staleFolder)
+
+        XCTAssertEqual(viewModel.session?.folderURL, baselineFolder)
+        XCTAssertEqual(viewModel.visibleItems, [baselineItem])
+        XCTAssertNil(viewModel.loadErrorMessage)
+        XCTAssertEqual(viewModel.presentation, .loading)
+    }
+
     func testOpenFolderLoadsSessionWithNoSelection() async {
         let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
         let items = [
@@ -529,5 +594,21 @@ private actor CancelledOpenFolderScanner {
     func finish(with result: Result<[ImageItem], Error>) {
         pendingContinuation?.resume(with: result)
         pendingContinuation = nil
+    }
+}
+
+private actor OpenFolderRegistrationGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var isReleased = false
+
+    func wait() async {
+        guard !isReleased else { return }
+        await withCheckedContinuation { continuation = $0 }
+    }
+
+    func release() {
+        isReleased = true
+        continuation?.resume()
+        continuation = nil
     }
 }
