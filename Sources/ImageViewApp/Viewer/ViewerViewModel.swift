@@ -153,6 +153,20 @@ final class ViewerViewModel: ObservableObject {
         }
     }
 
+    func resetToEmptyState() {
+        _ = beginDisplayRequest()
+        pendingOperations.removeAll()
+        navigationState = nil
+        currentImage = nil
+        currentMetadata = nil
+        persistedCurrentImage = nil
+        displayedFileVersion = nil
+        hasUnsavedEdits = false
+        errorMessage = nil
+        loadPhase = .empty
+        updateDisplayTitle()
+    }
+
     func open(url: URL) async {
         let generation = beginDisplayRequest()
         pendingOperations.removeAll()

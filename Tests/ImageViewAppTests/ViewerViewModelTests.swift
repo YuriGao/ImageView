@@ -66,6 +66,20 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.navigationState)
     }
 
+    func testResetToEmptyStateClearsFailedOpen() async {
+        let viewModel = ViewerViewModel()
+        await viewModel.open(url: URL(fileURLWithPath: "/tmp/not-an-image.txt"))
+
+        viewModel.resetToEmptyState()
+
+        XCTAssertEqual(viewModel.loadPhase, .empty)
+        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.navigationState)
+        XCTAssertNil(viewModel.currentImage)
+        XCTAssertNil(viewModel.currentMetadata)
+        XCTAssertEqual(viewModel.displayTitle, "ImageView")
+    }
+
     func testOpenReportsOnlySuccessfullyDecodedURL() async throws {
         let goodURL = URL(fileURLWithPath: "/tmp/good.png")
         let badURL = URL(fileURLWithPath: "/tmp/bad.png")
