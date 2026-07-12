@@ -1,0 +1,80 @@
+import AppKit
+import ImageViewCore
+
+final class FolderBrowserCellView: NSCollectionViewItem {
+    static let reuseIdentifier = NSUserInterfaceItemIdentifier("FolderBrowserCellView")
+
+    private let thumbnailView = NSImageView()
+    private let filenameField = NSTextField(labelWithString: "")
+    private var thumbnailRequest: ThumbnailRequest?
+
+    var testingFilename: String {
+        filenameField.stringValue
+    }
+
+    var testingImage: NSImage? {
+        thumbnailView.image
+    }
+
+    override func loadView() {
+        view = NSView()
+        view.translatesAutoresizingMaskIntoConstraints = false
+
+        thumbnailView.translatesAutoresizingMaskIntoConstraints = false
+        thumbnailView.imageScaling = .scaleProportionallyUpOrDown
+        thumbnailView.wantsLayer = true
+        thumbnailView.layer?.cornerRadius = 8
+        thumbnailView.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+
+        filenameField.translatesAutoresizingMaskIntoConstraints = false
+        filenameField.alignment = .center
+        filenameField.lineBreakMode = .byTruncatingMiddle
+        filenameField.maximumNumberOfLines = 2
+        filenameField.font = .systemFont(ofSize: 12)
+
+        view.addSubview(thumbnailView)
+        view.addSubview(filenameField)
+
+        NSLayoutConstraint.activate([
+            thumbnailView.topAnchor.constraint(equalTo: view.topAnchor, constant: 8),
+            thumbnailView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 8),
+            thumbnailView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -8),
+            thumbnailView.heightAnchor.constraint(equalToConstant: 118),
+
+            filenameField.topAnchor.constraint(equalTo: thumbnailView.bottomAnchor, constant: 6),
+            filenameField.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 6),
+            filenameField.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -6),
+            filenameField.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor, constant: -6)
+        ])
+    }
+
+    func configure(with item: ImageItem, thumbnailProvider: ThumbnailProvider) {
+        thumbnailRequest?.cancel()
+        representedObject = item
+        filenameField.stringValue = item.url.deletingPathExtension().lastPathComponent
+        thumbnailView.image = nil
+
+        thumbnailRequest = thumbnailProvider.loadThumbnail(for: item) { [weak self, itemID = item.id] result in
+            DispatchQueue.main.async { [weak self] in
+                guard let self,
+                      let currentItem = self.representedObject as? ImageItem,
+                      currentItem.id == itemID else {
+                    return
+                }
+
+                if case let .success(image) = result {
+                    self.thumbnailView.image = image
+                }
+            }
+        }
+    }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        thumbnailRequest?.cancel()
+        thumbnailRequest = nil
+        representedObject = nil
+        filenameField.stringValue = ""
+        thumbnailView.image = nil
+    }
+}
