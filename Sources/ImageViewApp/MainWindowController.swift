@@ -392,11 +392,12 @@ final class MainWindowController: NSWindowController {
         folderBrowserViewModel.$session
             .sink { [weak self] session in
                 guard let self else { return }
-                self.currentFolderBrowserItems = session?.visibleItems ?? []
-                self.folderBrowserView.apply(
-                    items: self.currentFolderBrowserItems,
-                    selectedIDs: Set(session?.selectedItemIDs ?? [])
-                )
+                let items = session?.visibleItems ?? []
+                if self.currentFolderBrowserItems != items {
+                    self.currentFolderBrowserItems = items
+                    self.folderBrowserView.applyItems(items)
+                }
+                self.folderBrowserView.applySelection(Set(session?.selectedItemIDs ?? []))
             }
             .store(in: &cancellables)
 

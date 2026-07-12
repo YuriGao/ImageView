@@ -16,6 +16,14 @@ final class FolderBrowserCellView: NSCollectionViewItem {
         thumbnailView.image
     }
 
+    var testingShowsSelection: Bool {
+        view.layer?.borderWidth == 1
+    }
+
+    override var isSelected: Bool {
+        didSet { updateSelectionAppearance() }
+    }
+
     override func loadView() {
         view = NSView()
         view.translatesAutoresizingMaskIntoConstraints = false
@@ -46,6 +54,8 @@ final class FolderBrowserCellView: NSCollectionViewItem {
             filenameField.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -6),
             filenameField.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor, constant: -6)
         ])
+
+        updateSelectionAppearance()
     }
 
     func configure(with item: ImageItem, thumbnailProvider: ThumbnailProvider) {
@@ -76,5 +86,16 @@ final class FolderBrowserCellView: NSCollectionViewItem {
         representedObject = nil
         filenameField.stringValue = ""
         thumbnailView.image = nil
+    }
+
+    private func updateSelectionAppearance() {
+        view.wantsLayer = true
+        view.layer?.cornerRadius = 10
+        view.layer?.backgroundColor = isSelected
+            ? NSColor.selectedContentBackgroundColor.withAlphaComponent(0.16).cgColor
+            : NSColor.clear.cgColor
+        view.layer?.borderWidth = isSelected ? 1 : 0
+        view.layer?.borderColor = NSColor.keyboardFocusIndicatorColor.withAlphaComponent(0.65).cgColor
+        filenameField.font = .systemFont(ofSize: 12, weight: isSelected ? .semibold : .regular)
     }
 }

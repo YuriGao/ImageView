@@ -31,6 +31,24 @@ final class FolderBrowserViewTests: XCTestCase {
         XCTAssertEqual(view.testingSelectedIDs, [second.id])
     }
 
+    func testSelectionOnlyUpdateDoesNotRestartThumbnailRequests() {
+        let item = ImageItem(url: URL(fileURLWithPath: "/tmp/one.png"), format: .png)
+        let loadCount = FolderBrowserLockedValue(0)
+        let provider = ThumbnailProvider(loader: { _, _, completion in
+            loadCount.withValue { $0 += 1 }
+            completion(.success(NSImage(size: NSSize(width: 8, height: 8))))
+            return {}
+        })
+        let view = FolderBrowserView(thumbnailProvider: provider)
+        view.applyItems([item])
+        _ = view.testingCell(at: 0)
+
+        view.applySelection([item.id])
+
+        XCTAssertEqual(loadCount.value, 1)
+        XCTAssertEqual(view.testingSelectedIDs, [item.id])
+    }
+
     func testSelectingItemInvokesSelectionCallback() {
         let first = ImageItem(url: URL(fileURLWithPath: "/tmp/first.png"), format: .png)
         let second = ImageItem(url: URL(fileURLWithPath: "/tmp/second.jpg"), format: .jpeg)
@@ -115,6 +133,23 @@ final class FolderBrowserViewTests: XCTestCase {
             "blocked.png: \(AppStrings.text("folderBrowser.failure.destinationExists"))"
         )
         XCTAssertTrue(view.testingBatchActionButtonsDisabled)
+    }
+}
+
+private final class FolderBrowserLockedValue<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValue: Value
+
+    init(_ value: Value) {
+        storedValue = value
+    }
+
+    var value: Value {
+        lock.withLock { storedValue }
+    }
+
+    func withValue(_ body: (inout Value) -> Void) {
+        lock.withLock { body(&storedValue) }
     }
 }
 

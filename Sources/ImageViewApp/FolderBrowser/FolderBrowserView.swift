@@ -44,6 +44,18 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
         Set(collectionView.selectionIndexPaths.compactMap { item(at: $0)?.id })
     }
 
+    func testingCell(at index: Int) -> FolderBrowserCellView? {
+        guard index >= 0, index < items.count else { return nil }
+        let indexPath = IndexPath(item: index, section: 0)
+        if let cell = collectionView.item(at: indexPath) as? FolderBrowserCellView {
+            return cell
+        }
+        return collectionView(
+            collectionView,
+            itemForRepresentedObjectAt: indexPath
+        ) as? FolderBrowserCellView
+    }
+
     init(thumbnailProvider: ThumbnailProvider = ThumbnailProvider()) {
         self.thumbnailProvider = thumbnailProvider
         super.init(frame: .zero)
@@ -56,12 +68,21 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
     }
 
     func apply(items: [ImageItem], selectedIDs: Set<ImageItem.ID>) {
-        self.items = items
-        collectionView.reloadData()
+        applyItems(items)
+        applySelection(selectedIDs)
+    }
 
+    func applyItems(_ newItems: [ImageItem]) {
+        guard items != newItems else { return }
+        items = newItems
+        collectionView.reloadData()
+    }
+
+    func applySelection(_ selectedIDs: Set<ImageItem.ID>) {
         let indexPaths = Set(items.enumerated().compactMap { index, item in
             selectedIDs.contains(item.id) ? IndexPath(item: index, section: 0) : nil
         })
+        guard collectionView.selectionIndexPaths != indexPaths else { return }
         collectionView.selectionIndexPaths = indexPaths
     }
 
