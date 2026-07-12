@@ -48,6 +48,7 @@ final class ErrorStateView: NSView {
 
     var messageForTesting: String { messageLabel.stringValue }
     var buttonTitleForTesting: String { retryButton.title }
+    var retryButtonForTesting: NSButton { retryButton }
 
     func performRetryForTesting() {
         requestRetry(nil)

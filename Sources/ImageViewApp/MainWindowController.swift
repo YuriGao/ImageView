@@ -69,9 +69,9 @@ final class MainWindowController: NSWindowController {
     private let titleLabel = NSTextField(labelWithString: "ImageView")
     private let canvas = ImageCanvasView()
     private let emptyStateView = EmptyStateView()
+    private let errorStateView = ErrorStateView()
     private let cropOverlay = CropOverlayView()
     private let cropControlsView = NSHostingView(rootView: CropControlsView(onCancel: {}, onApply: {}))
-    private let errorOverlay = ErrorOverlayView()
     private let inspectorView = NSHostingView(rootView: InspectorView(metadata: nil))
     private let bottomBarView = NSVisualEffectView()
     private let bottomBarDivider = NSBox()
@@ -138,6 +138,9 @@ final class MainWindowController: NSWindowController {
         emptyStateView.onOpenRequested = { [weak self] in
             self?.onOpenRequested?()
         }
+        errorStateView.onRetryRequested = { [weak self] in
+            self?.onOpenRequested?()
+        }
         rootView.onPointerMoved = { [weak self] in
             self?.revealFilmstripOverlay()
             self?.revealPageControls()
@@ -170,13 +173,13 @@ final class MainWindowController: NSWindowController {
         window?.contentView = rootView
         rootView.addSubview(canvas)
         rootView.addSubview(emptyStateView)
+        rootView.addSubview(errorStateView)
         rootView.addSubview(titleBarView)
         rootView.addSubview(titleBarDivider)
         rootView.addSubview(bottomBarView)
         rootView.addSubview(bottomBarDivider)
         rootView.addSubview(filmstripOverlayView)
         rootView.addSubview(pageNavigationOverlayView)
-        canvas.addSubview(errorOverlay)
         rootView.addSubview(inspectorView)
         bottomBarView.addSubview(bottomDimensionLabel)
         bottomBarView.addSubview(bottomPageLabel)
@@ -186,7 +189,7 @@ final class MainWindowController: NSWindowController {
         rootView.addSubview(cropOverlay)
         rootView.addSubview(cropControlsView)
         emptyStateView.translatesAutoresizingMaskIntoConstraints = false
-        errorOverlay.translatesAutoresizingMaskIntoConstraints = false
+        errorStateView.translatesAutoresizingMaskIntoConstraints = false
         inspectorView.translatesAutoresizingMaskIntoConstraints = false
         titleBarDivider.translatesAutoresizingMaskIntoConstraints = false
         bottomBarDivider.translatesAutoresizingMaskIntoConstraints = false
@@ -230,8 +233,10 @@ final class MainWindowController: NSWindowController {
             emptyStateView.centerYAnchor.constraint(equalTo: canvas.centerYAnchor),
             emptyStateView.leadingAnchor.constraint(greaterThanOrEqualTo: canvas.leadingAnchor, constant: 24),
             emptyStateView.trailingAnchor.constraint(lessThanOrEqualTo: canvas.trailingAnchor, constant: -24),
-            errorOverlay.centerXAnchor.constraint(equalTo: canvas.centerXAnchor),
-            errorOverlay.centerYAnchor.constraint(equalTo: canvas.centerYAnchor),
+            errorStateView.centerXAnchor.constraint(equalTo: canvas.centerXAnchor),
+            errorStateView.centerYAnchor.constraint(equalTo: canvas.centerYAnchor),
+            errorStateView.leadingAnchor.constraint(greaterThanOrEqualTo: canvas.leadingAnchor, constant: 24),
+            errorStateView.trailingAnchor.constraint(lessThanOrEqualTo: canvas.trailingAnchor, constant: -24),
             inspectorView.trailingAnchor.constraint(equalTo: rootView.trailingAnchor, constant: -16),
             inspectorView.topAnchor.constraint(equalTo: canvas.topAnchor, constant: 16),
             inspectorView.bottomAnchor.constraint(lessThanOrEqualTo: canvas.bottomAnchor, constant: -16),
@@ -310,7 +315,7 @@ final class MainWindowController: NSWindowController {
 
         viewModel.$errorMessage
             .sink { [weak self] message in
-                self?.errorOverlay.stringValue = message ?? ""
+                self?.errorStateView.message = message ?? ""
                 self?.updateEmptyStatePresentation()
             }
             .store(in: &cancellables)
@@ -952,10 +957,15 @@ final class MainWindowController: NSWindowController {
 
     private func updateEmptyStatePresentation() {
         let hasCurrentImage = viewModel.currentImage != nil
+        let hasError = viewModel.errorMessage != nil
         emptyStateView.isHidden = !Self.shouldDisplayEmptyState(
             hasCurrentImage: hasCurrentImage,
             loadPhase: viewModel.loadPhase,
-            hasError: viewModel.errorMessage != nil
+            hasError: hasError
+        )
+        errorStateView.isHidden = !Self.shouldDisplayErrorState(
+            hasCurrentImage: hasCurrentImage,
+            hasError: hasError
         )
 
         let shouldHideStatusContent = Self.shouldHideImageStatusContent(
@@ -982,11 +992,20 @@ final class MainWindowController: NSWindowController {
         !hasCurrentImage
     }
 
+    static func shouldDisplayErrorState(hasCurrentImage: Bool, hasError: Bool) -> Bool {
+        !hasCurrentImage && hasError
+    }
+
     static func shouldDisplayInspector(isEnabled: Bool, hasCurrentImage: Bool) -> Bool {
         isEnabled && hasCurrentImage
     }
 
     var isEmptyStateVisibleForTesting: Bool { !emptyStateView.isHidden }
+    var isErrorStateVisibleForTesting: Bool { !errorStateView.isHidden }
+    var isShowingRecoverableErrorForTesting: Bool {
+        viewModel.currentImage == nil && viewModel.errorMessage != nil
+    }
+    var errorRetryButtonForTesting: NSButton? { errorStateView.retryButtonForTesting }
 
     var isImageStatusContentHiddenForTesting: Bool {
         [bottomDimensionLabel, bottomPageLabel, bottomZoomLabel, bottomInfoButton]
@@ -997,6 +1016,17 @@ final class MainWindowController: NSWindowController {
 
     func requestOpenFromEmptyStateForTesting() {
         emptyStateView.performOpenForTesting()
+    }
+
+    func requestOpenFromErrorStateForTesting() {
+        errorStateView.performRetryForTesting()
+    }
+
+    func returnToEmptyStateAfterCancelledOpen() {
+        guard viewModel.currentImage == nil, viewModel.errorMessage != nil else { return }
+        viewModel.resetToEmptyState()
+        hasAssignedOpenRequest = false
+        updateEmptyStatePresentation()
     }
 
     static func shouldDisplayFilmstripOverlay(

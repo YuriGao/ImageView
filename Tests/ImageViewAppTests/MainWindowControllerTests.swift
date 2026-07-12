@@ -364,6 +364,56 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertEqual(requestCount, 1)
     }
 
+    func testErrorStateOnlyAppearsForAnErrorWithoutAnImage() {
+        XCTAssertTrue(MainWindowController.shouldDisplayErrorState(
+            hasCurrentImage: false,
+            hasError: true
+        ))
+        XCTAssertFalse(MainWindowController.shouldDisplayErrorState(
+            hasCurrentImage: true,
+            hasError: true
+        ))
+        XCTAssertFalse(MainWindowController.shouldDisplayErrorState(
+            hasCurrentImage: false,
+            hasError: false
+        ))
+    }
+
+    func testErrorStateOpenRequestIsForwarded() {
+        let controller = MainWindowController(settings: AppSettings(defaults: makeIsolatedDefaults()))
+        var requestCount = 0
+        controller.onOpenRequested = { requestCount += 1 }
+
+        controller.requestOpenFromErrorStateForTesting()
+
+        XCTAssertEqual(requestCount, 1)
+    }
+
+    func testCancelledRetryResetsFailedWindowForReuse() async {
+        let controller = MainWindowController(settings: AppSettings(defaults: makeIsolatedDefaults()))
+        controller.open(url: URL(fileURLWithPath: "/tmp/not-an-image.txt"))
+        for _ in 0..<100 where !controller.isShowingRecoverableErrorForTesting {
+            await Task.yield()
+        }
+        XCTAssertTrue(controller.isShowingRecoverableErrorForTesting)
+
+        controller.returnToEmptyStateAfterCancelledOpen()
+
+        XCTAssertTrue(controller.isEmptyStateVisibleForTesting)
+        XCTAssertFalse(controller.isErrorStateVisibleForTesting)
+        XCTAssertFalse(controller.hasAssignedOpenRequest)
+    }
+
+    func testErrorStateButtonHasNoGestureRecognizerInAncestorChain() throws {
+        let controller = MainWindowController(settings: AppSettings(defaults: makeIsolatedDefaults()))
+        let button = try XCTUnwrap(controller.errorRetryButtonForTesting)
+        var ancestor = button.superview
+        while let view = ancestor {
+            XCTAssertTrue(view.gestureRecognizers.isEmpty)
+            ancestor = view.superview
+        }
+    }
+
     func testEmptyStateOpenButtonHasNoGestureRecognizerInAncestorChain() throws {
         let controller = MainWindowController(settings: AppSettings(defaults: makeIsolatedDefaults()))
         let contentView = try XCTUnwrap(controller.window?.contentView)

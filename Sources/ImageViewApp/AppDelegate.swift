@@ -97,8 +97,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.noteRecentDocument(url)
             self?.rebuildOpenRecentMenu()
         }
-        controller.onOpenRequested = { [weak self] in
-            self?.requestOpenImages()
+        controller.onOpenRequested = { [weak self, weak controller] in
+            self?.requestOpenImages(requesting: controller)
         }
         controller.onWindowDidBecomeKey = { [weak self] controller in
             self?.imageWindowDidBecomeKey(controller)
@@ -311,11 +311,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openImage(_ sender: Any?) {
-        requestOpenImages()
+        requestOpenImages(requesting: menuTargetImageController)
     }
 
-    private func requestOpenImages() {
-        guard let urls = chooseImageURLs(), !urls.isEmpty else { return }
+    private func requestOpenImages(requesting controller: MainWindowController? = nil) {
+        guard let urls = chooseImageURLs() else {
+            controller?.returnToEmptyStateAfterCancelledOpen()
+            return
+        }
+        guard !urls.isEmpty else { return }
         openURLs(urls)
     }
 

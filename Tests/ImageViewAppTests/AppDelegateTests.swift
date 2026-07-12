@@ -100,6 +100,24 @@ final class AppDelegateTests: XCTestCase {
         XCTAssertEqual(delegate.imageWindowCount, 1)
     }
 
+    func testCancelledChooserReturnsFailedRequestingWindowToEmptyState() async {
+        let harness = WindowHarness(chosenURLs: nil)
+        let delegate = harness.makeDelegate()
+        delegate.finishLaunchingForTesting()
+        let controller = delegate.imageWindowControllersForTesting[0]
+        controller.open(url: URL(fileURLWithPath: "/tmp/not-an-image.txt"))
+        for _ in 0..<100 where !controller.isShowingRecoverableErrorForTesting {
+            await Task.yield()
+        }
+        XCTAssertTrue(controller.isShowingRecoverableErrorForTesting)
+
+        controller.onOpenRequested?()
+
+        XCTAssertTrue(controller.isEmptyStateVisibleForTesting)
+        XCTAssertFalse(controller.hasAssignedOpenRequest)
+        XCTAssertEqual(delegate.imageWindowCount, 1)
+    }
+
     func testFirstURLReusesEmptyWindowAndLaterURLsCreateWindows() {
         let harness = WindowHarness()
         let delegate = harness.makeDelegate()
