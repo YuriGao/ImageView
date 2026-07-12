@@ -951,10 +951,10 @@ final class MainWindowController: NSWindowController {
         guard settings.confirmsDelete else { return true }
 
         let alert = NSAlert()
-        alert.messageText = "Move \(count) item\(count == 1 ? "" : "s") to Trash?"
-        alert.informativeText = "This will move the selected folder items to the Trash."
-        alert.addButton(withTitle: "Move to Trash")
-        alert.addButton(withTitle: "Cancel")
+        alert.messageText = String(format: AppStrings.text("folderBrowser.confirmTrash.title"), count)
+        alert.informativeText = AppStrings.text("folderBrowser.confirmTrash.message")
+        alert.addButton(withTitle: AppStrings.text("folderBrowser.confirmTrash.button"))
+        alert.addButton(withTitle: AppStrings.text("folderBrowser.confirmTrash.cancel"))
         return alert.runModal() == .alertFirstButtonReturn
     }
 
@@ -964,7 +964,7 @@ final class MainWindowController: NSWindowController {
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = true
-        panel.prompt = "Move"
+        panel.prompt = AppStrings.text("folderBrowser.movePanel.prompt")
         return panel.runModal() == .OK ? panel.url : nil
     }
 

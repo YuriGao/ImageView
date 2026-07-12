@@ -22,7 +22,7 @@ final class BatchRenameSheetController: NSWindowController {
     private let paddingField = NSTextField(string: "2")
     private let previewStack = NSStackView()
     private let errorLabel = NSTextField(labelWithString: "")
-    private let renameButton = NSButton(title: "Rename", target: nil, action: nil)
+    private let renameButton = NSButton(title: AppStrings.text("batchRename.button.rename"), target: nil, action: nil)
 
     var previewRowsForTesting: [PreviewRow] {
         previewRows()
@@ -39,7 +39,7 @@ final class BatchRenameSheetController: NSWindowController {
             backing: .buffered,
             defer: false
         )
-        window.title = "Batch Rename"
+        window.title = AppStrings.text("batchRename.title")
         super.init(window: window)
         buildView()
         updatePreview()
@@ -70,13 +70,13 @@ final class BatchRenameSheetController: NSWindowController {
         content.spacing = 12
         content.translatesAutoresizingMaskIntoConstraints = false
 
-        let title = NSTextField(labelWithString: "Batch Rename")
+        let title = NSTextField(labelWithString: AppStrings.text("batchRename.title"))
         title.font = .systemFont(ofSize: 18, weight: .semibold)
 
         let form = NSGridView(views: [
-            [NSTextField(labelWithString: "Base name"), baseNameField],
-            [NSTextField(labelWithString: "Start number"), startNumberField],
-            [NSTextField(labelWithString: "Padding"), paddingField]
+            [NSTextField(labelWithString: AppStrings.text("batchRename.field.baseName")), baseNameField],
+            [NSTextField(labelWithString: AppStrings.text("batchRename.field.startNumber")), startNumberField],
+            [NSTextField(labelWithString: AppStrings.text("batchRename.field.padding")), paddingField]
         ])
         form.rowSpacing = 8
         form.columnSpacing = 12
@@ -86,7 +86,7 @@ final class BatchRenameSheetController: NSWindowController {
             field.action = #selector(inputChanged(_:))
         }
 
-        let previewTitle = NSTextField(labelWithString: "Preview")
+        let previewTitle = NSTextField(labelWithString: AppStrings.text("batchRename.preview"))
         previewTitle.font = .systemFont(ofSize: 13, weight: .semibold)
 
         previewStack.orientation = .vertical
@@ -98,7 +98,7 @@ final class BatchRenameSheetController: NSWindowController {
         buttonStack.orientation = .horizontal
         buttonStack.alignment = .centerY
         buttonStack.spacing = 8
-        let cancelButton = NSButton(title: "Cancel", target: self, action: #selector(cancel(_:)))
+        let cancelButton = NSButton(title: AppStrings.text("batchRename.button.cancel"), target: self, action: #selector(cancel(_:)))
         renameButton.target = self
         renameButton.action = #selector(confirm(_:))
         renameButton.keyEquivalent = "\r"
@@ -162,13 +162,13 @@ final class BatchRenameSheetController: NSWindowController {
         let parameters = parameters()
         let trimmedBaseName = parameters.baseName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedBaseName.isEmpty else {
-            return .invalid("Base name is required.")
+            return .invalid(AppStrings.text("batchRename.validation.baseNameRequired"))
         }
         guard !trimmedBaseName.contains("/"), !trimmedBaseName.contains(":") else {
-            return .invalid("Base name cannot contain / or :.")
+            return .invalid(AppStrings.text("batchRename.validation.baseNameInvalid"))
         }
         guard parameters.startNumber > 0, parameters.padding >= 0 else {
-            return .invalid("Start number must be positive and padding cannot be negative.")
+            return .invalid(AppStrings.text("batchRename.validation.numberInvalid"))
         }
         return .valid(RenameParameters(
             baseName: trimmedBaseName,
@@ -179,12 +179,13 @@ final class BatchRenameSheetController: NSWindowController {
 
     private func previewRows() -> [PreviewRow] {
         let parameters = parameters()
+        let trimmedBaseName = parameters.baseName.trimmingCharacters(in: .whitespacesAndNewlines)
         return items.enumerated().map { offset, item in
             let number = parameters.startNumber + offset
             let formattedNumber = parameters.padding > 0
                 ? String(format: "%0\(parameters.padding)d", number)
                 : "\(number)"
-            var newName = "\(parameters.baseName) \(formattedNumber)"
+            var newName = "\(trimmedBaseName) \(formattedNumber)"
             if !item.url.pathExtension.isEmpty {
                 newName += ".\(item.url.pathExtension)"
             }

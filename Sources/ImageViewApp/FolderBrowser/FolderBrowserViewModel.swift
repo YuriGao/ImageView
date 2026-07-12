@@ -191,11 +191,15 @@ final class FolderBrowserViewModel: ObservableObject {
         case (0, 0):
             return nil
         case (_, 0):
-            return "\(result.succeeded.count) succeeded"
+            return String(format: AppStrings.text("folderBrowser.operation.succeeded"), result.succeeded.count)
         case (0, _):
-            return "\(result.failures.count) failed"
+            return String(format: AppStrings.text("folderBrowser.operation.failed"), result.failures.count)
         default:
-            return "\(result.succeeded.count) succeeded, \(result.failures.count) failed"
+            return String(
+                format: AppStrings.text("folderBrowser.operation.succeededAndFailed"),
+                result.succeeded.count,
+                result.failures.count
+            )
         }
     }
 

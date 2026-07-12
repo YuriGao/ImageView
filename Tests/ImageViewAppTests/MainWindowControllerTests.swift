@@ -875,11 +875,14 @@ final class MainWindowControllerTests: XCTestCase {
         controller.selectFolderBrowserItemsForTesting([item.id])
 
         controller.triggerFolderBrowserTrashForTesting()
-        for _ in 0..<100 where controller.folderBrowserOperationStatusTextForTesting != "1 failed · 1 failure" {
+        let expectedStatus = "\(String(format: AppStrings.text("folderBrowser.operation.failed"), 1)) · " +
+            "\(String(format: AppStrings.text("folderBrowser.status.failure.one"), 1)) · " +
+            "one.png: \(String(format: AppStrings.text("folderBrowser.failure.trashFailed"), "locked"))"
+        for _ in 0..<100 where controller.folderBrowserOperationStatusTextForTesting != expectedStatus {
             await Task.yield()
         }
 
-        XCTAssertEqual(controller.folderBrowserOperationStatusTextForTesting, "1 failed · 1 failure")
+        XCTAssertEqual(controller.folderBrowserOperationStatusTextForTesting, expectedStatus)
         XCTAssertTrue(controller.isFolderBrowserVisibleForTesting)
     }
 

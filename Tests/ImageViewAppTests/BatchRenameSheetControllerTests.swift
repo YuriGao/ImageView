@@ -19,6 +19,20 @@ final class BatchRenameSheetControllerTests: XCTestCase {
         XCTAssertEqual(controller.previewRowsForTesting.map(\.newName), ["Sprint 008.JPG", "Sprint 009.png"])
     }
 
+    func testPreviewUsesTrimmedBaseNameToMatchConfirmedParameters() throws {
+        let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
+        let item = ImageItem(url: folder.appendingPathComponent("one.png"), format: .png)
+        let controller = BatchRenameSheetController(items: [item])
+        controller.setBatchRenameInputsForTesting(baseName: "  Photo  ", startNumber: 1, padding: 0)
+        var received: BatchRenameSheetController.RenameParameters?
+        controller.onConfirm = { received = $0 }
+
+        XCTAssertEqual(controller.previewRowsForTesting.map(\.newName), ["Photo 1.png"])
+        controller.confirmForTesting()
+
+        XCTAssertEqual(try XCTUnwrap(received), .init(baseName: "Photo", startNumber: 1, padding: 0))
+    }
+
     func testConfirmReturnsEnteredRenameParameters() throws {
         let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
         let item = ImageItem(url: folder.appendingPathComponent("one.webp"), format: .webp)
@@ -56,19 +70,19 @@ final class BatchRenameSheetControllerTests: XCTestCase {
 
         controller.setBatchRenameInputsForTesting(baseName: " ", startNumber: 1, padding: 2)
         controller.confirmForTesting()
-        XCTAssertEqual(controller.validationErrorForTesting, "Base name is required.")
+        XCTAssertEqual(controller.validationErrorForTesting, AppStrings.text("batchRename.validation.baseNameRequired"))
 
         controller.setBatchRenameInputsForTesting(baseName: "bad/name", startNumber: 1, padding: 2)
         controller.confirmForTesting()
-        XCTAssertEqual(controller.validationErrorForTesting, "Base name cannot contain / or :.")
+        XCTAssertEqual(controller.validationErrorForTesting, AppStrings.text("batchRename.validation.baseNameInvalid"))
 
         controller.setBatchRenameInputsForTesting(baseName: "Batch", startNumber: 0, padding: 2)
         controller.confirmForTesting()
-        XCTAssertEqual(controller.validationErrorForTesting, "Start number must be positive and padding cannot be negative.")
+        XCTAssertEqual(controller.validationErrorForTesting, AppStrings.text("batchRename.validation.numberInvalid"))
 
         controller.setBatchRenameInputsForTesting(baseName: "Batch", startNumber: 1, padding: -1)
         controller.confirmForTesting()
-        XCTAssertEqual(controller.validationErrorForTesting, "Start number must be positive and padding cannot be negative.")
+        XCTAssertEqual(controller.validationErrorForTesting, AppStrings.text("batchRename.validation.numberInvalid"))
 
         XCTAssertEqual(confirmCount, 0)
     }

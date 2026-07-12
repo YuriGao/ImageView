@@ -61,4 +61,18 @@ final class AppStringsTests: XCTestCase {
             XCTAssertNotEqual(AppStrings.text(key, preferredLanguages: ["zh-Hans"]), key)
         }
     }
+
+    func testEveryFolderBrowserWorkflowLabelHasChineseAndEnglishTranslations() {
+        for key in AppStrings.folderBrowserKeys {
+            XCTAssertNotEqual(AppStrings.text(key, preferredLanguages: ["en"]), key)
+            XCTAssertNotEqual(AppStrings.text(key, preferredLanguages: ["zh-Hans"]), key)
+        }
+    }
+
+    func testFolderBrowserWorkflowLabelsLocalizeInEnglishAndSimplifiedChinese() {
+        XCTAssertEqual(AppStrings.text("folderBrowser.searchPlaceholder", preferredLanguages: ["en"]), "Search images")
+        XCTAssertEqual(AppStrings.text("folderBrowser.searchPlaceholder", preferredLanguages: ["zh-Hans"]), "搜索图片")
+        XCTAssertEqual(AppStrings.text("batchRename.title", preferredLanguages: ["en"]), "Batch Rename")
+        XCTAssertEqual(AppStrings.text("batchRename.title", preferredLanguages: ["zh-Hans"]), "批量重命名")
+    }
 }

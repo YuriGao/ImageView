@@ -87,7 +87,7 @@ final class FolderBrowserViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.visibleItems, [failed, untouched])
         XCTAssertEqual(viewModel.selectedItems, [failed])
         XCTAssertEqual(viewModel.operationFailures, result.failures)
-        XCTAssertEqual(viewModel.operationMessage, "1 succeeded, 1 failed")
+        XCTAssertEqual(viewModel.operationMessage, Self.succeededAndFailedMessage(succeeded: 1, failed: 1))
     }
 
     func testRenameSelectedUpdatesVisibleItemsAndSelectionToNewURL() async {
@@ -120,7 +120,7 @@ final class FolderBrowserViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.visibleItems.map(\.url.lastPathComponent), ["renamed 01.png"])
         XCTAssertEqual(viewModel.selectedItems.map(\.url), [newURL])
         XCTAssertEqual(viewModel.operationFailures, [])
-        XCTAssertEqual(viewModel.operationMessage, "1 succeeded")
+        XCTAssertEqual(viewModel.operationMessage, Self.succeededMessage(1))
     }
 
     func testMoveSelectedToFolderUsesInjectedOperationAndRemovesSucceededButKeepsFailuresSelected() async {
@@ -149,7 +149,7 @@ final class FolderBrowserViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.visibleItems, [failed])
         XCTAssertEqual(viewModel.selectedItems, [failed])
         XCTAssertEqual(viewModel.operationFailures, [expectedFailure])
-        XCTAssertEqual(viewModel.operationMessage, "1 succeeded, 1 failed")
+        XCTAssertEqual(viewModel.operationMessage, Self.succeededAndFailedMessage(succeeded: 1, failed: 1))
     }
 
     func testRenameSelectedKeepsFailedItemsSelectedAndDoesNotRemoveThemFromSession() async {
@@ -179,7 +179,7 @@ final class FolderBrowserViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.visibleItems.map(\.url), [renamedURL, failed.url])
         XCTAssertEqual(viewModel.selectedItems.map(\.url), [failed.url, renamedURL])
         XCTAssertEqual(viewModel.operationFailures, [failure])
-        XCTAssertEqual(viewModel.operationMessage, "1 succeeded, 1 failed")
+        XCTAssertEqual(viewModel.operationMessage, Self.succeededAndFailedMessage(succeeded: 1, failed: 1))
     }
 
     func testMoveSelectedToTrashSetsOperatingWhileBackgroundOperationRunsAndClearsAfterResult() async {
@@ -207,7 +207,19 @@ final class FolderBrowserViewModelTests: XCTestCase {
 
         XCTAssertFalse(viewModel.isOperating)
         XCTAssertEqual(viewModel.visibleItems, [])
-        XCTAssertEqual(viewModel.operationMessage, "1 succeeded")
+        XCTAssertEqual(viewModel.operationMessage, Self.succeededMessage(1))
+    }
+
+    private static func succeededMessage(_ count: Int) -> String {
+        String(format: AppStrings.text("folderBrowser.operation.succeeded"), count)
+    }
+
+    private static func succeededAndFailedMessage(succeeded: Int, failed: Int) -> String {
+        String(
+            format: AppStrings.text("folderBrowser.operation.succeededAndFailed"),
+            succeeded,
+            failed
+        )
     }
 }
 

@@ -8,13 +8,16 @@ final class FolderBrowserViewTests: XCTestCase {
     func testExposesToolbarControls() {
         let view = FolderBrowserView(thumbnailProvider: .stub)
 
-        XCTAssertEqual(view.testingSearchPlaceholder, "Search images")
+        XCTAssertEqual(view.testingSearchPlaceholder, AppStrings.text("folderBrowser.searchPlaceholder"))
         XCTAssertTrue(view.testingHasSortControl)
         XCTAssertTrue(view.testingHasTypeFilterControl)
         XCTAssertTrue(view.testingHasTrashButton)
         XCTAssertTrue(view.testingHasMoveButton)
         XCTAssertTrue(view.testingHasRenameButton)
         XCTAssertTrue(view.testingHasCollectionView)
+        XCTAssertEqual(view.testingTrashButtonTitle, AppStrings.text("folderBrowser.button.trash"))
+        XCTAssertEqual(view.testingMoveButtonTitle, AppStrings.text("folderBrowser.button.move"))
+        XCTAssertEqual(view.testingRenameButtonTitle, AppStrings.text("folderBrowser.button.rename"))
     }
 
     func testApplyUpdatesItemCountAndSelectedIDs() {
@@ -105,7 +108,12 @@ final class FolderBrowserViewTests: XCTestCase {
             isOperating: true
         )
 
-        XCTAssertEqual(view.testingOperationStatusText, "Working… 1 succeeded, 1 failed · 1 failure")
+        XCTAssertEqual(
+            view.testingOperationStatusText,
+            "\(AppStrings.text("folderBrowser.status.working")) 1 succeeded, 1 failed · " +
+            "\(String(format: AppStrings.text("folderBrowser.status.failure.one"), 1)) · " +
+            "blocked.png: \(AppStrings.text("folderBrowser.failure.destinationExists"))"
+        )
         XCTAssertTrue(view.testingBatchActionButtonsDisabled)
     }
 }

@@ -17,9 +17,9 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
     private let searchField = NSSearchField()
     private let sortPopUpButton = NSPopUpButton()
     private let typeFilterPopUpButton = NSPopUpButton()
-    private let trashButton = NSButton(title: "Trash", target: nil, action: nil)
-    private let moveButton = NSButton(title: "Move", target: nil, action: nil)
-    private let renameButton = NSButton(title: "Rename", target: nil, action: nil)
+    private let trashButton = NSButton(title: AppStrings.text("folderBrowser.button.trash"), target: nil, action: nil)
+    private let moveButton = NSButton(title: AppStrings.text("folderBrowser.button.move"), target: nil, action: nil)
+    private let renameButton = NSButton(title: AppStrings.text("folderBrowser.button.rename"), target: nil, action: nil)
     private let operationStatusLabel = NSTextField(labelWithString: "")
     private let collectionView = ReturnOpeningCollectionView()
 
@@ -30,6 +30,9 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
     var testingHasMoveButton: Bool { moveButton.superview != nil }
     var testingHasRenameButton: Bool { renameButton.superview != nil }
     var testingHasCollectionView: Bool { collectionView.enclosingScrollView?.superview != nil }
+    var testingTrashButtonTitle: String { trashButton.title }
+    var testingMoveButtonTitle: String { moveButton.title }
+    var testingRenameButtonTitle: String { renameButton.title }
     var testingOperationStatusText: String? {
         operationStatusLabel.isHidden ? nil : operationStatusLabel.stringValue
     }
@@ -63,17 +66,17 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
     }
 
     func applyOperationStatus(message: String?, failures: [BatchFileFailure], isOperating: Bool) {
-        let failureText = failures.isEmpty ? nil : "\(failures.count) failure\(failures.count == 1 ? "" : "s")"
+        let failureText = failureSummary(for: failures)
         let statusText: String?
         switch (isOperating, message, failureText) {
         case (true, let message?, let failureText?):
-            statusText = "Working… \(message) · \(failureText)"
+            statusText = "\(AppStrings.text("folderBrowser.status.working")) \(message) · \(failureText)"
         case (true, let message?, nil):
-            statusText = "Working… \(message)"
+            statusText = "\(AppStrings.text("folderBrowser.status.working")) \(message)"
         case (true, nil, let failureText?):
-            statusText = "Working… \(failureText)"
+            statusText = "\(AppStrings.text("folderBrowser.status.working")) \(failureText)"
         case (true, nil, nil):
-            statusText = "Working…"
+            statusText = AppStrings.text("folderBrowser.status.working")
         case (false, let message?, let failureText?):
             statusText = "\(message) · \(failureText)"
         case (false, let message?, nil):
@@ -173,20 +176,20 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
     private func buildView() {
         translatesAutoresizingMaskIntoConstraints = false
 
-        searchField.placeholderString = "Search images"
+        searchField.placeholderString = AppStrings.text("folderBrowser.searchPlaceholder")
         searchField.target = self
         searchField.action = #selector(searchChanged(_:))
 
-        sortPopUpButton.addItem(withTitle: "Name")
+        sortPopUpButton.addItem(withTitle: AppStrings.text("folderBrowser.sort.name"))
         sortPopUpButton.lastItem?.tag = tag(for: .nameAscending)
-        sortPopUpButton.addItem(withTitle: "Modified")
+        sortPopUpButton.addItem(withTitle: AppStrings.text("folderBrowser.sort.modified"))
         sortPopUpButton.lastItem?.tag = tag(for: .modifiedDateDescending)
-        sortPopUpButton.addItem(withTitle: "Size")
+        sortPopUpButton.addItem(withTitle: AppStrings.text("folderBrowser.sort.size"))
         sortPopUpButton.lastItem?.tag = tag(for: .fileSizeDescending)
         sortPopUpButton.target = self
         sortPopUpButton.action = #selector(sortChanged(_:))
 
-        typeFilterPopUpButton.addItem(withTitle: "All Types")
+        typeFilterPopUpButton.addItem(withTitle: AppStrings.text("folderBrowser.typeFilter.all"))
         typeFilterPopUpButton.lastItem?.tag = -1
         for (index, format) in SupportedImageFormat.allCases.enumerated() {
             typeFilterPopUpButton.addItem(withTitle: format.rawValue.uppercased())
@@ -337,6 +340,34 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
             return .fileSizeDescending
         default:
             return .nameAscending
+        }
+    }
+
+    private func failureSummary(for failures: [BatchFileFailure]) -> String? {
+        guard let firstFailure = failures.first else { return nil }
+        let countKey = failures.count == 1 ? "folderBrowser.status.failure.one" : "folderBrowser.status.failure.other"
+        let countText = String(format: AppStrings.text(countKey), failures.count)
+        return "\(countText) · \(firstFailure.url.lastPathComponent): \(failureReasonText(firstFailure.reason))"
+    }
+
+    private func failureReasonText(_ reason: BatchFileFailureReason) -> String {
+        switch reason {
+        case .emptyName:
+            return AppStrings.text("folderBrowser.failure.emptyName")
+        case .invalidName:
+            return AppStrings.text("folderBrowser.failure.invalidName")
+        case .sourceMissing:
+            return AppStrings.text("folderBrowser.failure.sourceMissing")
+        case .destinationExists:
+            return AppStrings.text("folderBrowser.failure.destinationExists")
+        case .duplicateDestination:
+            return AppStrings.text("folderBrowser.failure.duplicateDestination")
+        case .trashFailed(let detail):
+            return String(format: AppStrings.text("folderBrowser.failure.trashFailed"), detail)
+        case .moveFailed(let detail):
+            return String(format: AppStrings.text("folderBrowser.failure.moveFailed"), detail)
+        case .renameFailed(let detail):
+            return String(format: AppStrings.text("folderBrowser.failure.renameFailed"), detail)
         }
     }
 }

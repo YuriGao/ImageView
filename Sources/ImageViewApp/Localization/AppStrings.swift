@@ -45,6 +45,46 @@ enum AppStrings {
         "titleBar.browseCurrentFolder"
     ]
 
+    static let folderBrowserKeys = [
+        "folderBrowser.searchPlaceholder",
+        "folderBrowser.sort.name",
+        "folderBrowser.sort.modified",
+        "folderBrowser.sort.size",
+        "folderBrowser.typeFilter.all",
+        "folderBrowser.button.trash",
+        "folderBrowser.button.move",
+        "folderBrowser.button.rename",
+        "folderBrowser.status.working",
+        "folderBrowser.status.failure.one",
+        "folderBrowser.status.failure.other",
+        "folderBrowser.failure.emptyName",
+        "folderBrowser.failure.invalidName",
+        "folderBrowser.failure.sourceMissing",
+        "folderBrowser.failure.destinationExists",
+        "folderBrowser.failure.duplicateDestination",
+        "folderBrowser.failure.trashFailed",
+        "folderBrowser.failure.moveFailed",
+        "folderBrowser.failure.renameFailed",
+        "folderBrowser.operation.succeeded",
+        "folderBrowser.operation.failed",
+        "folderBrowser.operation.succeededAndFailed",
+        "batchRename.title",
+        "batchRename.field.baseName",
+        "batchRename.field.startNumber",
+        "batchRename.field.padding",
+        "batchRename.preview",
+        "batchRename.button.cancel",
+        "batchRename.button.rename",
+        "batchRename.validation.baseNameRequired",
+        "batchRename.validation.baseNameInvalid",
+        "batchRename.validation.numberInvalid",
+        "folderBrowser.confirmTrash.title",
+        "folderBrowser.confirmTrash.message",
+        "folderBrowser.confirmTrash.button",
+        "folderBrowser.confirmTrash.cancel",
+        "folderBrowser.movePanel.prompt"
+    ]
+
     static func text(_ key: String, preferredLanguages: [String] = Locale.preferredLanguages) -> String {
         let localization = preferredLanguages.contains { $0.lowercased().hasPrefix("zh") } ? "zh-hans" : "en"
         let resourceBundle = packagedResourceBundle ?? Bundle.module
