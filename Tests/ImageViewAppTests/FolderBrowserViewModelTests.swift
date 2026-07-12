@@ -453,26 +453,25 @@ final class FolderBrowserViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.operationMessage, Self.succeededAndFailedMessage(succeeded: 1, failed: 1))
     }
 
-    func testRenameFailureRescansActiveFolderAndSelectsOnlyExistingFailureLocations() async {
-        let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
+    func testRenameFailureUsesRealDirectoryScannerToSelectScannableRecoveryURL() async throws {
+        let folder = URL(fileURLWithPath: "/private/tmp", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
         let original = ImageItem(url: folder.appendingPathComponent("old.png"), format: .png)
-        let actualURL = folder.appendingPathComponent(".batch-rename-stranded.tmp")
-        let recoveredItem = ImageItem(url: actualURL, format: .png)
+        let actualURL = folder.appendingPathComponent("old batch-rename-recovery-test.png")
+        try Data("image".utf8).write(to: original.url)
         let plan = BatchRenamePlan(
             proposals: [RenameProposal(source: original.url, destination: folder.appendingPathComponent("new.png"))],
             failures: []
         )
-        let scanCount = LockedValue(0)
         let recovery = BatchRecoveryFailure(
             expectedURL: original.url,
             actualURL: actualURL,
             reason: "injected rollback failure"
         )
         let viewModel = FolderBrowserViewModel(
-            scanFolder: { requestedFolder in
-                XCTAssertEqual(requestedFolder, folder)
-                return scanCount.increment() == 1 ? [original] : [recoveredItem]
-            },
+            scanFolder: { try await DirectoryScanner().scan(folder: $0) },
             planBatchRename: { _, _, _, _ in plan },
             executeRenamePlan: { _ in
                 BatchOperationResult(
@@ -483,15 +482,62 @@ final class FolderBrowserViewModelTests: XCTestCase {
         )
         await viewModel.openFolder(folder)
         viewModel.setSelection([original.id])
+        try FileManager.default.moveItem(at: original.url, to: actualURL)
 
         let task = viewModel.renameSelected(baseName: "new")
         await task?.value
 
-        XCTAssertEqual(scanCount.value, 2)
-        XCTAssertEqual(viewModel.visibleItems, [recoveredItem])
-        XCTAssertEqual(viewModel.selectedItems, [recoveredItem])
+        XCTAssertEqual(viewModel.visibleItems.map(\.url), [actualURL])
+        XCTAssertEqual(viewModel.selectedItems.map(\.url), [actualURL])
         XCTAssertEqual(viewModel.operationFailures.map(\.url), [original.url])
         XCTAssertEqual(viewModel.operationRecoveryFailures, [recovery])
+    }
+
+    func testRenameFailureRescanErrorClearsStaleItemsAndRetryRestoresRealFolderState() async {
+        let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
+        let stale = ImageItem(url: folder.appendingPathComponent("old.png"), format: .png)
+        let recovered = ImageItem(url: folder.appendingPathComponent("old recovery.png"), format: .png)
+        let plan = BatchRenamePlan(
+            proposals: [RenameProposal(source: stale.url, destination: folder.appendingPathComponent("new.png"))],
+            failures: []
+        )
+        let scanCount = LockedValue(0)
+        let failure = BatchFileFailure(url: stale.url, reason: .renameFailed("injected"))
+        let viewModel = FolderBrowserViewModel(
+            scanFolder: { requestedFolder in
+                XCTAssertEqual(requestedFolder, folder)
+                switch scanCount.increment() {
+                case 1: return [stale]
+                case 2: throw TestFolderError.denied
+                default: return [recovered]
+                }
+            },
+            planBatchRename: { _, _, _, _ in plan },
+            executeRenamePlan: { _ in BatchOperationResult(failures: [failure]) }
+        )
+        await viewModel.openFolder(folder)
+        viewModel.setSelection([stale.id])
+
+        let task = viewModel.renameSelected(baseName: "new")
+        await task?.value
+
+        XCTAssertEqual(viewModel.session?.folderURL, folder)
+        XCTAssertTrue(viewModel.visibleItems.isEmpty)
+        XCTAssertTrue(viewModel.selectedItems.isEmpty)
+        XCTAssertEqual(viewModel.operationFailures, [failure])
+        XCTAssertNotNil(viewModel.operationMessage)
+        XCTAssertNotNil(viewModel.loadErrorMessage)
+        guard case .loadFailed = viewModel.presentation else {
+            return XCTFail("Expected an explicit recoverable rescan failure state")
+        }
+
+        await viewModel.retryOpenFolder()
+
+        XCTAssertEqual(scanCount.value, 3)
+        XCTAssertEqual(viewModel.visibleItems, [recovered])
+        XCTAssertTrue(viewModel.selectedItems.isEmpty)
+        XCTAssertEqual(viewModel.presentation, .content)
+        XCTAssertNil(viewModel.loadErrorMessage)
     }
 
     func testMoveSelectedToTrashSetsOperatingWhileBackgroundOperationRunsAndClearsAfterResult() async {

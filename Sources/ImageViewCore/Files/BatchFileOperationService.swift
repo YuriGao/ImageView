@@ -445,14 +445,52 @@ public final class BatchFileOperationService {
                 )
                 journal[index].location = .original
             } catch {
+                let recoveryLocation = relocateStrandedTemporary(
+                    journal[index].temporaryURL,
+                    for: journal[index].proposal.source,
+                    after: error
+                )
                 recoveryFailures.append(BatchRecoveryFailure(
                     expectedURL: journal[index].proposal.source,
-                    actualURL: journal[index].temporaryURL,
-                    reason: error.localizedDescription
+                    actualURL: recoveryLocation.actualURL,
+                    reason: recoveryLocation.reason
                 ))
             }
         }
         return recoveryFailures
+    }
+
+    private func relocateStrandedTemporary(
+        _ temporaryURL: URL,
+        for originalURL: URL,
+        after rollbackError: Error
+    ) -> (actualURL: URL, reason: String) {
+        let recoveryURL = nextRecoveryURL(for: originalURL)
+        do {
+            try fileSystem.moveItem(at: temporaryURL, to: recoveryURL)
+            return (recoveryURL, rollbackError.localizedDescription)
+        } catch {
+            return (
+                temporaryURL,
+                "\(rollbackError.localizedDescription); recovery relocation failed: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    private func nextRecoveryURL(for originalURL: URL) -> URL {
+        let folder = originalURL.deletingLastPathComponent()
+        let baseName = originalURL.deletingPathExtension().lastPathComponent
+        let pathExtension = originalURL.pathExtension
+        var candidate: URL
+        repeat {
+            candidate = folder.appendingPathComponent(
+                "\(baseName) batch-rename-recovery-\(UUID().uuidString)"
+            )
+            if !pathExtension.isEmpty {
+                candidate = candidate.appendingPathExtension(pathExtension)
+            }
+        } while fileSystem.fileExists(at: candidate)
+        return candidate
     }
 
     private func isValidFileBaseName(_ name: String) -> Bool {

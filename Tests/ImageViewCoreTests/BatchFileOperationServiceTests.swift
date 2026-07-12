@@ -233,7 +233,7 @@ final class BatchFileOperationServiceTests: XCTestCase {
         XCTAssertLessThan(destinationRollbackIndex, secondOriginalRestoreIndex)
     }
 
-    func testExecuteRenamePlanReportsBestKnownActualURLWhenRollbackFails() throws {
+    func testExecuteRenamePlanMovesStrandedTemporaryToScannableRecoveryURL() async throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
         let first = try writeFile(named: "a.jpg", contents: "first", in: root)
@@ -256,12 +256,16 @@ final class BatchFileOperationServiceTests: XCTestCase {
         XCTAssertEqual(result.recoveryFailures.count, 1)
         let recoveryFailure = try XCTUnwrap(result.recoveryFailures.first)
         XCTAssertEqual(recoveryFailure.expectedURL, first)
-        XCTAssertTrue(recoveryFailure.actualURL.lastPathComponent.hasPrefix(".batch-rename-"))
+        XCTAssertTrue(recoveryFailure.actualURL.lastPathComponent.contains("batch-rename-recovery-"))
+        XCTAssertEqual(recoveryFailure.actualURL.pathExtension, "jpg")
+        XCTAssertFalse(recoveryFailure.actualURL.lastPathComponent.hasPrefix("."))
         XCTAssertTrue(FileManager.default.fileExists(atPath: recoveryFailure.actualURL.path))
         XCTAssertEqual(try String(contentsOf: recoveryFailure.actualURL, encoding: .utf8), "first")
         XCTAssertEqual(try String(contentsOf: second, encoding: .utf8), "second")
         XCTAssertFalse(FileManager.default.fileExists(atPath: firstDestination.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: secondDestination.path))
+        let scannedItems = try await DirectoryScanner().scan(folder: root)
+        XCTAssertTrue(scannedItems.contains { $0.url == recoveryFailure.actualURL })
     }
 
     func testExecuteRenamePlanReportsDestinationAsActualURLWhenCommittedMoveCannotReverse() throws {
@@ -295,8 +299,33 @@ final class BatchFileOperationServiceTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: secondDestination.path))
     }
 
+    func testExecuteRenamePlanKeepsTemporaryAsActualURLWhenRecoveryRelocationAlsoFails() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = try writeFile(named: "a.jpg", contents: "first", in: root)
+        let second = try writeFile(named: "b.jpg", contents: "second", in: root)
+        let fileSystem = FaultInjectingBatchFileSystem(failingMoveCalls: [4, 7, 8])
+        let service = BatchFileOperationService(fileSystem: fileSystem)
+
+        let result = service.executeRenamePlan(BatchRenamePlan(
+            proposals: [
+                RenameProposal(source: first, destination: root.appendingPathComponent("renamed-a.jpg")),
+                RenameProposal(source: second, destination: root.appendingPathComponent("renamed-b.jpg"))
+            ],
+            failures: []
+        ))
+
+        let recoveryFailure = try XCTUnwrap(result.recoveryFailures.first)
+        XCTAssertEqual(recoveryFailure.expectedURL, first)
+        XCTAssertTrue(recoveryFailure.actualURL.lastPathComponent.hasPrefix(".batch-rename-"))
+        XCTAssertEqual(recoveryFailure.actualURL.pathExtension, "tmp")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: recoveryFailure.actualURL.path))
+        XCTAssertTrue(recoveryFailure.reason.contains("recovery relocation failed"))
+    }
+
     private func makeTemporaryDirectory() throws -> URL {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let root = URL(fileURLWithPath: "/private/tmp", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         return root
     }
