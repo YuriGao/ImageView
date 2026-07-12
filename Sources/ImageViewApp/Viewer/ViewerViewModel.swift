@@ -356,6 +356,19 @@ final class ViewerViewModel: ObservableObject {
         }
     }
 
+    func migrateDisplayedItemURL(from oldURL: URL, to newURL: URL) {
+        guard let item = navigationState?.currentItem,
+              item.url.standardizedFileURL == oldURL.standardizedFileURL else {
+            return
+        }
+        navigationState?.replaceCurrentURL(newURL, format: item.format)
+        displayedFileVersion = currentFileVersionAtURL(newURL)
+        if let image = currentImage {
+            updateMetadata(url: newURL, format: item.format, image: image)
+        }
+        updateDisplayTitle()
+    }
+
     func revealCurrentInFinder() {
         guard let url = navigationState?.currentItem?.url else { return }
         fileActions.revealInFinder(url)

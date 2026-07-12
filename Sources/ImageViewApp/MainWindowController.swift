@@ -127,8 +127,10 @@ final class MainWindowController: NSWindowController {
     private var currentRoute: ContentRoute?
     private var backRoute: ContentRoute?
     private var forwardRoute: ContentRoute?
+    private var lastPublishedFolderSession: FolderSession?
     private var activeBatchRenameSheet: BatchRenameSheetController?
     var batchActionDialogProviderForTesting: BatchActionDialogProvider?
+    private var unsavedChangesChoiceForTesting: UnsavedChangesChoice?
 
     convenience init(
         settings: AppSettings = .shared,
@@ -162,19 +164,19 @@ final class MainWindowController: NSWindowController {
 
     func open(url: URL) {
         hasAssignedOpenRequest = true
-        currentRoute = .viewer(url.standardizedFileURL)
-        backRoute = nil
-        forwardRoute = nil
-        openImageUsingExistingPipeline(url)
+        confirmUnsavedEditsIfNeeded(for: .opening) { [weak self] in
+            guard let self else { return }
+            self.currentRoute = .viewer(url.standardizedFileURL)
+            self.backRoute = nil
+            self.forwardRoute = nil
+            self.openImageUsingExistingPipeline(url)
+        }
     }
 
     private func openImageUsingExistingPipeline(_ url: URL) {
         exitFolderBrowserMode()
         cancelCrop(nil)
-        confirmUnsavedEditsIfNeeded(for: .opening) { [weak self] in
-            guard let self else { return }
-            Task { await self.viewModel.open(url: url) }
-        }
+        Task { await viewModel.open(url: url) }
     }
 
     func openFolder(url: URL) {
@@ -410,6 +412,8 @@ final class MainWindowController: NSWindowController {
         folderBrowserViewModel.$session
             .sink { [weak self] session in
                 guard let self else { return }
+                self.reconcileRoutes(from: self.lastPublishedFolderSession, to: session)
+                self.lastPublishedFolderSession = session
                 let items = session?.visibleItems ?? []
                 if self.currentFolderBrowserItems != items {
                     self.currentFolderBrowserItems = items
@@ -713,7 +717,10 @@ final class MainWindowController: NSWindowController {
            let item = folderBrowserViewModel.session?.items.first(where: { $0.id == lastOpenedItemID }) {
             return .viewer(item.url.standardizedFileURL)
         }
-        if let displayedItemURL {
+        if let displayedItemURL,
+           folderBrowserViewModel.session?.items.contains(where: {
+               $0.url.standardizedFileURL == displayedItemURL.standardizedFileURL
+           }) != false {
             return .viewer(displayedItemURL.standardizedFileURL)
         }
         if case let .viewer(url)? = backRoute ?? forwardRoute {
@@ -723,10 +730,54 @@ final class MainWindowController: NSWindowController {
     }
 
     private func openFolderBrowserItem(_ item: ImageItem) {
-        folderBrowserViewModel.recordOpenedItem(item)
-        showRoute(.viewer(item.url.standardizedFileURL), recordHistory: true)
-        hasAssignedOpenRequest = true
-        openImageUsingExistingPipeline(item.url)
+        confirmUnsavedEditsIfNeeded(for: .opening) { [weak self] in
+            guard let self else { return }
+            self.folderBrowserViewModel.recordOpenedItem(item)
+            self.showRoute(.viewer(item.url.standardizedFileURL), recordHistory: true)
+            self.hasAssignedOpenRequest = true
+            self.openImageUsingExistingPipeline(item.url)
+        }
+    }
+
+    private func reconcileRoutes(from previousSession: FolderSession?, to session: FolderSession?) {
+        guard let previousSession,
+              let previousLastOpenedID = previousSession.lastOpenedItemID,
+              let previousItem = previousSession.items.first(where: { $0.id == previousLastOpenedID }),
+              session?.items.contains(where: {
+                  $0.url.standardizedFileURL == previousItem.url.standardizedFileURL
+              }) != true else {
+            return
+        }
+
+        let oldURL = previousItem.url.standardizedFileURL
+        if let newLastOpenedID = session?.lastOpenedItemID,
+           let newItem = session?.items.first(where: { $0.id == newLastOpenedID }) {
+            let newURL = newItem.url.standardizedFileURL
+            currentRoute = migratingViewerRoute(currentRoute, from: oldURL, to: newURL)
+            backRoute = migratingViewerRoute(backRoute, from: oldURL, to: newURL)
+            forwardRoute = migratingViewerRoute(forwardRoute, from: oldURL, to: newURL)
+            viewModel.migrateDisplayedItemURL(from: oldURL, to: newURL)
+        } else {
+            currentRoute = removingViewerRoute(currentRoute, matching: oldURL)
+            backRoute = removingViewerRoute(backRoute, matching: oldURL)
+            forwardRoute = removingViewerRoute(forwardRoute, matching: oldURL)
+        }
+    }
+
+    private func migratingViewerRoute(_ route: ContentRoute?, from oldURL: URL, to newURL: URL) -> ContentRoute? {
+        guard case let .viewer(url) = route,
+              url.standardizedFileURL == oldURL else {
+            return route
+        }
+        return .viewer(newURL)
+    }
+
+    private func removingViewerRoute(_ route: ContentRoute?, matching removedURL: URL) -> ContentRoute? {
+        guard case let .viewer(url) = route,
+              url.standardizedFileURL == removedURL else {
+            return route
+        }
+        return nil
     }
 
     private func showRoute(_ route: ContentRoute, recordHistory: Bool) {
@@ -1392,6 +1443,8 @@ final class MainWindowController: NSWindowController {
 
     var isInspectorVisibleForTesting: Bool { !inspectorView.isHidden }
     var hasLoadedImageForTesting: Bool { viewModel.currentImage != nil }
+    var canEditCurrentImageForTesting: Bool { viewModel.canEditCurrentImage }
+    var hasUnsavedEditsForTesting: Bool { viewModel.hasUnsavedEdits }
     var isFolderBrowserVisibleForTesting: Bool { !folderBrowserView.isHidden }
     var isCanvasVisibleForTesting: Bool { !canvas.isHidden }
     var isFilmstripVisibleForTesting: Bool { !filmstripOverlayView.isHidden }
@@ -1460,6 +1513,21 @@ final class MainWindowController: NSWindowController {
     var canGoForwardForTesting: Bool { forwardRoute != nil && forwardRoute != currentRoute }
     var lastOpenedFolderItemIDForTesting: ImageItem.ID? {
         folderBrowserViewModel.session?.lastOpenedItemID
+    }
+    var forwardViewerURLForTesting: URL? {
+        guard case let .viewer(url) = forwardRoute else { return nil }
+        return url
+    }
+    var currentViewerRouteURLForTesting: URL? {
+        guard case let .viewer(url) = currentRoute else { return nil }
+        return url
+    }
+    var viewerNavigationURLForTesting: URL? {
+        viewModel.navigationState?.currentItem?.url.standardizedFileURL
+    }
+
+    func setUnsavedChangesChoiceForTesting(_ choice: UnsavedChangesChoice?) {
+        unsavedChangesChoiceForTesting = choice
     }
 
     func performTitleBarGridToggleForTesting() {
@@ -1585,6 +1653,9 @@ final class MainWindowController: NSWindowController {
     }
 
     private func promptForUnsavedChanges(transition: UnsavedChangesTransition) -> UnsavedChangesChoice {
+        if let unsavedChangesChoiceForTesting {
+            return unsavedChangesChoiceForTesting
+        }
         let alert = NSAlert()
         alert.messageText = String(
             format: AppStrings.text("unsavedChanges.title"),

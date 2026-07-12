@@ -253,6 +253,9 @@ final class FolderBrowserViewModel: ObservableObject {
         )
 
         if !successfulDestinationsBySource.isEmpty, var session {
+            let lastOpenedSourceURL = session.lastOpenedItemID.flatMap { lastOpenedItemID in
+                session.items.first(where: { $0.id == lastOpenedItemID })?.url
+            }
             let updatedItems = session.items.map { item in
                 guard let destination = successfulDestinationsBySource[item.url] else {
                     return item
@@ -264,6 +267,13 @@ final class FolderBrowserViewModel: ObservableObject {
                 )
             }
             session.replaceItems(updatedItems)
+            if let lastOpenedSourceURL,
+               let destination = successfulDestinationsBySource[lastOpenedSourceURL],
+               let renamedItem = updatedItems.first(where: {
+                   $0.url.standardizedFileURL == destination.standardizedFileURL
+               }) {
+                session.recordOpenedItem(with: renamedItem.id)
+            }
             session.selectedItemIDs = result.failures.map(\.url) + successfulDestinationsBySource.values.map { $0 }
             self.session = session
         } else {

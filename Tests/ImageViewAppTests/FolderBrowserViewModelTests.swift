@@ -175,6 +175,30 @@ final class FolderBrowserViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.operationMessage, Self.succeededMessage(1))
     }
 
+    func testRenameSelectedMigratesLastOpenedItemToNewURL() async {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let old = ImageItem(url: folder.appendingPathComponent("old.png"), format: .png)
+        let newURL = folder.appendingPathComponent("renamed.png")
+        let plan = BatchRenamePlan(
+            proposals: [RenameProposal(source: old.url, destination: newURL)],
+            failures: []
+        )
+        let viewModel = FolderBrowserViewModel(
+            scanFolder: { _ in [old] },
+            planBatchRename: { _, _, _, _ in plan },
+            executeRenamePlan: { _ in BatchOperationResult(succeeded: [old.url]) }
+        )
+        await viewModel.openFolder(folder)
+        viewModel.recordOpenedItem(old)
+        viewModel.setSelection([old.id])
+
+        let task = viewModel.renameSelected(baseName: "renamed")
+        await task?.value
+
+        XCTAssertEqual(viewModel.session?.lastOpenedItemID, newURL)
+    }
+
     func testMoveSelectedToFolderUsesInjectedOperationAndRemovesSucceededButKeepsFailuresSelected() async {
         let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
         let destination = URL(fileURLWithPath: "/tmp/archive", isDirectory: true)

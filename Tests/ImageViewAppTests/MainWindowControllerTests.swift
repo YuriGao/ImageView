@@ -960,6 +960,94 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertEqual(fixture.controller.lastOpenedFolderItemIDForTesting, fixture.items[1].id)
     }
 
+    func testCancellingUnsavedGridItemOpenPreservesRouteHistoryAndLastOpenedItem() async throws {
+        let fixture = try makeFolderNavigationFixture(itemNames: ["one.png", "two.png"])
+        defer { try? FileManager.default.removeItem(at: fixture.folder) }
+        await fixture.controller.openFolderForTesting(fixture.folder, scannerItems: fixture.items)
+        fixture.controller.openFirstFolderBrowserItemForTesting()
+        for _ in 0..<100 where !fixture.controller.canEditCurrentImageForTesting {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        fixture.controller.rotateClockwise(nil)
+        XCTAssertTrue(fixture.controller.hasUnsavedEditsForTesting)
+        fixture.controller.goBackForTesting()
+        fixture.controller.setUnsavedChangesChoiceForTesting(.cancel)
+
+        fixture.controller.openFolderBrowserItemForTesting(at: 1)
+
+        XCTAssertTrue(fixture.controller.isFolderBrowserVisibleForTesting)
+        XCTAssertTrue(fixture.controller.canGoForwardForTesting)
+        XCTAssertEqual(fixture.controller.forwardViewerURLForTesting, fixture.items[0].url.standardizedFileURL)
+        XCTAssertEqual(fixture.controller.lastOpenedFolderItemIDForTesting, fixture.items[0].id)
+    }
+
+    func testDeletingForwardViewerTargetAfterBackDisablesForward() async throws {
+        let fixture = try makeFolderNavigationFixture(
+            itemNames: ["one.png", "two.png"],
+            moveToTrash: { BatchOperationResult(succeeded: $0) }
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.folder) }
+        await fixture.controller.openFolderForTesting(fixture.folder, scannerItems: fixture.items)
+        fixture.controller.openFirstFolderBrowserItemForTesting()
+        fixture.controller.goBackForTesting()
+        XCTAssertTrue(fixture.controller.canGoForwardForTesting)
+        fixture.controller.batchActionDialogProviderForTesting = .init(confirmTrash: { _ in true })
+        fixture.controller.selectFolderBrowserItemsForTesting([fixture.items[0].id])
+
+        fixture.controller.triggerFolderBrowserTrashForTesting()
+        for _ in 0..<100 where fixture.controller.folderBrowserItemCountForTesting != 1 {
+            await Task.yield()
+        }
+
+        XCTAssertFalse(fixture.controller.canGoForwardForTesting)
+        XCTAssertNil(fixture.controller.forwardViewerURLForTesting)
+        XCTAssertNil(fixture.controller.lastOpenedFolderItemIDForTesting)
+    }
+
+    func testRenamingForwardViewerTargetAfterBackMigratesRouteAndViewerNavigation() async throws {
+        let renamedURLBox = MainWindowLockedValue<URL?>(nil)
+        let fixture = try makeFolderNavigationFixture(
+            moveToTrash: nil,
+            planBatchRename: { urls, _, _, _ in
+                let destination = urls[0].deletingLastPathComponent().appendingPathComponent("renamed.png")
+                renamedURLBox.set(destination)
+                return BatchRenamePlan(
+                    proposals: [RenameProposal(source: urls[0], destination: destination)],
+                    failures: []
+                )
+            },
+            executeRenamePlan: { plan in
+                BatchOperationResult(succeeded: plan.proposals.map(\.source))
+            }
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.folder) }
+        await fixture.controller.openFolderForTesting(fixture.folder, scannerItems: fixture.items)
+        fixture.controller.openFirstFolderBrowserItemForTesting()
+        for _ in 0..<100 where !fixture.controller.canEditCurrentImageForTesting {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        fixture.controller.goBackForTesting()
+        fixture.controller.selectFolderBrowserItemsForTesting([fixture.items[0].id])
+        fixture.controller.batchActionDialogProviderForTesting = .init(
+            requestRenameParameters: { _, confirm in
+                confirm(.init(baseName: "renamed", startNumber: 1, padding: 2))
+            }
+        )
+
+        fixture.controller.triggerFolderBrowserRenameForTesting()
+        for _ in 0..<100 where fixture.controller.lastOpenedFolderItemIDForTesting == fixture.items[0].id {
+            await Task.yield()
+        }
+        let renamedURL = try XCTUnwrap(renamedURLBox.value).standardizedFileURL
+
+        XCTAssertEqual(fixture.controller.lastOpenedFolderItemIDForTesting, renamedURL)
+        XCTAssertEqual(fixture.controller.forwardViewerURLForTesting, renamedURL)
+        XCTAssertEqual(fixture.controller.viewerNavigationURLForTesting, renamedURL)
+        fixture.controller.goForwardForTesting()
+        XCTAssertEqual(fixture.controller.currentViewerRouteURLForTesting, renamedURL)
+        XCTAssertTrue(fixture.controller.isCanvasVisibleForTesting)
+    }
+
     func testTitleBarGridButtonTooltipIsLocalized() {
         XCTAssertEqual(
             MainWindowController.titleBarBrowseFolderToolTip(preferredLanguages: ["en"]),
@@ -987,7 +1075,12 @@ final class MainWindowControllerTests: XCTestCase {
         try XCTUnwrap(representation?.representation(using: .png, properties: [:])).write(to: url)
     }
 
-    private func makeFolderNavigationFixture(itemNames: [String] = ["one.png"]) throws -> (
+    private func makeFolderNavigationFixture(
+        itemNames: [String] = ["one.png"],
+        moveToTrash: FolderBrowserViewModel.MoveToTrash? = nil,
+        planBatchRename: FolderBrowserViewModel.PlanBatchRename? = nil,
+        executeRenamePlan: FolderBrowserViewModel.ExecuteRenamePlan? = nil
+    ) throws -> (
         folder: URL,
         items: [ImageItem],
         scanCount: MainWindowLockedValue<Int>,
@@ -1002,10 +1095,15 @@ final class MainWindowControllerTests: XCTestCase {
             return ImageItem(url: imageURL, format: .png)
         }
         let scanCount = MainWindowLockedValue(0)
-        let viewModel = FolderBrowserViewModel(scanFolder: { _ in
-            scanCount.update { $0 += 1 }
-            return items
-        })
+        let viewModel = FolderBrowserViewModel(
+            scanFolder: { _ in
+                scanCount.update { $0 += 1 }
+                return items
+            },
+            moveToTrash: moveToTrash,
+            planBatchRename: planBatchRename,
+            executeRenamePlan: executeRenamePlan
+        )
         let controller = MainWindowController(
             settings: AppSettings(defaults: makeIsolatedDefaults()),
             folderBrowserViewModel: viewModel
