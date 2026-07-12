@@ -94,7 +94,10 @@ final class MainWindowController: NSWindowController {
     private let titleBarView = NSVisualEffectView()
     private let titleBarDivider = NSBox()
     private let titleLabel = NSTextField(labelWithString: "ImageView")
-    private let titleBarGridButton = NSButton()
+    private let titleBarBackButton = HoverToolbarButton()
+    private let titleBarForwardButton = HoverToolbarButton()
+    private let titleBarGridButton = HoverToolbarButton()
+    private let titleBarControlsStack = NSStackView()
     private let canvas = ImageCanvasView()
     private let folderBrowserView = FolderBrowserView()
     private let emptyStateView = EmptyStateView()
@@ -124,9 +127,15 @@ final class MainWindowController: NSWindowController {
     private var isPointerOverPageControls = false
     private var isFolderBrowserMode = false
     private var currentFolderBrowserItems: [ImageItem] = []
-    private var currentRoute: ContentRoute?
-    private var backRoute: ContentRoute?
-    private var forwardRoute: ContentRoute?
+    private var currentRoute: ContentRoute? {
+        didSet { updateTitleBarControlAvailability() }
+    }
+    private var backRoute: ContentRoute? {
+        didSet { updateTitleBarControlAvailability() }
+    }
+    private var forwardRoute: ContentRoute? {
+        didSet { updateTitleBarControlAvailability() }
+    }
     private var activeBatchRenameSheet: BatchRenameSheetController?
     var batchActionDialogProviderForTesting: BatchActionDialogProvider?
     private var unsavedChangesChoiceForTesting: UnsavedChangesChoice?
@@ -286,12 +295,10 @@ final class MainWindowController: NSWindowController {
             titleBarDivider.heightAnchor.constraint(equalToConstant: 1),
             titleLabel.centerXAnchor.constraint(equalTo: titleBarView.centerXAnchor),
             titleLabel.centerYAnchor.constraint(equalTo: titleBarView.centerYAnchor),
-            titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: titleBarView.leadingAnchor, constant: 72),
+            titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: titleBarControlsStack.trailingAnchor, constant: 8),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: titleBarView.trailingAnchor, constant: -72),
-            titleBarGridButton.leadingAnchor.constraint(equalTo: titleBarView.leadingAnchor, constant: 72),
-            titleBarGridButton.centerYAnchor.constraint(equalTo: titleBarView.centerYAnchor),
-            titleBarGridButton.widthAnchor.constraint(equalToConstant: 22),
-            titleBarGridButton.heightAnchor.constraint(equalToConstant: 22),
+            titleBarControlsStack.leadingAnchor.constraint(equalTo: titleBarView.leadingAnchor, constant: 72),
+            titleBarControlsStack.centerYAnchor.constraint(equalTo: titleBarView.centerYAnchor),
             bottomBarView.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
             bottomBarView.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
             bottomBarView.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
@@ -818,12 +825,20 @@ final class MainWindowController: NSWindowController {
         showRoute(target, recordHistory: false)
     }
 
+    @objc private func goBackFromTitleBar(_ sender: Any?) {
+        goBack()
+    }
+
     private func goForward() {
         guard let target = forwardRoute, target != currentRoute else { return }
         let previousRoute = currentRoute
         forwardRoute = nil
         backRoute = previousRoute
         showRoute(target, recordHistory: false)
+    }
+
+    @objc private func goForwardFromTitleBar(_ sender: Any?) {
+        goForward()
     }
 
     private func moveSelectedFolderBrowserItemsToTrash() {
@@ -1325,19 +1340,34 @@ final class MainWindowController: NSWindowController {
         titleLabel.maximumNumberOfLines = 1
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleBarView.addSubview(titleLabel)
-        titleBarGridButton.translatesAutoresizingMaskIntoConstraints = false
-        let browseCurrentFolderText = Self.titleBarBrowseFolderToolTip()
-        titleBarGridButton.image = NSImage(
-            systemSymbolName: "square.grid.2x2",
-            accessibilityDescription: browseCurrentFolderText
+        configureTitleBarButton(
+            titleBarBackButton,
+            symbolName: "chevron.backward",
+            accessibilityDescription: "Back",
+            action: #selector(goBackFromTitleBar(_:))
         )
-        titleBarGridButton.bezelStyle = .toolbar
-        titleBarGridButton.isBordered = false
+        configureTitleBarButton(
+            titleBarForwardButton,
+            symbolName: "chevron.forward",
+            accessibilityDescription: "Forward",
+            action: #selector(goForwardFromTitleBar(_:))
+        )
+        let browseCurrentFolderText = Self.titleBarBrowseFolderToolTip()
+        configureTitleBarButton(
+            titleBarGridButton,
+            symbolName: "square.grid.2x2",
+            accessibilityDescription: browseCurrentFolderText,
+            action: #selector(browseCurrentImageFolder(_:))
+        )
         titleBarGridButton.toolTip = browseCurrentFolderText
-        titleBarGridButton.setAccessibilityLabel(browseCurrentFolderText)
-        titleBarGridButton.target = self
-        titleBarGridButton.action = #selector(browseCurrentImageFolder(_:))
-        titleBarView.addSubview(titleBarGridButton)
+        titleBarControlsStack.orientation = .horizontal
+        titleBarControlsStack.alignment = .centerY
+        titleBarControlsStack.distribution = .fill
+        titleBarControlsStack.spacing = 2
+        titleBarControlsStack.translatesAutoresizingMaskIntoConstraints = false
+        [titleBarBackButton, titleBarForwardButton, titleBarGridButton].forEach(titleBarControlsStack.addArrangedSubview)
+        titleBarView.addSubview(titleBarControlsStack)
+        updateTitleBarControlAvailability()
         let titleBarDoubleClick = NSClickGestureRecognizer(target: self, action: #selector(toggleWindowZoom(_:)))
         titleBarDoubleClick.numberOfClicksRequired = 2
         titleBarView.addGestureRecognizer(titleBarDoubleClick)
@@ -1363,6 +1393,29 @@ final class MainWindowController: NSWindowController {
         filmstripOverlayView.isHidden = true
         pageNavigationOverlayView.isHidden = true
         folderBrowserView.isHidden = true
+    }
+
+    private func configureTitleBarButton(
+        _ button: HoverToolbarButton,
+        symbolName: String,
+        accessibilityDescription: String,
+        action: Selector
+    ) {
+        let symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
+        button.image = NSImage(
+            systemSymbolName: symbolName,
+            accessibilityDescription: accessibilityDescription
+        )?.withSymbolConfiguration(symbolConfiguration)
+        button.toolTip = accessibilityDescription
+        button.setAccessibilityLabel(accessibilityDescription)
+        button.target = self
+        button.action = action
+    }
+
+    private func updateTitleBarControlAvailability() {
+        titleBarBackButton.isEnabled = backRoute != nil && backRoute != currentRoute
+        titleBarForwardButton.isEnabled = forwardRoute != nil && forwardRoute != currentRoute
+        titleBarGridButton.isEnabled = currentViewerURL != nil || associatedViewerRoute() != nil
     }
 
     static func canvasBackgroundColor() -> NSColor {
@@ -1467,6 +1520,9 @@ final class MainWindowController: NSWindowController {
     var isPageControlsVisibleForTesting: Bool { !pageNavigationOverlayView.isHidden }
     var folderBrowserItemCountForTesting: Int { folderBrowserView.testingItemCount }
     var folderBrowserOperationStatusTextForTesting: String? { folderBrowserView.testingOperationStatusText }
+    var titleBarBackButtonForTesting: NSButton { titleBarBackButton }
+    var titleBarForwardButtonForTesting: NSButton { titleBarForwardButton }
+    var titleBarGridButtonForTesting: NSButton { titleBarGridButton }
 
     func requestOpenFromEmptyStateForTesting() {
         emptyStateView.performOpenForTesting()

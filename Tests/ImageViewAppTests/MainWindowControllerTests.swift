@@ -1008,6 +1008,43 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertEqual(fixture.scanCount.value, 1)
     }
 
+    func testTitleBarNavigationButtonsTrackRouteAvailability() async throws {
+        let fixture = try makeFolderNavigationFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.folder) }
+        let controller = fixture.controller
+
+        XCTAssertEqual(controller.titleBarBackButtonForTesting.image?.accessibilityDescription, "Back")
+        XCTAssertEqual(controller.titleBarForwardButtonForTesting.image?.accessibilityDescription, "Forward")
+        XCTAssertNotNil(controller.titleBarGridButtonForTesting.image)
+        XCTAssertFalse(controller.titleBarBackButtonForTesting.isEnabled)
+        XCTAssertFalse(controller.titleBarForwardButtonForTesting.isEnabled)
+        XCTAssertFalse(controller.titleBarGridButtonForTesting.isEnabled)
+
+        await controller.openFolderForTesting(fixture.folder, scannerItems: [fixture.items[0]])
+        controller.openFirstFolderBrowserItemForTesting()
+
+        XCTAssertTrue(controller.titleBarBackButtonForTesting.isEnabled)
+        XCTAssertFalse(controller.titleBarForwardButtonForTesting.isEnabled)
+        XCTAssertTrue(controller.titleBarGridButtonForTesting.isEnabled)
+
+        controller.titleBarBackButtonForTesting.performClick(nil)
+        XCTAssertTrue(controller.isFolderBrowserVisibleForTesting)
+        XCTAssertFalse(controller.titleBarBackButtonForTesting.isEnabled)
+        XCTAssertTrue(controller.titleBarForwardButtonForTesting.isEnabled)
+        XCTAssertTrue(controller.titleBarGridButtonForTesting.isEnabled)
+
+        controller.titleBarForwardButtonForTesting.performClick(nil)
+        XCTAssertTrue(controller.isCanvasVisibleForTesting)
+        XCTAssertTrue(controller.titleBarBackButtonForTesting.isEnabled)
+        XCTAssertFalse(controller.titleBarForwardButtonForTesting.isEnabled)
+
+        controller.titleBarGridButtonForTesting.performClick(nil)
+        XCTAssertTrue(controller.isFolderBrowserVisibleForTesting)
+
+        controller.titleBarGridButtonForTesting.performClick(nil)
+        XCTAssertTrue(controller.isCanvasVisibleForTesting)
+    }
+
     func testDirectImageOpenDoesNotInventBackHistory() throws {
         let fixture = try makeFolderNavigationFixture()
         defer { try? FileManager.default.removeItem(at: fixture.folder) }
