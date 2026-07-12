@@ -24,10 +24,12 @@ final class BatchRenameSheetController: NSWindowController, NSTextFieldDelegate 
     private let startNumberField = NSTextField(string: "1")
     private let paddingField: NSTextField
     private let previewStack = NSStackView()
+    private let contentStack = NSStackView()
     private let errorLabel = NSTextField(labelWithString: "")
     private let renameButton = NSButton(title: AppStrings.text("batchRename.button.rename"), target: nil, action: nil)
     private var validatedParameters: RenameParameters?
     private var validatedPlan = BatchRenamePlan(proposals: [], failures: [])
+    private var backgroundClickMonitor: Any?
 
     var previewRowsForTesting: [PreviewRow] {
         previewRows()
@@ -71,14 +73,24 @@ final class BatchRenameSheetController: NSWindowController, NSTextFieldDelegate 
         confirm(nil)
     }
 
+    func beginSheet(on parentWindow: NSWindow, completionHandler: ((NSApplication.ModalResponse) -> Void)? = nil) {
+        guard let sheet = window else { return }
+        resizeToFitContent(maximumHeight: parentWindow.contentLayoutRect.height * 0.8)
+        installBackgroundClickMonitor(for: parentWindow)
+        parentWindow.beginSheet(sheet, completionHandler: completionHandler)
+    }
+
+    func dismissForBackgroundClickForTesting(in parentWindow: NSWindow) -> Bool {
+        dismissForBackgroundClick(in: parentWindow)
+    }
+
     private func buildView() {
         guard let window else { return }
 
-        let content = NSStackView()
-        content.orientation = .vertical
-        content.alignment = .leading
-        content.spacing = 12
-        content.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.orientation = .vertical
+        contentStack.alignment = .leading
+        contentStack.spacing = 12
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
 
         let title = NSTextField(labelWithString: AppStrings.text("batchRename.title"))
         title.font = .systemFont(ofSize: 18, weight: .semibold)
@@ -118,21 +130,21 @@ final class BatchRenameSheetController: NSWindowController, NSTextFieldDelegate 
         errorLabel.font = .systemFont(ofSize: 12, weight: .medium)
         errorLabel.isHidden = true
 
-        content.addArrangedSubview(title)
-        content.addArrangedSubview(form)
-        content.addArrangedSubview(errorLabel)
-        content.addArrangedSubview(previewTitle)
-        content.addArrangedSubview(previewStack)
-        content.addArrangedSubview(buttonStack)
+        contentStack.addArrangedSubview(title)
+        contentStack.addArrangedSubview(form)
+        contentStack.addArrangedSubview(errorLabel)
+        contentStack.addArrangedSubview(previewTitle)
+        contentStack.addArrangedSubview(previewStack)
+        contentStack.addArrangedSubview(buttonStack)
         window.contentView = NSView()
-        window.contentView?.addSubview(content)
+        window.contentView?.addSubview(contentStack)
 
         NSLayoutConstraint.activate([
-            content.leadingAnchor.constraint(equalTo: window.contentView!.leadingAnchor, constant: 20),
-            content.trailingAnchor.constraint(lessThanOrEqualTo: window.contentView!.trailingAnchor, constant: -20),
-            content.topAnchor.constraint(equalTo: window.contentView!.topAnchor, constant: 20),
-            content.bottomAnchor.constraint(lessThanOrEqualTo: window.contentView!.bottomAnchor, constant: -20),
-            baseNameField.widthAnchor.constraint(equalToConstant: 260),
+            contentStack.leadingAnchor.constraint(equalTo: window.contentView!.leadingAnchor, constant: 20),
+            contentStack.trailingAnchor.constraint(equalTo: window.contentView!.trailingAnchor, constant: -20),
+            contentStack.topAnchor.constraint(equalTo: window.contentView!.topAnchor, constant: 20),
+            contentStack.bottomAnchor.constraint(equalTo: window.contentView!.bottomAnchor, constant: -20),
+            baseNameField.widthAnchor.constraint(greaterThanOrEqualToConstant: 260),
             startNumberField.widthAnchor.constraint(equalToConstant: 80),
             paddingField.widthAnchor.constraint(equalToConstant: 80)
         ])
@@ -239,6 +251,7 @@ final class BatchRenameSheetController: NSWindowController, NSTextFieldDelegate 
         for row in previewRows().prefix(8) {
             previewStack.addArrangedSubview(NSTextField(labelWithString: "\(row.oldName) → \(row.newName)"))
         }
+        resizeToFitContent()
     }
 
     private func planFailureMessage(_ plan: BatchRenamePlan) -> String? {
@@ -289,6 +302,7 @@ final class BatchRenameSheetController: NSWindowController, NSTextFieldDelegate 
     }
 
     private func closeSheet() {
+        removeBackgroundClickMonitor()
         guard let window else { return }
         if let sheetParent = window.sheetParent {
             sheetParent.endSheet(window)
@@ -296,6 +310,36 @@ final class BatchRenameSheetController: NSWindowController, NSTextFieldDelegate 
             window.close()
         }
     }
+
+    private func resizeToFitContent(maximumHeight: CGFloat = 600) {
+        guard let window, contentStack.superview != nil else { return }
+        window.contentView?.layoutSubtreeIfNeeded()
+        let fittingSize = contentStack.fittingSize
+        let width = min(max(fittingSize.width + 40, 480), 720)
+        let height = min(max(fittingSize.height + 40, 220), maximumHeight)
+        window.setContentSize(NSSize(width: width, height: height))
+    }
+
+    private func installBackgroundClickMonitor(for parentWindow: NSWindow) {
+        removeBackgroundClickMonitor()
+        backgroundClickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self, weak parentWindow] event in
+            guard let self, let parentWindow, event.window === parentWindow else { return event }
+            return self.dismissForBackgroundClick(in: parentWindow) ? nil : event
+        }
+    }
+
+    private func dismissForBackgroundClick(in parentWindow: NSWindow) -> Bool {
+        guard window?.sheetParent === parentWindow else { return false }
+        closeSheet()
+        return true
+    }
+
+    private func removeBackgroundClickMonitor() {
+        guard let backgroundClickMonitor else { return }
+        NSEvent.removeMonitor(backgroundClickMonitor)
+        self.backgroundClickMonitor = nil
+    }
+
 }
 
 private enum ValidationResult {

@@ -1133,41 +1133,23 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertEqual(fixture.scanCount.value, 1)
     }
 
-    func testTitleBarNavigationButtonsTrackRouteAvailability() async throws {
+    func testTitleBarOnlyShowsFolderGridNavigationButton() async throws {
         let fixture = try makeFolderNavigationFixture()
         defer { try? FileManager.default.removeItem(at: fixture.folder) }
         let controller = fixture.controller
 
+        XCTAssertEqual(controller.titleBarControlsStackForTesting.arrangedSubviews.count, 1)
         XCTAssertEqual(
-            controller.titleBarBackButtonForTesting.image?.accessibilityDescription,
-            AppStrings.text("titleBar.back")
-        )
-        XCTAssertEqual(
-            controller.titleBarForwardButtonForTesting.image?.accessibilityDescription,
-            AppStrings.text("titleBar.forward")
+            controller.titleBarControlsStackForTesting.arrangedSubviews.first,
+            controller.titleBarGridButtonForTesting
         )
         XCTAssertNotNil(controller.titleBarGridButtonForTesting.image)
-        XCTAssertFalse(controller.titleBarBackButtonForTesting.isEnabled)
-        XCTAssertFalse(controller.titleBarForwardButtonForTesting.isEnabled)
         XCTAssertFalse(controller.titleBarGridButtonForTesting.isEnabled)
 
         await controller.openFolderForTesting(fixture.folder, scannerItems: [fixture.items[0]])
         controller.openFirstFolderBrowserItemForTesting()
 
-        XCTAssertTrue(controller.titleBarBackButtonForTesting.isEnabled)
-        XCTAssertFalse(controller.titleBarForwardButtonForTesting.isEnabled)
         XCTAssertTrue(controller.titleBarGridButtonForTesting.isEnabled)
-
-        controller.titleBarBackButtonForTesting.performClick(nil)
-        XCTAssertTrue(controller.isFolderBrowserVisibleForTesting)
-        XCTAssertFalse(controller.titleBarBackButtonForTesting.isEnabled)
-        XCTAssertTrue(controller.titleBarForwardButtonForTesting.isEnabled)
-        XCTAssertTrue(controller.titleBarGridButtonForTesting.isEnabled)
-
-        controller.titleBarForwardButtonForTesting.performClick(nil)
-        XCTAssertTrue(controller.isCanvasVisibleForTesting)
-        XCTAssertTrue(controller.titleBarBackButtonForTesting.isEnabled)
-        XCTAssertFalse(controller.titleBarForwardButtonForTesting.isEnabled)
 
         controller.titleBarGridButtonForTesting.performClick(nil)
         XCTAssertTrue(controller.isFolderBrowserVisibleForTesting)
@@ -1214,8 +1196,6 @@ final class MainWindowControllerTests: XCTestCase {
         let recognizer = controller.titleBarDoubleClickRecognizerForTesting
 
         for protectedView in [
-            controller.titleBarBackButtonForTesting,
-            controller.titleBarForwardButtonForTesting,
             controller.titleBarGridButtonForTesting,
             controller.titleBarControlsStackForTesting
         ] {

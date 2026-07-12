@@ -16,6 +16,7 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
 
     private let thumbnailProvider: ThumbnailProvider
     private var items: [ImageItem] = []
+    private var itemIndexPathsByID: [ImageItem.ID: IndexPath] = [:]
 
     private let searchField = NSSearchField()
     private let sortPopUpButton = NSPopUpButton()
@@ -75,6 +76,12 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
             ($0 as? NSClickGestureRecognizer)?.numberOfClicksRequired == 2
         }
     }
+    var testingDoubleClickDelaysPrimaryMouseButtonEvents: Bool? {
+        collectionView.gestureRecognizers
+            .compactMap { $0 as? NSClickGestureRecognizer }
+            .first { $0.numberOfClicksRequired == 2 }?
+            .delaysPrimaryMouseButtonEvents
+    }
 
     func testingCell(at index: Int) -> FolderBrowserCellView? {
         guard index >= 0, index < items.count else { return nil }
@@ -115,14 +122,17 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
     func applyItems(_ newItems: [ImageItem]) {
         guard items != newItems else { return }
         items = newItems
+        itemIndexPathsByID = Dictionary(
+            uniqueKeysWithValues: newItems.enumerated().map { index, item in
+                (item.id, IndexPath(item: index, section: 0))
+            }
+        )
         collectionView.reloadData()
         updateBatchActionAvailability()
     }
 
     func applySelection(_ selectedIDs: Set<ImageItem.ID>) {
-        let indexPaths = Set(items.enumerated().compactMap { index, item in
-            selectedIDs.contains(item.id) ? IndexPath(item: index, section: 0) : nil
-        })
+        let indexPaths = Set(selectedIDs.compactMap { itemIndexPathsByID[$0] })
         guard collectionView.selectionIndexPaths != indexPaths else {
             updateBatchActionAvailability()
             return
@@ -426,6 +436,7 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
         }
         let doubleClickRecognizer = NSClickGestureRecognizer(target: self, action: #selector(openSelectedItem(_:)))
         doubleClickRecognizer.numberOfClicksRequired = 2
+        doubleClickRecognizer.delaysPrimaryMouseButtonEvents = false
         collectionView.addGestureRecognizer(doubleClickRecognizer)
 
         collectionScrollView.translatesAutoresizingMaskIntoConstraints = false

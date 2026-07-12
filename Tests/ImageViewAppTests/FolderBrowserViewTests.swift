@@ -153,6 +153,22 @@ final class FolderBrowserViewTests: XCTestCase {
         XCTAssertEqual(view.testingSelectedIDs, [first.id])
     }
 
+    func testApplyingOneSelectionInLargeFolderMeetsInteractionBudget() {
+        let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
+        let items = (0..<200_000).map { index in
+            ImageItem(url: folder.appendingPathComponent("\(index).png"), format: .png)
+        }
+        let view = FolderBrowserView(thumbnailProvider: .stub)
+        view.applyItems(items)
+
+        let elapsed = ContinuousClock().measure {
+            view.applySelection([items[100_000].id])
+        }
+
+        XCTAssertLessThan(elapsed, .milliseconds(20))
+        XCTAssertEqual(view.testingSelectedIDs, [items[100_000].id])
+    }
+
     func testCommandASelectsAllVisibleItemsAndPublishesSelection() {
         let first = ImageItem(url: URL(fileURLWithPath: "/tmp/first.png"), format: .png)
         let second = ImageItem(url: URL(fileURLWithPath: "/tmp/second.jpg"), format: .jpeg)
@@ -223,6 +239,7 @@ final class FolderBrowserViewTests: XCTestCase {
         view.apply(items: [first, second], selectedIDs: [first.id])
         view.layoutSubtreeIfNeeded()
         XCTAssertEqual(view.testingDoubleClickRecognizerCount, 1)
+        XCTAssertEqual(view.testingDoubleClickDelaysPrimaryMouseButtonEvents, false)
         var opened: [ImageItem] = []
         view.onOpenItem = { opened.append($0) }
 

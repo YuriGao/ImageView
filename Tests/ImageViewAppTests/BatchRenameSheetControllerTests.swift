@@ -32,6 +32,35 @@ final class BatchRenameSheetControllerTests: XCTestCase {
         }
     }
 
+    func testWindowHeightTracksPreviewContent() throws {
+        let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
+        let oneItem = [ImageItem(url: folder.appendingPathComponent("one.png"), format: .png)]
+        let eightItems = (0..<8).map {
+            ImageItem(url: folder.appendingPathComponent("item-\($0).png"), format: .png)
+        }
+
+        let compactHeight = try XCTUnwrap(makeController(items: oneItem).window).contentLayoutRect.height
+        let expandedHeight = try XCTUnwrap(makeController(items: eightItems).window).contentLayoutRect.height
+
+        XCTAssertLessThan(compactHeight, expandedHeight)
+    }
+
+    func testClickingDimmedParentCancelsSheet() throws {
+        let item = ImageItem(url: URL(fileURLWithPath: "/tmp/one.png"), format: .png)
+        let controller = makeController(items: [item])
+        let parent = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        let sheet = try XCTUnwrap(controller.window)
+        controller.beginSheet(on: parent)
+
+        XCTAssertTrue(controller.dismissForBackgroundClickForTesting(in: parent))
+        XCTAssertNil(sheet.sheetParent)
+    }
+
     func testPlanConflictsDisplayExactRowsDisableRenameAndRejectConfirm() {
         let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
         let first = ImageItem(url: folder.appendingPathComponent("one.png"), format: .png)

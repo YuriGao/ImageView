@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import XCTest
 @testable import ImageViewApp
@@ -279,6 +280,39 @@ final class FolderBrowserViewModelTests: XCTestCase {
         viewModel.setSelection([third.id, first.id, second.id])
 
         XCTAssertEqual(viewModel.selectedItems, [first, second, third])
+    }
+
+    func testSetSelectionDoesNotRepublishWholeFolderSession() async {
+        let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
+        let item = ImageItem(url: folder.appendingPathComponent("one.png"), format: .png)
+        let viewModel = FolderBrowserViewModel(scanFolder: { _ in [item] })
+        await viewModel.openFolder(folder)
+        var sessionPublicationCount = 0
+        let cancellable = viewModel.$session.dropFirst().sink { _ in
+            sessionPublicationCount += 1
+        }
+
+        viewModel.setSelection([item.id])
+
+        XCTAssertEqual(viewModel.selectedItems, [item])
+        XCTAssertEqual(sessionPublicationCount, 0)
+        withExtendedLifetime(cancellable) {}
+    }
+
+    func testSelectingOneItemInLargeFolderMeetsInteractionBudget() async {
+        let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
+        let items = (0..<200_000).map { index in
+            ImageItem(url: folder.appendingPathComponent("\(index).png"), format: .png)
+        }
+        let viewModel = FolderBrowserViewModel(scanFolder: { _ in items })
+        await viewModel.openFolder(folder)
+
+        let elapsed = ContinuousClock().measure {
+            viewModel.setSelection([items[100_000].id])
+        }
+
+        XCTAssertLessThan(elapsed, .milliseconds(20))
+        XCTAssertEqual(viewModel.selectedItems, [items[100_000]])
     }
 
     func testApplyingTrashLikeResultRemovesSucceededAndKeepsFailedSelected() async {

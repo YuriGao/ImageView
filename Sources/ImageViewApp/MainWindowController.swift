@@ -123,8 +123,6 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
     private let titleBarView = NSVisualEffectView()
     private let titleBarDivider = NSBox()
     private let titleLabel = NSTextField(labelWithString: "ImageView")
-    private let titleBarBackButton = HoverToolbarButton()
-    private let titleBarForwardButton = HoverToolbarButton()
     private let titleBarGridButton = HoverToolbarButton()
     private let titleBarControlsStack = NSStackView()
     private lazy var titleBarDoubleClickRecognizer = NSClickGestureRecognizer(
@@ -491,7 +489,6 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
                     self.currentFolderBrowserItems = items
                     self.folderBrowserView.applyItems(items)
                 }
-                self.folderBrowserView.applySelection(Set(session?.selectedItemIDs ?? []))
                 self.folderBrowserView.applyFilter(session?.filter ?? FolderFilter())
                 self.folderBrowserView.applyPresentation(Self.folderBrowserPresentation(
                     session: session,
@@ -501,6 +498,13 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
                 self.updateTitleBarControlAvailability(
                     folderState: FolderRouteState(session: session, isLoading: isLoading)
                 )
+            }
+            .store(in: &cancellables)
+
+        folderBrowserViewModel.$selectedItemIDs
+            .removeDuplicates()
+            .sink { [weak self] selectedItemIDs in
+                self?.folderBrowserView.applySelection(Set(selectedItemIDs))
             }
             .store(in: &cancellables)
 
@@ -999,20 +1003,12 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         showRoute(target, recordHistory: false)
     }
 
-    @objc private func goBackFromTitleBar(_ sender: Any?) {
-        goBack()
-    }
-
     private func goForward() {
         guard let target = forwardRoute, target != currentRoute else { return }
         let previousRoute = currentRoute
         forwardRoute = nil
         backRoute = previousRoute
         showRoute(target, recordHistory: false)
-    }
-
-    @objc private func goForwardFromTitleBar(_ sender: Any?) {
-        goForward()
     }
 
     private func moveSelectedFolderBrowserItemsToTrash() {
@@ -1423,11 +1419,11 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
             self?.activeBatchRenameSheet = nil
         }
 
-        guard let sheet = controller.window, let window else {
+        guard controller.window != nil, let window else {
             return
         }
         activeBatchRenameSheet = controller
-        window.beginSheet(sheet) { [weak self] _ in
+        controller.beginSheet(on: window) { [weak self] _ in
             self?.activeBatchRenameSheet = nil
         }
     }
@@ -1600,18 +1596,6 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         titleLabel.maximumNumberOfLines = 1
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleBarView.addSubview(titleLabel)
-        configureTitleBarButton(
-            titleBarBackButton,
-            symbolName: "chevron.backward",
-            accessibilityDescription: AppStrings.text("titleBar.back"),
-            action: #selector(goBackFromTitleBar(_:))
-        )
-        configureTitleBarButton(
-            titleBarForwardButton,
-            symbolName: "chevron.forward",
-            accessibilityDescription: AppStrings.text("titleBar.forward"),
-            action: #selector(goForwardFromTitleBar(_:))
-        )
         let browseCurrentFolderText = Self.titleBarBrowseFolderToolTip()
         configureTitleBarButton(
             titleBarGridButton,
@@ -1625,7 +1609,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         titleBarControlsStack.distribution = .fill
         titleBarControlsStack.spacing = 2
         titleBarControlsStack.translatesAutoresizingMaskIntoConstraints = false
-        [titleBarBackButton, titleBarForwardButton, titleBarGridButton].forEach(titleBarControlsStack.addArrangedSubview)
+        titleBarControlsStack.addArrangedSubview(titleBarGridButton)
         titleBarView.addSubview(titleBarControlsStack)
         updateTitleBarControlAvailability()
         titleBarDoubleClickRecognizer.numberOfClicksRequired = 2
@@ -1673,8 +1657,6 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
     }
 
     private func updateTitleBarControlAvailability(folderState: FolderRouteState? = nil) {
-        titleBarBackButton.isEnabled = backRoute != nil && backRoute != currentRoute
-        titleBarForwardButton.isEnabled = forwardRoute != nil && forwardRoute != currentRoute
         titleBarGridButton.isEnabled = canToggleTitleBarGrid(folderState: folderState)
         let gridText: String
         if case .folder = currentRoute {
@@ -1848,10 +1830,8 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
     var folderBrowserItemCountForTesting: Int { folderBrowserView.testingItemCount }
     var folderBrowserOperationStatusTextForTesting: String? { folderBrowserView.testingOperationStatusText }
     var folderBrowserPresentationTitleForTesting: String? { folderBrowserView.testingPresentationTitle }
-    var titleBarBackButtonForTesting: NSButton { titleBarBackButton }
-    var titleBarForwardButtonForTesting: NSButton { titleBarForwardButton }
     var titleBarGridButtonForTesting: NSButton { titleBarGridButton }
-    var titleBarControlsStackForTesting: NSView { titleBarControlsStack }
+    var titleBarControlsStackForTesting: NSStackView { titleBarControlsStack }
     var titleBarViewForTesting: NSView { titleBarView }
     var titleBarDoubleClickRecognizerForTesting: NSClickGestureRecognizer { titleBarDoubleClickRecognizer }
 
