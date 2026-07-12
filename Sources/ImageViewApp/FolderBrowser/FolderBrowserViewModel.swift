@@ -17,6 +17,11 @@ enum FolderBrowserPresentation: Equatable {
     case loadFailed(String)
 }
 
+enum FolderItemURLMutation: Equatable {
+    case removed(Set<URL>)
+    case renamed([URL: URL])
+}
+
 @MainActor
 final class FolderBrowserViewModel: ObservableObject {
     typealias ScanFolder = @Sendable (URL) async throws -> [ImageItem]
@@ -32,6 +37,7 @@ final class FolderBrowserViewModel: ObservableObject {
     @Published private(set) var operationFailures: [BatchFileFailure] = []
     @Published private(set) var loadErrorMessage: String?
     private(set) var requestedFolderURL: URL?
+    var onItemURLMutation: ((FolderItemURLMutation) -> Void)?
 
     var visibleItems: [ImageItem] {
         session?.visibleItems ?? []
@@ -150,6 +156,9 @@ final class FolderBrowserViewModel: ObservableObject {
         if removingSucceeded {
             let succeededIDs = Set(result.succeeded)
             session?.removeItems(with: succeededIDs)
+            if !succeededIDs.isEmpty {
+                onItemURLMutation?(.removed(succeededIDs))
+            }
         }
 
         let failedIDs = result.failures.map(\.url)
@@ -276,6 +285,7 @@ final class FolderBrowserViewModel: ObservableObject {
             }
             session.selectedItemIDs = result.failures.map(\.url) + successfulDestinationsBySource.values.map { $0 }
             self.session = session
+            onItemURLMutation?(.renamed(successfulDestinationsBySource))
         } else {
             session?.selectedItemIDs = result.failures.map(\.url)
         }

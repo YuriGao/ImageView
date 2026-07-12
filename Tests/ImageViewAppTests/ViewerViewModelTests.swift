@@ -8,6 +8,31 @@ import XCTest
 
 @MainActor
 final class ViewerViewModelTests: XCTestCase {
+    func testBatchRenameMigratesNonCurrentNeighborInNavigationItems() async throws {
+        let firstURL = URL(fileURLWithPath: "/tmp/a.png")
+        let secondURL = URL(fileURLWithPath: "/tmp/b.png")
+        let renamedSecondURL = URL(fileURLWithPath: "/tmp/renamed-b.png")
+        let image = try makeDecodedImage(width: 4, height: 3)
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: { _ in [
+                ImageItem(url: firstURL, format: .png),
+                ImageItem(url: secondURL, format: .png)
+            ] },
+            loadImageAtURL: { _, _ in image },
+            loadPreviewAtURL: { _, _ in image }
+        )
+        await viewModel.open(url: firstURL)
+
+        viewModel.applyItemURLMigrations([secondURL: renamedSecondURL])
+
+        XCTAssertEqual(viewModel.navigationState?.currentItem?.url, firstURL)
+        XCTAssertEqual(
+            Set(viewModel.navigationState?.items.map(\.url) ?? []),
+            Set([firstURL, renamedSecondURL])
+        )
+        XCTAssertFalse(viewModel.navigationState?.items.contains(where: { $0.url == secondURL }) == true)
+    }
+
     func testOpenLoadsImageAndBuildsNavigationStateFromDirectory() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

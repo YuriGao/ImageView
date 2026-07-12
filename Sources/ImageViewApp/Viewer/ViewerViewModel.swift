@@ -356,17 +356,44 @@ final class ViewerViewModel: ObservableObject {
         }
     }
 
-    func migrateDisplayedItemURL(from oldURL: URL, to newURL: URL) {
-        guard let item = navigationState?.currentItem,
-              item.url.standardizedFileURL == oldURL.standardizedFileURL else {
+    func applyItemURLMigrations(_ migrations: [URL: URL]) {
+        let standardizedMigrations = Dictionary(
+            uniqueKeysWithValues: migrations.map { ($0.key.standardizedFileURL, $0.value.standardizedFileURL) }
+        )
+        let previousCurrentURL = navigationState?.currentItem?.url.standardizedFileURL
+        navigationState?.applyURLMigrations(standardizedMigrations)
+        guard let previousCurrentURL,
+              let newCurrentItem = navigationState?.currentItem,
+              newCurrentItem.url.standardizedFileURL != previousCurrentURL else {
             return
         }
-        navigationState?.replaceCurrentURL(newURL, format: item.format)
-        displayedFileVersion = currentFileVersionAtURL(newURL)
+        displayedFileVersion = currentFileVersionAtURL(newCurrentItem.url)
         if let image = currentImage {
-            updateMetadata(url: newURL, format: item.format, image: image)
+            updateMetadata(url: newCurrentItem.url, format: newCurrentItem.format, image: image)
         }
         updateDisplayTitle()
+    }
+
+    func removeItemsFromNavigation(_ removedURLs: Set<URL>) {
+        let standardizedURLs = Set(removedURLs.map(\.standardizedFileURL))
+        let previousCurrentURL = navigationState?.currentItem?.url.standardizedFileURL
+        navigationState?.removeItems(withURLs: standardizedURLs)
+        guard navigationState?.currentItem?.url.standardizedFileURL != previousCurrentURL else { return }
+
+        guard navigationState?.currentItem != nil else {
+            currentImage = nil
+            currentMetadata = nil
+            persistedCurrentImage = nil
+            displayedFileVersion = nil
+            loadPhase = .empty
+            errorMessage = nil
+            updateDisplayTitle()
+            return
+        }
+        loadPhase = .loading
+        errorMessage = nil
+        updateDisplayTitle()
+        startDisplayCurrentAndPreload()
     }
 
     func revealCurrentInFinder() {

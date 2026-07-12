@@ -127,7 +127,6 @@ final class MainWindowController: NSWindowController {
     private var currentRoute: ContentRoute?
     private var backRoute: ContentRoute?
     private var forwardRoute: ContentRoute?
-    private var lastPublishedFolderSession: FolderSession?
     private var activeBatchRenameSheet: BatchRenameSheetController?
     var batchActionDialogProviderForTesting: BatchActionDialogProvider?
     private var unsavedChangesChoiceForTesting: UnsavedChangesChoice?
@@ -391,6 +390,9 @@ final class MainWindowController: NSWindowController {
         folderBrowserView.onBatchRename = { [weak self] in
             self?.renameSelectedFolderBrowserItems()
         }
+        folderBrowserViewModel.onItemURLMutation = { [weak self] mutation in
+            self?.applyFolderItemURLMutation(mutation)
+        }
 
         viewModel.$currentImage
             .sink { [weak self] image in
@@ -412,8 +414,6 @@ final class MainWindowController: NSWindowController {
         folderBrowserViewModel.$session
             .sink { [weak self] session in
                 guard let self else { return }
-                self.reconcileRoutes(from: self.lastPublishedFolderSession, to: session)
-                self.lastPublishedFolderSession = session
                 let items = session?.visibleItems ?? []
                 if self.currentFolderBrowserItems != items {
                     self.currentFolderBrowserItems = items
@@ -739,42 +739,38 @@ final class MainWindowController: NSWindowController {
         }
     }
 
-    private func reconcileRoutes(from previousSession: FolderSession?, to session: FolderSession?) {
-        guard let previousSession,
-              let previousLastOpenedID = previousSession.lastOpenedItemID,
-              let previousItem = previousSession.items.first(where: { $0.id == previousLastOpenedID }),
-              session?.items.contains(where: {
-                  $0.url.standardizedFileURL == previousItem.url.standardizedFileURL
-              }) != true else {
-            return
-        }
-
-        let oldURL = previousItem.url.standardizedFileURL
-        if let newLastOpenedID = session?.lastOpenedItemID,
-           let newItem = session?.items.first(where: { $0.id == newLastOpenedID }) {
-            let newURL = newItem.url.standardizedFileURL
-            currentRoute = migratingViewerRoute(currentRoute, from: oldURL, to: newURL)
-            backRoute = migratingViewerRoute(backRoute, from: oldURL, to: newURL)
-            forwardRoute = migratingViewerRoute(forwardRoute, from: oldURL, to: newURL)
-            viewModel.migrateDisplayedItemURL(from: oldURL, to: newURL)
-        } else {
-            currentRoute = removingViewerRoute(currentRoute, matching: oldURL)
-            backRoute = removingViewerRoute(backRoute, matching: oldURL)
-            forwardRoute = removingViewerRoute(forwardRoute, matching: oldURL)
+    private func applyFolderItemURLMutation(_ mutation: FolderItemURLMutation) {
+        switch mutation {
+        case let .removed(urls):
+            let standardizedURLs = Set(urls.map(\.standardizedFileURL))
+            currentRoute = removingViewerRoute(currentRoute, matchingAny: standardizedURLs)
+            backRoute = removingViewerRoute(backRoute, matchingAny: standardizedURLs)
+            forwardRoute = removingViewerRoute(forwardRoute, matchingAny: standardizedURLs)
+            viewModel.removeItemsFromNavigation(standardizedURLs)
+        case let .renamed(migrations):
+            let standardizedMigrations = Dictionary(
+                uniqueKeysWithValues: migrations.map {
+                    ($0.key.standardizedFileURL, $0.value.standardizedFileURL)
+                }
+            )
+            currentRoute = migratingViewerRoute(currentRoute, using: standardizedMigrations)
+            backRoute = migratingViewerRoute(backRoute, using: standardizedMigrations)
+            forwardRoute = migratingViewerRoute(forwardRoute, using: standardizedMigrations)
+            viewModel.applyItemURLMigrations(standardizedMigrations)
         }
     }
 
-    private func migratingViewerRoute(_ route: ContentRoute?, from oldURL: URL, to newURL: URL) -> ContentRoute? {
+    private func migratingViewerRoute(_ route: ContentRoute?, using migrations: [URL: URL]) -> ContentRoute? {
         guard case let .viewer(url) = route,
-              url.standardizedFileURL == oldURL else {
+              let destination = migrations[url.standardizedFileURL] else {
             return route
         }
-        return .viewer(newURL)
+        return .viewer(destination)
     }
 
-    private func removingViewerRoute(_ route: ContentRoute?, matching removedURL: URL) -> ContentRoute? {
+    private func removingViewerRoute(_ route: ContentRoute?, matchingAny removedURLs: Set<URL>) -> ContentRoute? {
         guard case let .viewer(url) = route,
-              url.standardizedFileURL == removedURL else {
+              removedURLs.contains(url.standardizedFileURL) else {
             return route
         }
         return nil
@@ -1524,6 +1520,9 @@ final class MainWindowController: NSWindowController {
     }
     var viewerNavigationURLForTesting: URL? {
         viewModel.navigationState?.currentItem?.url.standardizedFileURL
+    }
+    var viewerNavigationURLsForTesting: [URL] {
+        viewModel.navigationState?.items.map { $0.url.standardizedFileURL } ?? []
     }
 
     func setUnsavedChangesChoiceForTesting(_ choice: UnsavedChangesChoice?) {

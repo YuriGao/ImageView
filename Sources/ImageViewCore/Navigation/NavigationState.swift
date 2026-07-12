@@ -40,4 +40,37 @@ public struct NavigationState: Equatable, Sendable {
         items.sort { NaturalSort.compare($0.url.lastPathComponent, $1.url.lastPathComponent) }
         self.currentIndex = items.firstIndex { $0.url == newURL } ?? items.firstIndex { $0.url.standardizedFileURL == newURL.standardizedFileURL }
     }
+
+    public mutating func applyURLMigrations(_ migrations: [URL: URL]) {
+        guard !migrations.isEmpty else { return }
+        let currentURL = currentItem?.url.standardizedFileURL
+        let migratedCurrentURL = currentURL.flatMap { migrations[$0] }?.standardizedFileURL ?? currentURL
+        items = items.map { item in
+            let standardizedURL = item.url.standardizedFileURL
+            guard let destination = migrations[standardizedURL] else { return item }
+            return ImageItem(
+                url: destination,
+                format: SupportedImageFormat(fileExtension: destination.pathExtension) ?? item.format
+            )
+        }
+        items.sort { NaturalSort.compare($0.url.lastPathComponent, $1.url.lastPathComponent) }
+        currentIndex = migratedCurrentURL.flatMap { migratedCurrentURL in
+            items.firstIndex { $0.url.standardizedFileURL == migratedCurrentURL }
+        }
+    }
+
+    public mutating func removeItems(withURLs removedURLs: Set<URL>) {
+        guard !removedURLs.isEmpty else { return }
+        let previousCurrentURL = currentItem?.url.standardizedFileURL
+        let previousCurrentIndex = currentIndex
+        items.removeAll { removedURLs.contains($0.url.standardizedFileURL) }
+        if let previousCurrentURL,
+           let retainedIndex = items.firstIndex(where: { $0.url.standardizedFileURL == previousCurrentURL }) {
+            currentIndex = retainedIndex
+        } else if let previousCurrentIndex, !items.isEmpty {
+            currentIndex = min(previousCurrentIndex, items.count - 1)
+        } else {
+            currentIndex = nil
+        }
+    }
 }

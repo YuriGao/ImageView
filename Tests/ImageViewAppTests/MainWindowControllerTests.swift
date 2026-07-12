@@ -1048,6 +1048,92 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertTrue(fixture.controller.isCanvasVisibleForTesting)
     }
 
+    func testDeletingNavigatedForwardTargetAfterBackClearsForwardAndViewerNavigation() async throws {
+        let fixture = try makeFolderNavigationFixture(
+            itemNames: ["a.png", "b.png"],
+            moveToTrash: { BatchOperationResult(succeeded: $0) }
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.folder) }
+        await fixture.controller.openFolderForTesting(fixture.folder, scannerItems: fixture.items)
+        fixture.controller.openFirstFolderBrowserItemForTesting()
+        for _ in 0..<100 where !fixture.controller.canEditCurrentImageForTesting {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        for _ in 0..<100 where fixture.controller.viewerNavigationURLsForTesting.count != 2 {
+            await Task.yield()
+        }
+        fixture.controller.showNextImage(nil)
+        for _ in 0..<100 where fixture.controller.viewerNavigationURLForTesting != fixture.items[1].url {
+            await Task.yield()
+        }
+        fixture.controller.goBackForTesting()
+        fixture.controller.batchActionDialogProviderForTesting = .init(confirmTrash: { _ in true })
+        fixture.controller.selectFolderBrowserItemsForTesting([fixture.items[1].id])
+
+        fixture.controller.triggerFolderBrowserTrashForTesting()
+        for _ in 0..<100 where fixture.controller.folderBrowserItemCountForTesting != 1 {
+            await Task.yield()
+        }
+
+        XCTAssertFalse(fixture.controller.canGoForwardForTesting)
+        XCTAssertNil(fixture.controller.forwardViewerURLForTesting)
+        XCTAssertEqual(fixture.controller.viewerNavigationURLsForTesting, [fixture.items[0].url.standardizedFileURL])
+    }
+
+    func testRenamingNavigatedForwardTargetAfterBackMigratesForwardAndAllViewerItems() async throws {
+        let renamedURLBox = MainWindowLockedValue<URL?>(nil)
+        let fixture = try makeFolderNavigationFixture(
+            itemNames: ["a.png", "b.png"],
+            planBatchRename: { urls, _, _, _ in
+                let destination = urls[0].deletingLastPathComponent().appendingPathComponent("renamed-b.png")
+                renamedURLBox.set(destination)
+                return BatchRenamePlan(
+                    proposals: [RenameProposal(source: urls[0], destination: destination)],
+                    failures: []
+                )
+            },
+            executeRenamePlan: { plan in
+                BatchOperationResult(succeeded: plan.proposals.map(\.source))
+            }
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.folder) }
+        await fixture.controller.openFolderForTesting(fixture.folder, scannerItems: fixture.items)
+        fixture.controller.openFirstFolderBrowserItemForTesting()
+        for _ in 0..<100 where !fixture.controller.canEditCurrentImageForTesting {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        for _ in 0..<100 where fixture.controller.viewerNavigationURLsForTesting.count != 2 {
+            await Task.yield()
+        }
+        fixture.controller.showNextImage(nil)
+        for _ in 0..<100 where fixture.controller.viewerNavigationURLForTesting != fixture.items[1].url {
+            await Task.yield()
+        }
+        fixture.controller.goBackForTesting()
+        fixture.controller.selectFolderBrowserItemsForTesting([fixture.items[1].id])
+        fixture.controller.batchActionDialogProviderForTesting = .init(
+            requestRenameParameters: { _, confirm in
+                confirm(.init(baseName: "renamed-b", startNumber: 1, padding: 2))
+            }
+        )
+
+        fixture.controller.triggerFolderBrowserRenameForTesting()
+        for _ in 0..<100 where renamedURLBox.value == nil {
+            await Task.yield()
+        }
+        let renamedURL = try XCTUnwrap(renamedURLBox.value).standardizedFileURL
+        for _ in 0..<100 where fixture.controller.forwardViewerURLForTesting != renamedURL {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(fixture.controller.forwardViewerURLForTesting, renamedURL)
+        XCTAssertEqual(
+            Set(fixture.controller.viewerNavigationURLsForTesting),
+            Set([fixture.items[0].url.standardizedFileURL, renamedURL])
+        )
+        XCTAssertFalse(fixture.controller.viewerNavigationURLsForTesting.contains(fixture.items[1].url.standardizedFileURL))
+    }
+
     func testTitleBarGridButtonTooltipIsLocalized() {
         XCTAssertEqual(
             MainWindowController.titleBarBrowseFolderToolTip(preferredLanguages: ["en"]),
