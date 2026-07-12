@@ -94,6 +94,11 @@
 "folderBrowser.confirmTrash.button" = "Move to Trash";
 "folderBrowser.confirmTrash.cancel" = "Cancel";
 "folderBrowser.movePanel.prompt" = "Move";
+"folderBrowser.moveConflict.title" = "Some files already exist";
+"folderBrowser.moveConflict.message" = "Choose how to handle all conflicting files before moving.";
+"folderBrowser.moveConflict.skip" = "Skip Conflicts";
+"folderBrowser.moveConflict.keepBoth" = "Keep Both";
+"folderBrowser.moveConflict.cancel" = "Cancel";
 "settings.title" = "ImageView Settings";
 "settings.general.title" = "General";
 "settings.general.showsFilmstrip" = "Show filmstrip";

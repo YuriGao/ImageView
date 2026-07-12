@@ -747,11 +747,25 @@ final class MainWindowControllerTests: XCTestCase {
         let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
         let destination = URL(fileURLWithPath: "/tmp/archive", isDirectory: true)
         let item = ImageItem(url: folder.appendingPathComponent("one.png"), format: .png)
-        let moved = MainWindowLockedValue<(urls: [URL], destination: URL, policy: MoveConflictPolicy)?>(nil)
+        let planned = MainWindowLockedValue<(urls: [URL], destination: URL, policy: MoveConflictPolicy)?>(nil)
+        let executed = MainWindowLockedValue<[URL]?>(nil)
         let folderViewModel = FolderBrowserViewModel(
             scanFolder: { _ in [item] },
-            moveToFolder: { urls, destinationFolder, policy in
-                moved.set((urls, destinationFolder, policy))
+            planBatchMove: { urls, destinationFolder, policy in
+                planned.set((urls, destinationFolder, policy))
+                return BatchMovePlan(
+                    proposals: urls.map {
+                        BatchMoveProposal(
+                            source: $0,
+                            destination: destinationFolder.appendingPathComponent($0.lastPathComponent)
+                        )
+                    },
+                    failures: []
+                )
+            },
+            executeMovePlan: { plan in
+                let urls = plan.proposals.map(\.source)
+                executed.set(urls)
                 return BatchOperationResult(succeeded: urls)
             }
         )
@@ -766,14 +780,89 @@ final class MainWindowControllerTests: XCTestCase {
         controller.selectFolderBrowserItemsForTesting([item.id])
 
         controller.triggerFolderBrowserMoveForTesting()
-        for _ in 0..<100 where moved.value == nil {
+        for _ in 0..<100 where executed.value == nil {
             await Task.yield()
         }
 
-        XCTAssertEqual(moved.value?.urls, [item.url])
-        XCTAssertEqual(moved.value?.destination, destination)
-        XCTAssertEqual(moved.value?.policy, .skip)
+        XCTAssertEqual(planned.value?.urls, [item.url])
+        XCTAssertEqual(planned.value?.destination, destination)
+        XCTAssertEqual(planned.value?.policy, .skip)
+        XCTAssertEqual(executed.value, [item.url])
         XCTAssertTrue(controller.isFolderBrowserVisibleForTesting)
+    }
+
+    func testMoveConflictsRequireSkipKeepBothOrCancelBeforeExecution() async throws {
+        for choice in [
+            MainWindowController.MoveConflictChoice.cancel,
+            .skipConflicts,
+            .keepBoth
+        ] {
+            let plannedPolicies = MainWindowLockedValue<[MoveConflictPolicy]>([])
+            let executedPlans = MainWindowLockedValue<[BatchMovePlan]>([])
+            let fixture = try makeFolderNavigationFixture(
+                itemNames: ["a.png", "b.png"],
+                planBatchMove: { urls, destination, policy in
+                    plannedPolicies.update { $0.append(policy) }
+                    switch policy {
+                    case .skip:
+                        return BatchMovePlan(
+                            proposals: [],
+                            failures: urls.map { BatchFileFailure(url: $0, reason: .destinationExists) }
+                        )
+                    case .keepBoth:
+                        return BatchMovePlan(
+                            proposals: urls.map {
+                                BatchMoveProposal(
+                                    source: $0,
+                                    destination: destination.appendingPathComponent("copy-\($0.lastPathComponent)")
+                                )
+                            },
+                            failures: []
+                        )
+                    }
+                },
+                executeMovePlan: { plan in
+                    executedPlans.update { $0.append(plan) }
+                    return BatchOperationResult(succeeded: plan.proposals.map(\.source))
+                }
+            )
+            defer { try? FileManager.default.removeItem(at: fixture.folder) }
+            let destination = fixture.folder.appendingPathComponent("destination", isDirectory: true)
+            fixture.controller.batchActionDialogProviderForTesting = .init(
+                chooseDestinationFolder: { destination },
+                chooseMoveConflict: { names in
+                    XCTAssertEqual(names, ["a.png", "b.png"])
+                    return choice
+                }
+            )
+            await fixture.controller.openFolderForTesting(fixture.folder, scannerItems: fixture.items)
+            fixture.controller.selectFolderBrowserItemsForTesting(fixture.items.map(\.id))
+
+            fixture.controller.triggerFolderBrowserMoveForTesting()
+            for _ in 0..<100 where choice != .cancel && executedPlans.value.isEmpty {
+                await Task.yield()
+            }
+            if choice == .cancel {
+                for _ in 0..<100 { await Task.yield() }
+            }
+
+            switch choice {
+            case .cancel:
+                XCTAssertEqual(plannedPolicies.value, [.skip])
+                XCTAssertTrue(executedPlans.value.isEmpty)
+                XCTAssertEqual(fixture.controller.folderBrowserItemCountForTesting, 2)
+            case .skipConflicts:
+                XCTAssertEqual(plannedPolicies.value, [.skip])
+                XCTAssertEqual(executedPlans.value.count, 1)
+                XCTAssertTrue(executedPlans.value[0].proposals.isEmpty)
+                XCTAssertEqual(fixture.controller.folderBrowserItemCountForTesting, 2)
+            case .keepBoth:
+                XCTAssertEqual(plannedPolicies.value, [.skip, .keepBoth])
+                XCTAssertEqual(executedPlans.value.count, 1)
+                XCTAssertEqual(executedPlans.value[0].proposals.map(\.source), fixture.items.map(\.url))
+                XCTAssertEqual(fixture.controller.folderBrowserItemCountForTesting, 0)
+            }
+        }
     }
 
     func testFolderBrowserRenameCallbackUsesRenameSheetParametersAndStaysInFolderMode() async {
@@ -1744,9 +1833,20 @@ final class MainWindowControllerTests: XCTestCase {
                     operationCount.update { $0 += 1 }
                     return BatchOperationResult(succeeded: urls)
                 },
-                moveToFolder: { urls, _, _ in
+                planBatchMove: { urls, destination, _ in
+                    BatchMovePlan(
+                        proposals: urls.map {
+                            BatchMoveProposal(
+                                source: $0,
+                                destination: destination.appendingPathComponent($0.lastPathComponent)
+                            )
+                        },
+                        failures: []
+                    )
+                },
+                executeMovePlan: { plan in
                     operationCount.update { $0 += 1 }
-                    return BatchOperationResult(succeeded: urls)
+                    return BatchOperationResult(succeeded: plan.proposals.map(\.source))
                 },
                 planBatchRename: renamePlan,
                 executeRenamePlan: { plan in
@@ -1820,6 +1920,8 @@ final class MainWindowControllerTests: XCTestCase {
         itemNames: [String] = ["one.png"],
         moveToTrash: FolderBrowserViewModel.MoveToTrash? = nil,
         moveToFolder: FolderBrowserViewModel.MoveToFolder? = nil,
+        planBatchMove: FolderBrowserViewModel.PlanBatchMove? = nil,
+        executeMovePlan: FolderBrowserViewModel.ExecuteMovePlan? = nil,
         planBatchRename: FolderBrowserViewModel.PlanBatchRename? = nil,
         executeRenamePlan: FolderBrowserViewModel.ExecuteRenamePlan? = nil
     ) throws -> (
@@ -1844,6 +1946,8 @@ final class MainWindowControllerTests: XCTestCase {
             },
             moveToTrash: moveToTrash,
             moveToFolder: moveToFolder,
+            planBatchMove: planBatchMove,
+            executeMovePlan: executeMovePlan,
             planBatchRename: planBatchRename,
             executeRenamePlan: executeRenamePlan
         )

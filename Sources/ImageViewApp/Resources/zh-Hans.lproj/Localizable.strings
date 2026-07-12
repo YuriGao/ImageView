@@ -94,6 +94,11 @@
 "folderBrowser.confirmTrash.button" = "移到废纸篓";
 "folderBrowser.confirmTrash.cancel" = "取消";
 "folderBrowser.movePanel.prompt" = "移动";
+"folderBrowser.moveConflict.title" = "部分文件已存在";
+"folderBrowser.moveConflict.message" = "移动前请选择如何处理全部冲突文件。";
+"folderBrowser.moveConflict.skip" = "跳过冲突";
+"folderBrowser.moveConflict.keepBoth" = "两者都保留";
+"folderBrowser.moveConflict.cancel" = "取消";
 "settings.title" = "ImageView 设置";
 "settings.general.title" = "通用";
 "settings.general.showsFilmstrip" = "显示胶片预览";

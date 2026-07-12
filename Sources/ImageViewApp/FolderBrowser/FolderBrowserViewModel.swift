@@ -27,6 +27,8 @@ final class FolderBrowserViewModel: ObservableObject {
     typealias ScanFolder = @Sendable (URL) async throws -> [ImageItem]
     typealias MoveToTrash = @Sendable ([URL]) -> BatchOperationResult
     typealias MoveToFolder = @Sendable ([URL], URL, MoveConflictPolicy) -> BatchOperationResult
+    typealias PlanBatchMove = @Sendable ([URL], URL, MoveConflictPolicy) -> BatchMovePlan
+    typealias ExecuteMovePlan = @Sendable (BatchMovePlan) -> BatchOperationResult
     typealias PlanBatchRename = @Sendable ([URL], String, Int, Int) -> BatchRenamePlan
     typealias ExecuteRenamePlan = @Sendable (BatchRenamePlan) -> BatchOperationResult
 
@@ -64,6 +66,8 @@ final class FolderBrowserViewModel: ObservableObject {
     private let scanFolder: ScanFolder
     private let moveToTrashOperation: MoveToTrash
     private let moveToFolderOperation: MoveToFolder
+    private let planBatchMoveOperation: PlanBatchMove
+    private let executeMovePlanOperation: ExecuteMovePlan
     private let planBatchRenameOperation: PlanBatchRename
     private let executeRenamePlanOperation: ExecuteRenamePlan
     nonisolated private let openFolderRequestTracker = OpenFolderRequestTracker()
@@ -75,6 +79,8 @@ final class FolderBrowserViewModel: ObservableObject {
         },
         moveToTrash: MoveToTrash? = nil,
         moveToFolder: MoveToFolder? = nil,
+        planBatchMove: PlanBatchMove? = nil,
+        executeMovePlan: ExecuteMovePlan? = nil,
         planBatchRename: PlanBatchRename? = nil,
         executeRenamePlan: ExecuteRenamePlan? = nil
     ) {
@@ -82,6 +88,12 @@ final class FolderBrowserViewModel: ObservableObject {
         self.moveToTrashOperation = moveToTrash ?? { BatchFileOperationService().moveToTrash($0) }
         self.moveToFolderOperation = moveToFolder ?? {
             BatchFileOperationService().moveToFolder($0, destinationFolder: $1, conflictPolicy: $2)
+        }
+        self.planBatchMoveOperation = planBatchMove ?? {
+            BatchFileOperationService().planMoveToFolder($0, destinationFolder: $1, conflictPolicy: $2)
+        }
+        self.executeMovePlanOperation = executeMovePlan ?? {
+            BatchFileOperationService().executeMovePlan($0)
         }
         self.planBatchRenameOperation = planBatchRename ?? {
             BatchFileOperationService().planBatchRename(urls: $0, baseName: $1, startNumber: $2, padding: $3)
@@ -228,6 +240,24 @@ final class FolderBrowserViewModel: ObservableObject {
         let operation = moveToFolderOperation
         return runBatchOperation {
             operation(urls, destinationFolder, conflictPolicy)
+        } apply: { [weak self] result in
+            self?.applyOperationResult(result, removingSucceeded: true)
+        }
+    }
+
+    func planSelectedMove(to destinationFolder: URL, conflictPolicy: MoveConflictPolicy) -> BatchMovePlan? {
+        guard !isOperating else { return nil }
+        let urls = selectedItems.map(\.url)
+        guard !urls.isEmpty else { return nil }
+        return planBatchMoveOperation(urls, destinationFolder, conflictPolicy)
+    }
+
+    @discardableResult
+    func executeMovePlan(_ plan: BatchMovePlan) -> Task<Void, Never>? {
+        guard !isOperating else { return nil }
+        let operation = executeMovePlanOperation
+        return runBatchOperation {
+            operation(plan)
         } apply: { [weak self] result in
             self?.applyOperationResult(result, removingSucceeded: true)
         }

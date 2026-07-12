@@ -61,18 +61,27 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         case stayOnCurrentImage
     }
 
+    enum MoveConflictChoice: Equatable {
+        case skipConflicts
+        case keepBoth
+        case cancel
+    }
+
     struct BatchActionDialogProvider {
         var confirmTrash: ((Int) -> Bool)?
         var chooseDestinationFolder: (() -> URL?)?
+        var chooseMoveConflict: (([String]) -> MoveConflictChoice)?
         var requestRenameParameters: (([ImageItem], @escaping (BatchRenameSheetController.RenameParameters) -> Void) -> Void)?
 
         init(
             confirmTrash: ((Int) -> Bool)? = nil,
             chooseDestinationFolder: (() -> URL?)? = nil,
+            chooseMoveConflict: (([String]) -> MoveConflictChoice)? = nil,
             requestRenameParameters: (([ImageItem], @escaping (BatchRenameSheetController.RenameParameters) -> Void) -> Void)? = nil
         ) {
             self.confirmTrash = confirmTrash
             self.chooseDestinationFolder = chooseDestinationFolder
+            self.chooseMoveConflict = chooseMoveConflict
             self.requestRenameParameters = requestRenameParameters
         }
     }
@@ -945,8 +954,34 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
             ?? chooseDestinationFolderForBatchMove()
         guard let destination else { return }
 
+        guard let skipPlan = folderBrowserViewModel.planSelectedMove(
+            to: destination,
+            conflictPolicy: .skip
+        ) else { return }
+
+        let choice: MoveConflictChoice
+        if skipPlan.conflictingNames.isEmpty {
+            choice = .skipConflicts
+        } else {
+            choice = batchActionDialogProviderForTesting?.chooseMoveConflict?(skipPlan.conflictingNames)
+                ?? chooseMoveConflict(names: skipPlan.conflictingNames)
+        }
+        guard choice != .cancel else { return }
+
         confirmUnsavedEditsForSelectedViewerIfNeeded(selectedItems, transition: .navigating) { [weak self] in
-            self?.folderBrowserViewModel.moveSelected(to: destination, conflictPolicy: .skip)
+            guard let self else { return }
+            switch choice {
+            case .skipConflicts:
+                self.folderBrowserViewModel.executeMovePlan(skipPlan)
+            case .keepBoth:
+                guard let keepBothPlan = self.folderBrowserViewModel.planSelectedMove(
+                    to: destination,
+                    conflictPolicy: .keepBoth
+                ) else { return }
+                self.folderBrowserViewModel.executeMovePlan(keepBothPlan)
+            case .cancel:
+                break
+            }
         }
     }
 
@@ -1250,6 +1285,38 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         panel.canCreateDirectories = true
         panel.prompt = AppStrings.text("folderBrowser.movePanel.prompt")
         return panel.runModal() == .OK ? panel.url : nil
+    }
+
+    private func chooseMoveConflict(names: [String]) -> MoveConflictChoice {
+        let alert = NSAlert()
+        alert.messageText = AppStrings.text("folderBrowser.moveConflict.title")
+        alert.informativeText = AppStrings.text("folderBrowser.moveConflict.message")
+        alert.addButton(withTitle: AppStrings.text("folderBrowser.moveConflict.skip"))
+        alert.addButton(withTitle: AppStrings.text("folderBrowser.moveConflict.keepBoth"))
+        alert.addButton(withTitle: AppStrings.text("folderBrowser.moveConflict.cancel"))
+
+        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 360, height: 140))
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.drawsBackground = false
+        textView.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        textView.string = names.joined(separator: "\n")
+
+        let scrollView = NSScrollView(frame: textView.frame)
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.borderType = .bezelBorder
+        scrollView.documentView = textView
+        alert.accessoryView = scrollView
+
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            return .skipConflicts
+        case .alertSecondButtonReturn:
+            return .keepBoth
+        default:
+            return .cancel
+        }
     }
 
     private func showBatchRenameSheet(

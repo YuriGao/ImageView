@@ -96,7 +96,12 @@ enum AppStrings {
         "folderBrowser.confirmTrash.message",
         "folderBrowser.confirmTrash.button",
         "folderBrowser.confirmTrash.cancel",
-        "folderBrowser.movePanel.prompt"
+        "folderBrowser.movePanel.prompt",
+        "folderBrowser.moveConflict.title",
+        "folderBrowser.moveConflict.message",
+        "folderBrowser.moveConflict.skip",
+        "folderBrowser.moveConflict.keepBoth",
+        "folderBrowser.moveConflict.cancel"
     ]
 
     static let inspectorKeys = [

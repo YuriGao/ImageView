@@ -388,6 +388,41 @@ final class FolderBrowserViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.operationMessage, Self.succeededAndFailedMessage(succeeded: 1, failed: 1))
     }
 
+    func testExecuteMovePlanRemovesOnlyResultSucceededFromSession() async {
+        let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
+        let destination = URL(fileURLWithPath: "/tmp/archive", isDirectory: true)
+        let moved = ImageItem(url: folder.appendingPathComponent("moved.png"), format: .png)
+        let conflicted = ImageItem(url: folder.appendingPathComponent("conflicted.jpg"), format: .jpeg)
+        let plan = BatchMovePlan(
+            proposals: [
+                BatchMoveProposal(source: moved.url, destination: destination.appendingPathComponent("moved.png")),
+                BatchMoveProposal(
+                    source: conflicted.url,
+                    destination: destination.appendingPathComponent("conflicted.jpg")
+                )
+            ],
+            failures: [BatchFileFailure(url: conflicted.url, reason: .destinationExists)]
+        )
+        let executionFailure = BatchFileFailure(url: conflicted.url, reason: .moveFailed("locked"))
+        let viewModel = FolderBrowserViewModel(
+            scanFolder: { _ in [moved, conflicted] },
+            planBatchMove: { _, _, _ in plan },
+            executeMovePlan: { _ in
+                BatchOperationResult(succeeded: [moved.url], failures: [executionFailure])
+            }
+        )
+        await viewModel.openFolder(folder)
+        viewModel.setSelection([moved.id, conflicted.id])
+
+        let planned = viewModel.planSelectedMove(to: destination, conflictPolicy: .skip)
+        let task = planned.flatMap(viewModel.executeMovePlan)
+        await task?.value
+
+        XCTAssertEqual(viewModel.visibleItems, [conflicted])
+        XCTAssertEqual(viewModel.selectedItems, [conflicted])
+        XCTAssertEqual(viewModel.operationFailures, [executionFailure])
+    }
+
     func testRenameSelectedKeepsFailedItemsSelectedAndDoesNotRemoveThemFromSession() async {
         let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
         let renamed = ImageItem(url: folder.appendingPathComponent("old.png"), format: .png)
