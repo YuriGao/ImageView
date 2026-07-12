@@ -374,11 +374,13 @@ final class ViewerViewModel: ObservableObject {
         updateDisplayTitle()
     }
 
-    func removeItemsFromNavigation(_ removedURLs: Set<URL>) {
+    @discardableResult
+    func removeItemsFromNavigation(_ removedURLs: Set<URL>) -> URL? {
         let standardizedURLs = Set(removedURLs.map(\.standardizedFileURL))
         let previousCurrentURL = navigationState?.currentItem?.url.standardizedFileURL
         navigationState?.removeItems(withURLs: standardizedURLs)
-        guard navigationState?.currentItem?.url.standardizedFileURL != previousCurrentURL else { return }
+        let replacementURL = navigationState?.currentItem?.url.standardizedFileURL
+        guard replacementURL != previousCurrentURL else { return replacementURL }
 
         guard navigationState?.currentItem != nil else {
             currentImage = nil
@@ -388,12 +390,13 @@ final class ViewerViewModel: ObservableObject {
             loadPhase = .empty
             errorMessage = nil
             updateDisplayTitle()
-            return
+            return nil
         }
         loadPhase = .loading
         errorMessage = nil
         updateDisplayTitle()
         startDisplayCurrentAndPreload()
+        return replacementURL
     }
 
     func revealCurrentInFinder() {

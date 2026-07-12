@@ -743,10 +743,18 @@ final class MainWindowController: NSWindowController {
         switch mutation {
         case let .removed(urls):
             let standardizedURLs = Set(urls.map(\.standardizedFileURL))
-            currentRoute = removingViewerRoute(currentRoute, matchingAny: standardizedURLs)
+            let currentViewerWasRemoved: Bool
+            if case let .viewer(url) = currentRoute {
+                currentViewerWasRemoved = standardizedURLs.contains(url.standardizedFileURL)
+            } else {
+                currentViewerWasRemoved = false
+            }
             backRoute = removingViewerRoute(backRoute, matchingAny: standardizedURLs)
             forwardRoute = removingViewerRoute(forwardRoute, matchingAny: standardizedURLs)
-            viewModel.removeItemsFromNavigation(standardizedURLs)
+            let replacementURL = viewModel.removeItemsFromNavigation(standardizedURLs)
+            if currentViewerWasRemoved {
+                currentRoute = replacementURL.map(ContentRoute.viewer)
+            }
         case let .renamed(migrations):
             let standardizedMigrations = Dictionary(
                 uniqueKeysWithValues: migrations.map {

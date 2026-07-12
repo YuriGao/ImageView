@@ -1080,6 +1080,40 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertEqual(fixture.controller.viewerNavigationURLsForTesting, [fixture.items[0].url.standardizedFileURL])
     }
 
+    func testDeletingCurrentViewerDuringInFlightGridOperationKeepsReplacementViewerRoute() async throws {
+        let gate = MainWindowBlockingBatchOperation()
+        let fixture = try makeFolderNavigationFixture(
+            itemNames: ["a.png", "b.png"],
+            moveToTrash: { urls in gate.run(succeeded: urls) }
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.folder) }
+        await fixture.controller.openFolderForTesting(fixture.folder, scannerItems: fixture.items)
+        fixture.controller.openFirstFolderBrowserItemForTesting()
+        for _ in 0..<100 where fixture.controller.viewerNavigationURLsForTesting.count != 2 {
+            await Task.yield()
+        }
+        fixture.controller.showNextImage(nil)
+        for _ in 0..<100 where fixture.controller.viewerNavigationURLForTesting != fixture.items[1].url {
+            await Task.yield()
+        }
+        fixture.controller.goBackForTesting()
+        fixture.controller.batchActionDialogProviderForTesting = .init(confirmTrash: { _ in true })
+        fixture.controller.selectFolderBrowserItemsForTesting([fixture.items[1].id])
+        fixture.controller.triggerFolderBrowserTrashForTesting()
+        await gate.waitUntilStarted()
+
+        fixture.controller.goForwardForTesting()
+        XCTAssertEqual(fixture.controller.currentViewerRouteURLForTesting, fixture.items[1].url.standardizedFileURL)
+        gate.finish()
+        for _ in 0..<100 where fixture.controller.viewerNavigationURLForTesting != fixture.items[0].url {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(fixture.controller.viewerNavigationURLForTesting, fixture.items[0].url.standardizedFileURL)
+        XCTAssertEqual(fixture.controller.currentViewerRouteURLForTesting, fixture.items[0].url.standardizedFileURL)
+        XCTAssertTrue(fixture.controller.isCanvasVisibleForTesting)
+    }
+
     func testRenamingNavigatedForwardTargetAfterBackMigratesForwardAndAllViewerItems() async throws {
         let renamedURLBox = MainWindowLockedValue<URL?>(nil)
         let fixture = try makeFolderNavigationFixture(
@@ -1226,5 +1260,41 @@ private final class MainWindowLockedValue<Value>: @unchecked Sendable {
         lock.lock()
         update(&storedValue)
         lock.unlock()
+    }
+}
+
+private final class MainWindowBlockingBatchOperation: @unchecked Sendable {
+    private let started = MainWindowAsyncStartFlag()
+    private let finished = DispatchSemaphore(value: 0)
+
+    func run(succeeded urls: [URL]) -> BatchOperationResult {
+        Task { await started.markStarted() }
+        finished.wait()
+        return BatchOperationResult(succeeded: urls)
+    }
+
+    func waitUntilStarted() async {
+        await started.wait()
+    }
+
+    func finish() {
+        finished.signal()
+    }
+}
+
+private actor MainWindowAsyncStartFlag {
+    private var isStarted = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func markStarted() {
+        isStarted = true
+        let pending = waiters
+        waiters.removeAll()
+        pending.forEach { $0.resume() }
+    }
+
+    func wait() async {
+        guard !isStarted else { return }
+        await withCheckedContinuation { waiters.append($0) }
     }
 }
