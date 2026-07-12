@@ -63,11 +63,8 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
         collectionView(collectionView, didSelectItemsAt: indexPaths)
     }
 
-    func testingOpenItem(with id: ImageItem.ID) {
-        guard let item = items.first(where: { $0.id == id }) else {
-            return
-        }
-        onOpenItem?(item)
+    func testingPerformOpenAction() {
+        collectionView.openSelectedItem?()
     }
 
     func testingSetSearchText(_ text: String) {
@@ -80,8 +77,17 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
         sortChanged(sortPopUpButton)
     }
 
-    func testingSetTypeFilter(_ formats: Set<SupportedImageFormat>) {
-        onTypeFilterChanged?(formats)
+    func testingSelectTypeFilterPopupItem(_ format: SupportedImageFormat) {
+        guard let index = SupportedImageFormat.allCases.firstIndex(of: format) else {
+            return
+        }
+        typeFilterPopUpButton.selectItem(withTag: index)
+        typeFilterChanged(typeFilterPopUpButton)
+    }
+
+    func testingSelectAllTypesFilterPopupItem() {
+        typeFilterPopUpButton.selectItem(withTag: -1)
+        typeFilterChanged(typeFilterPopUpButton)
     }
 
     func testingTriggerTrash() {

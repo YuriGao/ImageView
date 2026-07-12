@@ -42,14 +42,15 @@ final class FolderBrowserViewTests: XCTestCase {
         XCTAssertEqual(view.testingSelectedIDs, [first.id])
     }
 
-    func testTestingOpenInvokesOpenCallback() {
+    func testOpenActionInvokesOpenCallbackForSelectedItem() {
         let item = ImageItem(url: URL(fileURLWithPath: "/tmp/open.png"), format: .png)
         let view = FolderBrowserView(thumbnailProvider: .stub)
         var openedItem: ImageItem?
         view.onOpenItem = { openedItem = $0 }
         view.apply(items: [item], selectedIDs: [])
 
-        view.testingOpenItem(with: item.id)
+        view.testingSelectItems(with: [item.id])
+        view.testingPerformOpenAction()
 
         XCTAssertEqual(openedItem, item)
     }
@@ -71,17 +72,27 @@ final class FolderBrowserViewTests: XCTestCase {
 
         view.testingSetSearchText("cat")
         view.testingSetSortMode(.fileSizeDescending)
-        view.testingSetTypeFilter([.png, .jpeg])
+        view.testingSelectTypeFilterPopupItem(.png)
         view.testingTriggerTrash()
         view.testingTriggerMove()
         view.testingTriggerRename()
 
         XCTAssertEqual(searchText, "cat")
         XCTAssertEqual(sortMode, .fileSizeDescending)
-        XCTAssertEqual(typeFilter, [.png, .jpeg])
+        XCTAssertEqual(typeFilter, [.png])
         XCTAssertTrue(didTrash)
         XCTAssertTrue(didMove)
         XCTAssertTrue(didRename)
+    }
+
+    func testAllTypesFilterPopupSelectionInvokesTypeFilterCallback() {
+        let view = FolderBrowserView(thumbnailProvider: .stub)
+        var typeFilter: Set<SupportedImageFormat>?
+        view.onTypeFilterChanged = { typeFilter = $0 }
+
+        view.testingSelectAllTypesFilterPopupItem()
+
+        XCTAssertEqual(typeFilter, Set(SupportedImageFormat.allCases))
     }
 }
 
