@@ -5,6 +5,66 @@ import XCTest
 
 @MainActor
 final class FolderBrowserViewTests: XCTestCase {
+    func testPresentationStatesShowCopyRecoveryActionsAndInvokeCallbacks() {
+        let view = FolderBrowserView(thumbnailProvider: .stub)
+        var clearedFilters = false
+        var retriedFolder = false
+        var choseAnotherFolder = false
+        view.onClearFilters = { clearedFilters = true }
+        view.onRetryFolder = { retriedFolder = true }
+        view.onChooseAnotherFolder = { choseAnotherFolder = true }
+
+        view.applyPresentation(.loading)
+        XCTAssertEqual(view.testingPresentationTitle, AppStrings.text("folderBrowser.state.loading.title"))
+        XCTAssertEqual(view.testingPresentationMessage, AppStrings.text("folderBrowser.state.loading.message"))
+        XCTAssertTrue(view.testingIsProgressVisible)
+        XCTAssertEqual(view.testingVisibleRecoveryButtonTitles, [])
+        XCTAssertFalse(view.testingIsCollectionVisible)
+
+        view.applyPresentation(.emptyFolder)
+        XCTAssertEqual(view.testingPresentationTitle, AppStrings.text("folderBrowser.state.emptyFolder.title"))
+        XCTAssertEqual(view.testingPresentationMessage, AppStrings.text("folderBrowser.state.emptyFolder.message"))
+        XCTAssertFalse(view.testingIsProgressVisible)
+        XCTAssertEqual(
+            view.testingVisibleRecoveryButtonTitles,
+            [AppStrings.text("folderBrowser.button.chooseAnotherFolder")]
+        )
+        view.testingTriggerPrimaryRecovery()
+        XCTAssertTrue(choseAnotherFolder)
+
+        view.applyPresentation(.filteredEmpty)
+        XCTAssertEqual(view.testingPresentationTitle, AppStrings.text("folderBrowser.state.filteredEmpty.title"))
+        XCTAssertEqual(view.testingPresentationMessage, AppStrings.text("folderBrowser.state.filteredEmpty.message"))
+        XCTAssertEqual(
+            view.testingVisibleRecoveryButtonTitles,
+            [AppStrings.text("folderBrowser.button.clearFilters")]
+        )
+        view.testingTriggerPrimaryRecovery()
+        XCTAssertTrue(clearedFilters)
+
+        choseAnotherFolder = false
+        view.applyPresentation(.loadFailed("Permission denied"))
+        XCTAssertEqual(view.testingPresentationTitle, AppStrings.text("folderBrowser.state.loadFailed.title"))
+        XCTAssertEqual(view.testingPresentationMessage, "Permission denied")
+        XCTAssertEqual(
+            view.testingVisibleRecoveryButtonTitles,
+            [
+                AppStrings.text("folderBrowser.button.retry"),
+                AppStrings.text("folderBrowser.button.chooseAnotherFolder")
+            ]
+        )
+        view.testingTriggerPrimaryRecovery()
+        view.testingTriggerSecondaryRecovery()
+        XCTAssertTrue(retriedFolder)
+        XCTAssertTrue(choseAnotherFolder)
+
+        view.applyPresentation(.content)
+        XCTAssertNil(view.testingPresentationTitle)
+        XCTAssertNil(view.testingPresentationMessage)
+        XCTAssertEqual(view.testingVisibleRecoveryButtonTitles, [])
+        XCTAssertTrue(view.testingIsCollectionVisible)
+    }
+
     func testExposesToolbarControls() {
         let view = FolderBrowserView(thumbnailProvider: .stub)
 
@@ -29,6 +89,28 @@ final class FolderBrowserViewTests: XCTestCase {
 
         XCTAssertEqual(view.testingItemCount, 2)
         XCTAssertEqual(view.testingSelectedIDs, [second.id])
+    }
+
+    func testBatchActionsRequireContentSelection() {
+        let item = ImageItem(url: URL(fileURLWithPath: "/tmp/one.png"), format: .png)
+        let view = FolderBrowserView(thumbnailProvider: .stub)
+        view.applyItems([item])
+        view.applyPresentation(.content)
+
+        view.applySelection([])
+        XCTAssertTrue(view.testingBatchActionButtonsDisabled)
+
+        view.applySelection([item.id])
+        XCTAssertFalse(view.testingBatchActionButtonsDisabled)
+
+        view.applyItems([])
+        view.applySelection([])
+        XCTAssertTrue(view.testingBatchActionButtonsDisabled)
+
+        view.applyItems([item])
+        view.applySelection([item.id])
+        view.applyPresentation(.loading)
+        XCTAssertTrue(view.testingBatchActionButtonsDisabled)
     }
 
     func testSelectionOnlyUpdateDoesNotRestartThumbnailRequests() {

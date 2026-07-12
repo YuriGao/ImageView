@@ -9,6 +9,14 @@ extension MoveConflictPolicy: @unchecked Sendable {}
 extension RenameProposal: @unchecked Sendable {}
 extension BatchRenamePlan: @unchecked Sendable {}
 
+enum FolderBrowserPresentation: Equatable {
+    case loading
+    case content
+    case emptyFolder
+    case filteredEmpty
+    case loadFailed(String)
+}
+
 @MainActor
 final class FolderBrowserViewModel: ObservableObject {
     typealias ScanFolder = @Sendable (URL) async throws -> [ImageItem]
@@ -22,6 +30,8 @@ final class FolderBrowserViewModel: ObservableObject {
     @Published private(set) var isOperating = false
     @Published private(set) var operationMessage: String?
     @Published private(set) var operationFailures: [BatchFileFailure] = []
+    @Published private(set) var loadErrorMessage: String?
+    private(set) var requestedFolderURL: URL?
 
     var visibleItems: [ImageItem] {
         session?.visibleItems ?? []
@@ -29,6 +39,15 @@ final class FolderBrowserViewModel: ObservableObject {
 
     var selectedItems: [ImageItem] {
         session?.selectedItems ?? []
+    }
+
+    var presentation: FolderBrowserPresentation {
+        if isLoading { return .loading }
+        if let loadErrorMessage { return .loadFailed(loadErrorMessage) }
+        guard let session else { return .loading }
+        if session.items.isEmpty { return .emptyFolder }
+        if session.visibleItems.isEmpty { return .filteredEmpty }
+        return .content
     }
 
     var searchText: String {
@@ -66,9 +85,11 @@ final class FolderBrowserViewModel: ObservableObject {
     }
 
     func openFolder(_ folderURL: URL) async {
+        requestedFolderURL = folderURL
         openFolderRequestID += 1
         let requestID = openFolderRequestID
         isLoading = true
+        loadErrorMessage = nil
         operationMessage = nil
         operationFailures = []
 
@@ -78,18 +99,29 @@ final class FolderBrowserViewModel: ObservableObject {
                 return
             }
             session = FolderSession(folderURL: folderURL, items: items)
+            loadErrorMessage = nil
         } catch {
             guard requestID == openFolderRequestID else {
                 return
             }
             session = FolderSession(folderURL: folderURL, items: [])
-            operationMessage = String(
+            loadErrorMessage = String(
                 format: AppStrings.text("folderBrowser.error.openFolder"),
                 error.localizedDescription
             )
         }
 
         isLoading = false
+    }
+
+    func retryOpenFolder() async {
+        guard let requestedFolderURL else { return }
+        await openFolder(requestedFolderURL)
+    }
+
+    func clearFilters() {
+        searchText = ""
+        setAllowedFormats(Set(SupportedImageFormat.allCases))
     }
 
     func setSelection(_ selectedItemIDs: [ImageItem.ID]) {

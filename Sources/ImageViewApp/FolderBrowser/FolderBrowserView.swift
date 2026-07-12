@@ -10,6 +10,9 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
     var onMoveToTrash: (() -> Void)?
     var onMoveToFolder: (() -> Void)?
     var onBatchRename: (() -> Void)?
+    var onClearFilters: (() -> Void)?
+    var onRetryFolder: (() -> Void)?
+    var onChooseAnotherFolder: (() -> Void)?
 
     private let thumbnailProvider: ThumbnailProvider
     private var items: [ImageItem] = []
@@ -22,6 +25,17 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
     private let renameButton = NSButton(title: AppStrings.text("folderBrowser.button.rename"), target: nil, action: nil)
     private let operationStatusLabel = NSTextField(labelWithString: "")
     private let collectionView = ReturnOpeningCollectionView()
+    private let collectionScrollView = NSScrollView()
+    private let stateProgressIndicator = NSProgressIndicator()
+    private let stateTitleLabel = NSTextField(labelWithString: "")
+    private let stateMessageLabel = NSTextField(wrappingLabelWithString: "")
+    private let primaryRecoveryButton = NSButton()
+    private let secondaryRecoveryButton = NSButton()
+    private let stateStack = NSStackView()
+    private var primaryRecoveryAction: RecoveryAction?
+    private var secondaryRecoveryAction: RecoveryAction?
+    private var currentPresentation: FolderBrowserPresentation = .content
+    private var currentIsOperating = false
 
     var testingSearchPlaceholder: String? { searchField.placeholderString }
     var testingHasSortControl: Bool { sortPopUpButton.superview != nil }
@@ -44,6 +58,15 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
         Set(collectionView.selectionIndexPaths.compactMap { item(at: $0)?.id })
     }
     var testingReloadCount: Int { collectionView.reloadCount }
+    var testingPresentationTitle: String? { stateStack.isHidden ? nil : stateTitleLabel.stringValue }
+    var testingPresentationMessage: String? { stateStack.isHidden ? nil : stateMessageLabel.stringValue }
+    var testingIsProgressVisible: Bool { !stateStack.isHidden && !stateProgressIndicator.isHidden }
+    var testingVisibleRecoveryButtonTitles: [String] {
+        [primaryRecoveryButton, secondaryRecoveryButton]
+            .filter { !$0.isHidden }
+            .map(\.title)
+    }
+    var testingIsCollectionVisible: Bool { !collectionScrollView.isHidden }
 
     func testingCell(at index: Int) -> FolderBrowserCellView? {
         guard index >= 0, index < items.count else { return nil }
@@ -72,17 +95,77 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
         guard items != newItems else { return }
         items = newItems
         collectionView.reloadData()
+        updateBatchActionAvailability()
     }
 
     func applySelection(_ selectedIDs: Set<ImageItem.ID>) {
         let indexPaths = Set(items.enumerated().compactMap { index, item in
             selectedIDs.contains(item.id) ? IndexPath(item: index, section: 0) : nil
         })
-        guard collectionView.selectionIndexPaths != indexPaths else { return }
+        guard collectionView.selectionIndexPaths != indexPaths else {
+            updateBatchActionAvailability()
+            return
+        }
         collectionView.selectionIndexPaths = indexPaths
+        updateBatchActionAvailability()
+    }
+
+    func applyPresentation(_ presentation: FolderBrowserPresentation) {
+        currentPresentation = presentation
+        collectionScrollView.isHidden = presentation != .content
+        stateStack.isHidden = presentation == .content
+        stateProgressIndicator.isHidden = presentation != .loading
+        primaryRecoveryButton.isHidden = true
+        secondaryRecoveryButton.isHidden = true
+        primaryRecoveryAction = nil
+        secondaryRecoveryAction = nil
+
+        switch presentation {
+        case .loading:
+            stateTitleLabel.stringValue = AppStrings.text("folderBrowser.state.loading.title")
+            stateMessageLabel.stringValue = AppStrings.text("folderBrowser.state.loading.message")
+            stateProgressIndicator.startAnimation(nil)
+        case .content:
+            stateProgressIndicator.stopAnimation(nil)
+            stateTitleLabel.stringValue = ""
+            stateMessageLabel.stringValue = ""
+        case .emptyFolder:
+            configureState(
+                titleKey: "folderBrowser.state.emptyFolder.title",
+                messageKey: "folderBrowser.state.emptyFolder.message",
+                primaryTitleKey: "folderBrowser.button.chooseAnotherFolder",
+                primaryAction: .chooseAnotherFolder
+            )
+        case .filteredEmpty:
+            configureState(
+                titleKey: "folderBrowser.state.filteredEmpty.title",
+                messageKey: "folderBrowser.state.filteredEmpty.message",
+                primaryTitleKey: "folderBrowser.button.clearFilters",
+                primaryAction: .clearFilters
+            )
+        case .loadFailed(let message):
+            stateTitleLabel.stringValue = AppStrings.text("folderBrowser.state.loadFailed.title")
+            stateMessageLabel.stringValue = message
+            configure(
+                primaryRecoveryButton,
+                titleKey: "folderBrowser.button.retry",
+                action: .retryFolder
+            )
+            configure(
+                secondaryRecoveryButton,
+                titleKey: "folderBrowser.button.chooseAnotherFolder",
+                action: .chooseAnotherFolder
+            )
+        }
+
+        if presentation != .loading {
+            stateProgressIndicator.stopAnimation(nil)
+        }
+        updateBatchActionAvailability()
     }
 
     func applyOperationStatus(message: String?, failures: [BatchFileFailure], isOperating: Bool) {
+        currentIsOperating = isOperating
         let failureText = failureSummary(for: failures)
         let statusText: String?
         switch (isOperating, message, failureText) {
@@ -106,9 +189,7 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
 
         operationStatusLabel.stringValue = statusText ?? ""
         operationStatusLabel.isHidden = statusText == nil
-        for button in [trashButton, moveButton, renameButton] {
-            button.isEnabled = !isOperating
-        }
+        updateBatchActionAvailability()
     }
 
     func testingSelectItems(with ids: Set<ImageItem.ID>) {
@@ -156,6 +237,14 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
 
     func testingTriggerRename() {
         renameButton.performClick(nil)
+    }
+
+    func testingTriggerPrimaryRecovery() {
+        primaryRecoveryButton.performClick(nil)
+    }
+
+    func testingTriggerSecondaryRecovery() {
+        secondaryRecoveryButton.performClick(nil)
     }
 
     func numberOfSections(in collectionView: NSCollectionView) -> Int {
@@ -261,14 +350,46 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
         doubleClickRecognizer.numberOfClicksRequired = 2
         collectionView.addGestureRecognizer(doubleClickRecognizer)
 
-        let scrollView = NSScrollView()
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.hasVerticalScroller = true
-        scrollView.documentView = collectionView
+        collectionScrollView.translatesAutoresizingMaskIntoConstraints = false
+        collectionScrollView.hasVerticalScroller = true
+        collectionScrollView.documentView = collectionView
+
+        stateProgressIndicator.style = .spinning
+        stateProgressIndicator.controlSize = .regular
+        stateTitleLabel.font = .systemFont(ofSize: 17, weight: .semibold)
+        stateTitleLabel.alignment = .center
+        stateMessageLabel.textColor = .secondaryLabelColor
+        stateMessageLabel.alignment = .center
+        stateMessageLabel.maximumNumberOfLines = 3
+        primaryRecoveryButton.bezelStyle = .rounded
+        primaryRecoveryButton.keyEquivalent = "\r"
+        primaryRecoveryButton.target = self
+        primaryRecoveryButton.action = #selector(primaryRecoveryClicked(_:))
+        secondaryRecoveryButton.bezelStyle = .rounded
+        secondaryRecoveryButton.target = self
+        secondaryRecoveryButton.action = #selector(secondaryRecoveryClicked(_:))
+        let recoveryButtons = NSStackView(views: [primaryRecoveryButton, secondaryRecoveryButton])
+        recoveryButtons.orientation = .horizontal
+        recoveryButtons.alignment = .centerY
+        recoveryButtons.spacing = 8
+
+        stateStack.setViews(
+            [stateProgressIndicator, stateTitleLabel, stateMessageLabel, recoveryButtons],
+            in: .center
+        )
+        stateStack.translatesAutoresizingMaskIntoConstraints = false
+        stateStack.orientation = .vertical
+        stateStack.alignment = .centerX
+        stateStack.spacing = 10
+        stateStack.isHidden = true
+        stateProgressIndicator.isHidden = true
+        primaryRecoveryButton.isHidden = true
+        secondaryRecoveryButton.isHidden = true
 
         addSubview(toolbar)
         addSubview(operationStatusLabel)
-        addSubview(scrollView)
+        addSubview(collectionScrollView)
+        addSubview(stateStack)
 
         NSLayoutConstraint.activate([
             toolbar.topAnchor.constraint(equalTo: topAnchor, constant: 10),
@@ -279,10 +400,16 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
             operationStatusLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             operationStatusLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
 
-            scrollView.topAnchor.constraint(equalTo: operationStatusLabel.bottomAnchor, constant: 8),
-            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor)
+            collectionScrollView.topAnchor.constraint(equalTo: operationStatusLabel.bottomAnchor, constant: 8),
+            collectionScrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            collectionScrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            collectionScrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+            stateStack.centerXAnchor.constraint(equalTo: centerXAnchor),
+            stateStack.centerYAnchor.constraint(equalTo: collectionScrollView.centerYAnchor),
+            stateStack.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 40),
+            stateStack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -40),
+            stateMessageLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 420)
         ])
     }
 
@@ -313,6 +440,14 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
 
     @objc private func renameClicked(_ sender: NSButton) {
         onBatchRename?()
+    }
+
+    @objc private func primaryRecoveryClicked(_ sender: NSButton) {
+        perform(primaryRecoveryAction)
+    }
+
+    @objc private func secondaryRecoveryClicked(_ sender: NSButton) {
+        perform(secondaryRecoveryAction)
     }
 
     @objc private func openSelectedItem(_ sender: Any?) {
@@ -367,6 +502,47 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
         return "\(countText) · \(firstFailure.url.lastPathComponent): \(failureReasonText(firstFailure.reason))"
     }
 
+    private func configureState(
+        titleKey: String,
+        messageKey: String,
+        primaryTitleKey: String,
+        primaryAction: RecoveryAction
+    ) {
+        stateTitleLabel.stringValue = AppStrings.text(titleKey)
+        stateMessageLabel.stringValue = AppStrings.text(messageKey)
+        configure(primaryRecoveryButton, titleKey: primaryTitleKey, action: primaryAction)
+    }
+
+    private func configure(_ button: NSButton, titleKey: String, action: RecoveryAction) {
+        button.title = AppStrings.text(titleKey)
+        button.isHidden = false
+        if button === primaryRecoveryButton {
+            primaryRecoveryAction = action
+        } else {
+            secondaryRecoveryAction = action
+        }
+    }
+
+    private func perform(_ action: RecoveryAction?) {
+        switch action {
+        case .clearFilters:
+            onClearFilters?()
+        case .retryFolder:
+            onRetryFolder?()
+        case .chooseAnotherFolder:
+            onChooseAnotherFolder?()
+        case nil:
+            break
+        }
+    }
+
+    private func updateBatchActionAvailability() {
+        let enabled = currentPresentation == .content && !currentIsOperating && !collectionView.selectionIndexPaths.isEmpty
+        for button in [trashButton, moveButton, renameButton] {
+            button.isEnabled = enabled
+        }
+    }
+
     private func failureReasonText(_ reason: BatchFileFailureReason) -> String {
         switch reason {
         case .emptyName:
@@ -387,6 +563,12 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
             return String(format: AppStrings.text("folderBrowser.failure.renameFailed"), detail)
         }
     }
+}
+
+private enum RecoveryAction {
+    case clearFilters
+    case retryFolder
+    case chooseAnotherFolder
 }
 
 private final class ReturnOpeningCollectionView: NSCollectionView {

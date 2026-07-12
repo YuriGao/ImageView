@@ -5,6 +5,58 @@ import XCTest
 
 @MainActor
 final class FolderBrowserViewModelTests: XCTestCase {
+    func testPresentationDistinguishesEmptyFolderFilteredEmptyAndFailure() async {
+        let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
+        let item = ImageItem(url: folder.appendingPathComponent("one.png"), format: .png)
+        let viewModel = FolderBrowserViewModel(scanFolder: { _ in [item] })
+
+        await viewModel.openFolder(folder)
+        XCTAssertEqual(viewModel.presentation, .content)
+
+        viewModel.searchText = "missing"
+        XCTAssertEqual(viewModel.presentation, .filteredEmpty)
+
+        viewModel.clearFilters()
+        XCTAssertEqual(viewModel.presentation, .content)
+
+        let empty = FolderBrowserViewModel(scanFolder: { _ in [] })
+        await empty.openFolder(folder)
+        XCTAssertEqual(empty.presentation, .emptyFolder)
+
+        let failed = FolderBrowserViewModel(scanFolder: { _ in throw TestFolderError.denied })
+        await failed.openFolder(folder)
+        guard case .loadFailed = failed.presentation else {
+            return XCTFail("Expected load failure")
+        }
+        XCTAssertEqual(failed.requestedFolderURL, folder)
+        XCTAssertNotNil(failed.loadErrorMessage)
+        XCTAssertNil(failed.operationMessage, "folder scan failures must not appear as batch-operation status")
+    }
+
+    func testRetryOpenFolderRescansRequestedFolderAndRecoversContent() async {
+        let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
+        let item = ImageItem(url: folder.appendingPathComponent("one.png"), format: .png)
+        let attempts = LockedValue(0)
+        let viewModel = FolderBrowserViewModel(scanFolder: { requestedFolder in
+            XCTAssertEqual(requestedFolder, folder)
+            let attempt = attempts.increment()
+            if attempt == 1 { throw TestFolderError.denied }
+            return [item]
+        })
+
+        await viewModel.openFolder(folder)
+        guard case .loadFailed = viewModel.presentation else {
+            return XCTFail("Expected initial load failure")
+        }
+
+        await viewModel.retryOpenFolder()
+
+        XCTAssertEqual(attempts.value, 2)
+        XCTAssertEqual(viewModel.presentation, .content)
+        XCTAssertNil(viewModel.loadErrorMessage)
+        XCTAssertNil(viewModel.operationMessage)
+    }
+
     func testOpenFolderKeepsLatestRequestWhenEarlierScanFinishesLater() async {
         let slowFolder = URL(fileURLWithPath: "/tmp/slow", isDirectory: true)
         let fastFolder = URL(fileURLWithPath: "/tmp/fast", isDirectory: true)
@@ -266,6 +318,21 @@ private final class LockedValue<Value>: @unchecked Sendable {
         storedValue = value
         lock.unlock()
     }
+}
+
+private extension LockedValue where Value == Int {
+    func increment() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        storedValue += 1
+        return storedValue
+    }
+}
+
+private enum TestFolderError: LocalizedError {
+    case denied
+
+    var errorDescription: String? { "Permission denied" }
 }
 
 private actor AsyncStartFlag {
