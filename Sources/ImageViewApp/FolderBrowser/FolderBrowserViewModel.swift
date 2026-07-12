@@ -37,6 +37,7 @@ final class FolderBrowserViewModel: ObservableObject {
     @Published private(set) var isOperating = false
     @Published private(set) var operationMessage: String?
     @Published private(set) var operationFailures: [BatchFileFailure] = []
+    @Published private(set) var operationRecoveryFailures: [BatchRecoveryFailure] = []
     @Published private(set) var loadErrorMessage: String?
     private(set) var requestedFolderURL: URL?
     var onItemURLMutation: ((FolderItemURLMutation) -> Void)?
@@ -116,6 +117,7 @@ final class FolderBrowserViewModel: ObservableObject {
                 loadErrorMessage = nil
                 operationMessage = nil
                 operationFailures = []
+                operationRecoveryFailures = []
             }) else {
                 return
             }
@@ -205,6 +207,7 @@ final class FolderBrowserViewModel: ObservableObject {
 
     func applyOperationResult(_ result: BatchOperationResult, removingSucceeded: Bool) {
         operationFailures = result.failures
+        operationRecoveryFailures = result.recoveryFailures
 
         if removingSucceeded {
             let succeededIDs = Set(result.succeeded)
@@ -278,7 +281,8 @@ final class FolderBrowserViewModel: ObservableObject {
             return runBatchOperation {
                 BatchRenameOperation(
                     plan: plan,
-                    result: BatchOperationResult(failures: plan.failures)
+                    result: BatchOperationResult(failures: plan.failures),
+                    rescannedItems: nil
                 )
             } apply: { [weak self] operation in
                 self?.applyRenameResult(operation.result, plan: operation.plan)
@@ -300,25 +304,39 @@ final class FolderBrowserViewModel: ObservableObject {
     func executeRenamePlan(_ plan: BatchRenamePlan) -> Task<Void, Never>? {
         guard !isOperating, plan.isExecutable else { return nil }
         let executeOperation = executeRenamePlanOperation
+        let scanFolder = scanFolder
+        let activeFolderURL = session?.folderURL
         return runBatchOperation {
             let result = executeOperation(plan)
-            return BatchRenameOperation(plan: plan, result: result)
+            let needsRescan = !result.failures.isEmpty || !result.recoveryFailures.isEmpty
+            let rescannedItems: [ImageItem]?
+            if needsRescan, let activeFolderURL {
+                rescannedItems = try? await scanFolder(activeFolderURL)
+            } else {
+                rescannedItems = nil
+            }
+            return BatchRenameOperation(plan: plan, result: result, rescannedItems: rescannedItems)
         } apply: { [weak self] operation in
-            self?.applyRenameResult(operation.result, plan: operation.plan)
+            self?.applyRenameResult(
+                operation.result,
+                plan: operation.plan,
+                rescannedItems: operation.rescannedItems
+            )
         }
     }
 
     private func runBatchOperation<Value: Sendable>(
-        _ operation: @escaping @Sendable () -> Value,
+        _ operation: @escaping @Sendable () async -> Value,
         apply: @escaping @MainActor (Value) -> Void
     ) -> Task<Void, Never> {
         isOperating = true
         operationFailures = []
+        operationRecoveryFailures = []
         operationMessage = nil
 
         return Task { [weak self] in
             let value = await Task.detached(priority: .userInitiated) {
-                operation()
+                await operation()
             }.value
             guard let self else { return }
             apply(value)
@@ -351,8 +369,28 @@ final class FolderBrowserViewModel: ObservableObject {
         }
     }
 
-    private func applyRenameResult(_ result: BatchOperationResult, plan: BatchRenamePlan) {
+    private func applyRenameResult(
+        _ result: BatchOperationResult,
+        plan: BatchRenamePlan,
+        rescannedItems: [ImageItem]? = nil
+    ) {
         operationFailures = result.failures
+        operationRecoveryFailures = result.recoveryFailures
+
+        if !result.failures.isEmpty || !result.recoveryFailures.isEmpty {
+            if let rescannedItems {
+                session?.replaceItems(rescannedItems)
+            }
+            let candidateURLs = Set(
+                result.failures.map(\.url) +
+                result.recoveryFailures.flatMap { [$0.expectedURL, $0.actualURL] }
+            )
+            session?.selectedItemIDs = session?.visibleItems
+                .map(\.url)
+                .filter(candidateURLs.contains) ?? []
+            operationMessage = message(for: result)
+            return
+        }
 
         let succeededSources = Set(result.succeeded)
         let successfulDestinationsBySource = Dictionary(
@@ -431,4 +469,5 @@ private final class OpenFolderRequestTracker: @unchecked Sendable {
 private struct BatchRenameOperation: Sendable {
     let plan: BatchRenamePlan
     let result: BatchOperationResult
+    let rescannedItems: [ImageItem]?
 }

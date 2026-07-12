@@ -1,5 +1,33 @@
 import Foundation
 
+public protocol BatchFileSystem: Sendable {
+    func fileExists(at url: URL) -> Bool
+    func directoryContents(at url: URL) throws -> [URL]
+    func moveItem(at source: URL, to destination: URL) throws
+    func trashItem(at url: URL) throws
+}
+
+public struct DefaultBatchFileSystem: BatchFileSystem {
+    public init() {}
+
+    public func fileExists(at url: URL) -> Bool {
+        FileManager.default.fileExists(atPath: url.path)
+    }
+
+    public func directoryContents(at url: URL) throws -> [URL] {
+        try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)
+    }
+
+    public func moveItem(at source: URL, to destination: URL) throws {
+        try FileManager.default.moveItem(at: source, to: destination)
+    }
+
+    public func trashItem(at url: URL) throws {
+        var resultingURL: NSURL?
+        try FileManager.default.trashItem(at: url, resultingItemURL: &resultingURL)
+    }
+}
+
 public enum BatchFileFailureReason: Equatable {
     case emptyName
     case invalidName
@@ -53,10 +81,28 @@ public struct BatchMovePlan: Equatable, @unchecked Sendable {
 public struct BatchOperationResult: Equatable {
     public let succeeded: [URL]
     public let failures: [BatchFileFailure]
+    public let recoveryFailures: [BatchRecoveryFailure]
 
-    public init(succeeded: [URL] = [], failures: [BatchFileFailure] = []) {
+    public init(
+        succeeded: [URL] = [],
+        failures: [BatchFileFailure] = [],
+        recoveryFailures: [BatchRecoveryFailure] = []
+    ) {
         self.succeeded = succeeded
         self.failures = failures
+        self.recoveryFailures = recoveryFailures
+    }
+}
+
+public struct BatchRecoveryFailure: Equatable, Sendable {
+    public let expectedURL: URL
+    public let actualURL: URL
+    public let reason: String
+
+    public init(expectedURL: URL, actualURL: URL, reason: String) {
+        self.expectedURL = expectedURL
+        self.actualURL = actualURL
+        self.reason = reason
     }
 }
 
@@ -85,10 +131,10 @@ public struct BatchRenamePlan: Equatable {
 }
 
 public final class BatchFileOperationService {
-    private let fileManager: FileManager
+    private let fileSystem: any BatchFileSystem
 
-    public init(fileManager: FileManager = .default) {
-        self.fileManager = fileManager
+    public init(fileSystem: any BatchFileSystem = DefaultBatchFileSystem()) {
+        self.fileSystem = fileSystem
     }
 
     public func moveToTrash(_ urls: [URL]) -> BatchOperationResult {
@@ -97,12 +143,11 @@ public final class BatchFileOperationService {
 
         for url in urls {
             do {
-                guard fileManager.fileExists(atPath: url.path) else {
+                guard fileSystem.fileExists(at: url) else {
                     failures.append(BatchFileFailure(url: url, reason: .sourceMissing))
                     continue
                 }
-                var resultingURL: NSURL?
-                try fileManager.trashItem(at: url, resultingItemURL: &resultingURL)
+                try fileSystem.trashItem(at: url)
                 succeeded.append(url)
             } catch {
                 failures.append(BatchFileFailure(url: url, reason: .trashFailed(error.localizedDescription)))
@@ -129,16 +174,13 @@ public final class BatchFileOperationService {
         destinationFolder: URL,
         conflictPolicy: MoveConflictPolicy
     ) -> BatchMovePlan {
-        let existingURLs = (try? fileManager.contentsOfDirectory(
-            at: destinationFolder,
-            includingPropertiesForKeys: nil
-        )) ?? []
+        let existingURLs = (try? fileSystem.directoryContents(at: destinationFolder)) ?? []
         var reservedPaths = Set(existingURLs.map(normalizedPath))
         var proposals: [BatchMoveProposal] = []
         var failures: [BatchFileFailure] = []
 
         for url in urls {
-            guard fileManager.fileExists(atPath: url.path) else {
+            guard fileSystem.fileExists(at: url) else {
                 failures.append(BatchFileFailure(url: url, reason: .sourceMissing))
                 continue
             }
@@ -167,7 +209,7 @@ public final class BatchFileOperationService {
         var destinationPaths: Set<String> = []
 
         for proposal in plan.proposals {
-            guard fileManager.fileExists(atPath: proposal.source.path) else {
+            guard fileSystem.fileExists(at: proposal.source) else {
                 failures.append(BatchFileFailure(url: proposal.source, reason: .sourceMissing))
                 continue
             }
@@ -178,13 +220,13 @@ public final class BatchFileOperationService {
                 continue
             }
 
-            guard !fileManager.fileExists(atPath: proposal.destination.path) else {
+            guard !fileSystem.fileExists(at: proposal.destination) else {
                 failures.append(BatchFileFailure(url: proposal.source, reason: .destinationExists))
                 continue
             }
 
             do {
-                try fileManager.moveItem(at: proposal.source, to: proposal.destination)
+                try fileSystem.moveItem(at: proposal.source, to: proposal.destination)
                 succeeded.append(proposal.source)
             } catch {
                 failures.append(BatchFileFailure(url: proposal.source, reason: .moveFailed(error.localizedDescription)))
@@ -236,7 +278,7 @@ public final class BatchFileOperationService {
             }
             destinationOwners[destinationPath] = url
 
-            if fileManager.fileExists(atPath: destination.path),
+            if fileSystem.fileExists(at: destination),
                !selectedSources.contains(destinationPath),
                destinationPath != normalizedPath(url) {
                 failures.append(BatchFileFailure(url: url, reason: .destinationExists))
@@ -259,7 +301,7 @@ public final class BatchFileOperationService {
         var failures: [BatchFileFailure] = []
 
         for proposal in activeProposals {
-            guard fileManager.fileExists(atPath: proposal.source.path) else {
+            guard fileSystem.fileExists(at: proposal.source) else {
                 failures.append(BatchFileFailure(url: proposal.source, reason: .sourceMissing))
                 continue
             }
@@ -270,7 +312,7 @@ public final class BatchFileOperationService {
                 continue
             }
 
-            if fileManager.fileExists(atPath: proposal.destination.path),
+            if fileSystem.fileExists(at: proposal.destination),
                !sourcePaths.contains(destinationPath) {
                 failures.append(BatchFileFailure(url: proposal.source, reason: .destinationExists))
             }
@@ -280,32 +322,49 @@ public final class BatchFileOperationService {
             return BatchOperationResult(failures: failures)
         }
 
-        var temporaryMoves: [(proposal: RenameProposal, temporaryURL: URL)] = []
+        var journal: [RenameJournalEntry] = []
         for proposal in activeProposals {
             let temporaryURL = temporaryURL(nextTo: proposal.source)
             do {
-                try fileManager.moveItem(at: proposal.source, to: temporaryURL)
-                temporaryMoves.append((proposal, temporaryURL))
+                try fileSystem.moveItem(at: proposal.source, to: temporaryURL)
+                journal.append(RenameJournalEntry(
+                    proposal: proposal,
+                    temporaryURL: temporaryURL,
+                    location: .temporary
+                ))
             } catch {
-                restoreTemporaryMoves(temporaryMoves)
-                return BatchOperationResult(failures: [
-                    BatchFileFailure(url: proposal.source, reason: .renameFailed(error.localizedDescription))
-                ])
+                let recoveryFailures = restoreOriginals(from: &journal)
+                return BatchOperationResult(
+                    failures: [
+                        BatchFileFailure(url: proposal.source, reason: .renameFailed(error.localizedDescription))
+                    ],
+                    recoveryFailures: recoveryFailures
+                )
             }
         }
 
-        var succeeded = plan.proposals.map(\.source)
-        for move in temporaryMoves {
+        for index in journal.indices {
             do {
-                try fileManager.moveItem(at: move.temporaryURL, to: move.proposal.destination)
+                try fileSystem.moveItem(
+                    at: journal[index].temporaryURL,
+                    to: journal[index].proposal.destination
+                )
+                journal[index].location = .destination
             } catch {
-                try? fileManager.moveItem(at: move.temporaryURL, to: move.proposal.source)
-                succeeded.removeAll { normalizedPath($0) == normalizedPath(move.proposal.source) }
-                failures.append(BatchFileFailure(url: move.proposal.source, reason: .renameFailed(error.localizedDescription)))
+                failures.append(BatchFileFailure(
+                    url: journal[index].proposal.source,
+                    reason: .renameFailed(error.localizedDescription)
+                ))
+                var recoveryFailures = reverseCommittedDestinations(in: &journal)
+                recoveryFailures.append(contentsOf: restoreOriginals(from: &journal))
+                return BatchOperationResult(
+                    failures: failures,
+                    recoveryFailures: recoveryFailures
+                )
             }
         }
 
-        return BatchOperationResult(succeeded: succeeded, failures: failures)
+        return BatchOperationResult(succeeded: plan.proposals.map(\.source))
     }
 
     private func renameDestination(for url: URL, baseName: String, number: Int, padding: Int) -> URL {
@@ -338,7 +397,7 @@ public final class BatchFileOperationService {
                 candidate = candidate.appendingPathExtension(pathExtension)
             }
             if !reservedPaths.contains(normalizedPath(candidate)),
-               !fileManager.fileExists(atPath: candidate.path) {
+               !fileSystem.fileExists(at: candidate) {
                 return candidate
             }
             index += 1
@@ -350,14 +409,50 @@ public final class BatchFileOperationService {
         var candidate: URL
         repeat {
             candidate = folder.appendingPathComponent(".batch-rename-\(UUID().uuidString).tmp")
-        } while fileManager.fileExists(atPath: candidate.path)
+        } while fileSystem.fileExists(at: candidate)
         return candidate
     }
 
-    private func restoreTemporaryMoves(_ moves: [(proposal: RenameProposal, temporaryURL: URL)]) {
-        for move in moves.reversed() {
-            try? fileManager.moveItem(at: move.temporaryURL, to: move.proposal.source)
+    private func reverseCommittedDestinations(
+        in journal: inout [RenameJournalEntry]
+    ) -> [BatchRecoveryFailure] {
+        var recoveryFailures: [BatchRecoveryFailure] = []
+        for index in journal.indices.reversed() where journal[index].location == .destination {
+            do {
+                try fileSystem.moveItem(
+                    at: journal[index].proposal.destination,
+                    to: journal[index].temporaryURL
+                )
+                journal[index].location = .temporary
+            } catch {
+                recoveryFailures.append(BatchRecoveryFailure(
+                    expectedURL: journal[index].proposal.source,
+                    actualURL: journal[index].proposal.destination,
+                    reason: error.localizedDescription
+                ))
+            }
         }
+        return recoveryFailures
+    }
+
+    private func restoreOriginals(from journal: inout [RenameJournalEntry]) -> [BatchRecoveryFailure] {
+        var recoveryFailures: [BatchRecoveryFailure] = []
+        for index in journal.indices.reversed() where journal[index].location == .temporary {
+            do {
+                try fileSystem.moveItem(
+                    at: journal[index].temporaryURL,
+                    to: journal[index].proposal.source
+                )
+                journal[index].location = .original
+            } catch {
+                recoveryFailures.append(BatchRecoveryFailure(
+                    expectedURL: journal[index].proposal.source,
+                    actualURL: journal[index].temporaryURL,
+                    reason: error.localizedDescription
+                ))
+            }
+        }
+        return recoveryFailures
     }
 
     private func isValidFileBaseName(_ name: String) -> Bool {
@@ -371,4 +466,16 @@ public final class BatchFileOperationService {
     private func normalizedPath(_ url: URL) -> String {
         url.standardizedFileURL.path
     }
+}
+
+private struct RenameJournalEntry {
+    enum Location {
+        case original
+        case temporary
+        case destination
+    }
+
+    let proposal: RenameProposal
+    let temporaryURL: URL
+    var location: Location
 }

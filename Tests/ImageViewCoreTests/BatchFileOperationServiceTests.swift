@@ -168,6 +168,133 @@ final class BatchFileOperationServiceTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: second, encoding: .utf8), "first")
     }
 
+    func testExecuteRenamePlanRestoresEveryOriginalWhenPhaseOneMoveFails() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = try writeFile(named: "a.jpg", contents: "first", in: root)
+        let second = try writeFile(named: "b.jpg", contents: "second", in: root)
+        let firstDestination = root.appendingPathComponent("renamed-a.jpg")
+        let secondDestination = root.appendingPathComponent("renamed-b.jpg")
+        let fileSystem = FaultInjectingBatchFileSystem(failingMoveCalls: [2])
+        let service = BatchFileOperationService(fileSystem: fileSystem)
+
+        let result = service.executeRenamePlan(BatchRenamePlan(
+            proposals: [
+                RenameProposal(source: first, destination: firstDestination),
+                RenameProposal(source: second, destination: secondDestination)
+            ],
+            failures: []
+        ))
+
+        XCTAssertTrue(result.succeeded.isEmpty)
+        XCTAssertEqual(result.failures.map(\.url), [second])
+        XCTAssertTrue(result.recoveryFailures.isEmpty)
+        XCTAssertEqual(try String(contentsOf: first, encoding: .utf8), "first")
+        XCTAssertEqual(try String(contentsOf: second, encoding: .utf8), "second")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: firstDestination.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: secondDestination.path))
+        try assertNoRenameTemporaryFiles(in: root)
+    }
+
+    func testExecuteRenamePlanReversesCommittedDestinationsBeforeRestoringOriginalsOnPhaseTwoFailure() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = try writeFile(named: "a.jpg", contents: "first", in: root)
+        let second = try writeFile(named: "b.jpg", contents: "second", in: root)
+        let firstDestination = root.appendingPathComponent("renamed-a.jpg")
+        let secondDestination = root.appendingPathComponent("renamed-b.jpg")
+        let fileSystem = FaultInjectingBatchFileSystem(failingMoveCalls: [4])
+        let service = BatchFileOperationService(fileSystem: fileSystem)
+
+        let result = service.executeRenamePlan(BatchRenamePlan(
+            proposals: [
+                RenameProposal(source: first, destination: firstDestination),
+                RenameProposal(source: second, destination: secondDestination)
+            ],
+            failures: []
+        ))
+
+        XCTAssertTrue(result.succeeded.isEmpty)
+        XCTAssertEqual(result.failures.map(\.url), [second])
+        XCTAssertTrue(result.recoveryFailures.isEmpty)
+        XCTAssertEqual(try String(contentsOf: first, encoding: .utf8), "first")
+        XCTAssertEqual(try String(contentsOf: second, encoding: .utf8), "second")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: firstDestination.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: secondDestination.path))
+        try assertNoRenameTemporaryFiles(in: root)
+
+        let successfulMoves = fileSystem.moveAttempts.filter { !$0.didFail }
+        let destinationRollbackIndex = try XCTUnwrap(successfulMoves.firstIndex {
+            $0.source == firstDestination && $0.destination.lastPathComponent.hasPrefix(".batch-rename-")
+        })
+        let firstOriginalRestoreIndex = try XCTUnwrap(successfulMoves.firstIndex { $0.destination == first })
+        let secondOriginalRestoreIndex = try XCTUnwrap(successfulMoves.firstIndex { $0.destination == second })
+        XCTAssertLessThan(destinationRollbackIndex, firstOriginalRestoreIndex)
+        XCTAssertLessThan(destinationRollbackIndex, secondOriginalRestoreIndex)
+    }
+
+    func testExecuteRenamePlanReportsBestKnownActualURLWhenRollbackFails() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = try writeFile(named: "a.jpg", contents: "first", in: root)
+        let second = try writeFile(named: "b.jpg", contents: "second", in: root)
+        let firstDestination = root.appendingPathComponent("renamed-a.jpg")
+        let secondDestination = root.appendingPathComponent("renamed-b.jpg")
+        let fileSystem = FaultInjectingBatchFileSystem(failingMoveCalls: [4, 7])
+        let service = BatchFileOperationService(fileSystem: fileSystem)
+
+        let result = service.executeRenamePlan(BatchRenamePlan(
+            proposals: [
+                RenameProposal(source: first, destination: firstDestination),
+                RenameProposal(source: second, destination: secondDestination)
+            ],
+            failures: []
+        ))
+
+        XCTAssertTrue(result.succeeded.isEmpty)
+        XCTAssertEqual(result.failures.map(\.url), [second])
+        XCTAssertEqual(result.recoveryFailures.count, 1)
+        let recoveryFailure = try XCTUnwrap(result.recoveryFailures.first)
+        XCTAssertEqual(recoveryFailure.expectedURL, first)
+        XCTAssertTrue(recoveryFailure.actualURL.lastPathComponent.hasPrefix(".batch-rename-"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: recoveryFailure.actualURL.path))
+        XCTAssertEqual(try String(contentsOf: recoveryFailure.actualURL, encoding: .utf8), "first")
+        XCTAssertEqual(try String(contentsOf: second, encoding: .utf8), "second")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: firstDestination.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: secondDestination.path))
+    }
+
+    func testExecuteRenamePlanReportsDestinationAsActualURLWhenCommittedMoveCannotReverse() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = try writeFile(named: "a.jpg", contents: "first", in: root)
+        let second = try writeFile(named: "b.jpg", contents: "second", in: root)
+        let firstDestination = root.appendingPathComponent("renamed-a.jpg")
+        let secondDestination = root.appendingPathComponent("renamed-b.jpg")
+        let fileSystem = FaultInjectingBatchFileSystem(failingMoveCalls: [4, 5])
+        let service = BatchFileOperationService(fileSystem: fileSystem)
+
+        let result = service.executeRenamePlan(BatchRenamePlan(
+            proposals: [
+                RenameProposal(source: first, destination: firstDestination),
+                RenameProposal(source: second, destination: secondDestination)
+            ],
+            failures: []
+        ))
+
+        XCTAssertEqual(result.recoveryFailures, [
+            BatchRecoveryFailure(
+                expectedURL: first,
+                actualURL: firstDestination,
+                reason: "Injected move failure at call 5"
+            )
+        ])
+        XCTAssertEqual(try String(contentsOf: firstDestination, encoding: .utf8), "first")
+        XCTAssertEqual(try String(contentsOf: second, encoding: .utf8), "second")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: first.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: secondDestination.path))
+    }
+
     private func makeTemporaryDirectory() throws -> URL {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -179,5 +306,59 @@ final class BatchFileOperationServiceTests: XCTestCase {
         let url = folder.appendingPathComponent(name)
         try Data(contents.utf8).write(to: url)
         return url
+    }
+
+    private func assertNoRenameTemporaryFiles(in folder: URL) throws {
+        let names = try FileManager.default.contentsOfDirectory(atPath: folder.path)
+        XCTAssertFalse(names.contains { $0.hasPrefix(".batch-rename-") && $0.hasSuffix(".tmp") })
+    }
+}
+
+private final class FaultInjectingBatchFileSystem: BatchFileSystem, @unchecked Sendable {
+    struct MoveAttempt: Equatable {
+        let source: URL
+        let destination: URL
+        let didFail: Bool
+    }
+
+    private let fileManager = FileManager.default
+    private let failingMoveCalls: Set<Int>
+    private(set) var moveAttempts: [MoveAttempt] = []
+
+    init(failingMoveCalls: Set<Int>) {
+        self.failingMoveCalls = failingMoveCalls
+    }
+
+    func fileExists(at url: URL) -> Bool {
+        fileManager.fileExists(atPath: url.path)
+    }
+
+    func directoryContents(at url: URL) throws -> [URL] {
+        try fileManager.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)
+    }
+
+    func moveItem(at source: URL, to destination: URL) throws {
+        let call = moveAttempts.count + 1
+        let shouldFail = failingMoveCalls.contains(call)
+        moveAttempts.append(MoveAttempt(source: source, destination: destination, didFail: shouldFail))
+        if shouldFail {
+            throw FaultInjectionError.move(call)
+        }
+        try fileManager.moveItem(at: source, to: destination)
+    }
+
+    func trashItem(at url: URL) throws {
+        var resultingURL: NSURL?
+        try fileManager.trashItem(at: url, resultingItemURL: &resultingURL)
+    }
+}
+
+private enum FaultInjectionError: LocalizedError {
+    case move(Int)
+
+    var errorDescription: String? {
+        switch self {
+        case .move(let call): "Injected move failure at call \(call)"
+        }
     }
 }
