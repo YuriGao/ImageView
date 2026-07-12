@@ -688,8 +688,6 @@ final class MainWindowController: NSWindowController {
 
         if isFolderBrowserMode {
             switch keyCode {
-            case 36:
-                return .toggleFullscreen
             case 53:
                 return shouldEndEditing ? .endEditing : .passThrough
             default:

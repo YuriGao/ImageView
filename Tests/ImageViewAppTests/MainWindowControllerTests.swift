@@ -126,6 +126,10 @@ final class MainWindowControllerTests: XCTestCase {
             ),
             .passThrough
         )
+        XCTAssertEqual(
+            MainWindowController.keyAction(for: 36, shouldEndEditing: false, isFolderBrowserMode: true),
+            .passThrough
+        )
     }
 
     func testMenuCommandMapsViewSelectors() {
