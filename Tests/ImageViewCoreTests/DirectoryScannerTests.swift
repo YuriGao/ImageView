@@ -34,6 +34,20 @@ final class DirectoryScannerTests: XCTestCase {
         XCTAssertTrue(items.contains { $0.url == opened })
     }
 
+    func testScansExplicitFolderUsingNaturalSortAndSupportedFormats() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        FileManager.default.createFile(atPath: root.appendingPathComponent("image-10.jpg").path, contents: Data())
+        FileManager.default.createFile(atPath: root.appendingPathComponent("notes.txt").path, contents: Data())
+        FileManager.default.createFile(atPath: root.appendingPathComponent("image-2.png").path, contents: Data())
+
+        let items = try await DirectoryScanner().scan(folder: root)
+
+        XCTAssertEqual(items.map(\.url.lastPathComponent), ["image-2.png", "image-10.jpg"])
+    }
+
     @MainActor
     func testDirectoryEnumerationRunsOffTheMainThread() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
