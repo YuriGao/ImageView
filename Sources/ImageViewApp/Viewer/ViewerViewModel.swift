@@ -75,6 +75,7 @@ final class ViewerViewModel: ObservableObject {
     private var pendingOperations: [EditOperation] = []
     private var persistedCurrentImage: DecodedImage?
     private var displayedFileVersion: CurrentFileVersion?
+    var pendingOperationCountForTesting: Int { pendingOperations.count }
 
     init(
         scanContainingDirectory: @escaping @Sendable (URL) async throws -> [ImageItem] = {
@@ -367,11 +368,22 @@ final class ViewerViewModel: ObservableObject {
               newCurrentItem.url.standardizedFileURL != previousCurrentURL else {
             return
         }
-        displayedFileVersion = currentFileVersionAtURL(newCurrentItem.url)
-        if let image = currentImage {
+        if loadPhase == .full,
+           let image = currentImage,
+           persistedCurrentImage != nil {
+            displayedFileVersion = currentFileVersionAtURL(newCurrentItem.url)
             updateMetadata(url: newCurrentItem.url, format: newCurrentItem.format, image: image)
+            updateDisplayTitle()
+            return
         }
+
+        currentImage = nil
+        currentMetadata = nil
+        persistedCurrentImage = nil
+        displayedFileVersion = nil
+        errorMessage = nil
         updateDisplayTitle()
+        startDisplayCurrentAndPreload()
     }
 
     @discardableResult
@@ -381,6 +393,10 @@ final class ViewerViewModel: ObservableObject {
         navigationState?.removeItems(withURLs: standardizedURLs)
         let replacementURL = navigationState?.currentItem?.url.standardizedFileURL
         guard replacementURL != previousCurrentURL else { return replacementURL }
+
+        _ = beginDisplayRequest()
+        pendingOperations.removeAll()
+        hasUnsavedEdits = false
 
         guard navigationState?.currentItem != nil else {
             currentImage = nil

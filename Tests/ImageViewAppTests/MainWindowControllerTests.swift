@@ -1154,6 +1154,77 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertFalse(fixture.controller.canGoForwardForTesting)
     }
 
+    func testDirectViewerGridToggleReturnsToLiveViewerAfterEmptyScan() async throws {
+        let fixture = try makeFolderNavigationFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.folder) }
+        let folderViewModel = FolderBrowserViewModel(scanFolder: { _ in [] })
+        let controller = MainWindowController(
+            settings: AppSettings(defaults: makeIsolatedDefaults()),
+            folderBrowserViewModel: folderViewModel
+        )
+        controller.open(url: fixture.items[0].url)
+        for _ in 0..<100 where controller.displayedItemURLForTesting == nil {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        controller.performTitleBarGridToggleForTesting()
+        for _ in 0..<100 where folderViewModel.presentation != .emptyFolder {
+            await Task.yield()
+        }
+        controller.performTitleBarGridToggleForTesting()
+
+        XCTAssertEqual(controller.currentViewerRouteURLForTesting, fixture.items[0].url.standardizedFileURL)
+        XCTAssertTrue(controller.isCanvasVisibleForTesting)
+    }
+
+    func testDirectViewerGridToggleReturnsToLiveViewerAfterFailedScan() async throws {
+        let fixture = try makeFolderNavigationFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.folder) }
+        enum ScanFailure: Error { case denied }
+        let folderViewModel = FolderBrowserViewModel(scanFolder: { _ in throw ScanFailure.denied })
+        let controller = MainWindowController(
+            settings: AppSettings(defaults: makeIsolatedDefaults()),
+            folderBrowserViewModel: folderViewModel
+        )
+        controller.open(url: fixture.items[0].url)
+        for _ in 0..<100 where controller.displayedItemURLForTesting == nil {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        controller.performTitleBarGridToggleForTesting()
+        for _ in 0..<100 {
+            if case .loadFailed = folderViewModel.presentation { break }
+            await Task.yield()
+        }
+        controller.performTitleBarGridToggleForTesting()
+
+        XCTAssertEqual(controller.currentViewerRouteURLForTesting, fixture.items[0].url.standardizedFileURL)
+        XCTAssertTrue(controller.isCanvasVisibleForTesting)
+    }
+
+    func testGridTrashHonorsUnsavedSaveDiscardAndCancel() async throws {
+        try await assertGridDestructiveActionHonorsUnsavedChoices(action: .trash)
+    }
+
+    func testGridMoveHonorsUnsavedSaveDiscardAndCancel() async throws {
+        try await assertGridDestructiveActionHonorsUnsavedChoices(action: .move)
+    }
+
+    func testGridBackForwardPreservesScrollOrigin() async throws {
+        let fixture = try makeFolderNavigationFixture(itemNames: (0..<20).map { "\($0).png" })
+        defer { try? FileManager.default.removeItem(at: fixture.folder) }
+        await fixture.controller.openFolderForTesting(fixture.folder, scannerItems: fixture.items)
+        fixture.controller.setFolderBrowserScrollOriginForTesting(NSPoint(x: 0, y: 123))
+        let origin = fixture.controller.folderBrowserScrollOriginForTesting
+        fixture.controller.openFirstFolderBrowserItemForTesting()
+
+        fixture.controller.goBackForTesting()
+        XCTAssertEqual(fixture.controller.folderBrowserScrollOriginForTesting, origin)
+        fixture.controller.goForwardForTesting()
+        fixture.controller.performTitleBarGridToggleForTesting()
+        XCTAssertEqual(fixture.controller.folderBrowserScrollOriginForTesting, origin)
+    }
+
     func testOpeningNewGridItemReplacesForwardRouteAndRecordsLastOpenedItem() async throws {
         let fixture = try makeFolderNavigationFixture(itemNames: ["one.png", "two.png"])
         defer { try? FileManager.default.removeItem(at: fixture.folder) }
@@ -1637,6 +1708,60 @@ final class MainWindowControllerTests: XCTestCase {
         return view.subviews.lazy.compactMap { self.findSearchField(in: $0) }.first
     }
 
+    private enum GridDestructiveAction {
+        case trash
+        case move
+    }
+
+    private func assertGridDestructiveActionHonorsUnsavedChoices(
+        action: GridDestructiveAction
+    ) async throws {
+        for choice in [
+            MainWindowController.UnsavedChangesChoice.save,
+            .discard,
+            .cancel
+        ] {
+            let operationCount = MainWindowLockedValue(0)
+            let fixture = try makeFolderNavigationFixture(
+                moveToTrash: { urls in
+                    operationCount.update { $0 += 1 }
+                    return BatchOperationResult(succeeded: urls)
+                },
+                moveToFolder: { urls, _, _ in
+                    operationCount.update { $0 += 1 }
+                    return BatchOperationResult(succeeded: urls)
+                }
+            )
+            defer { try? FileManager.default.removeItem(at: fixture.folder) }
+            await fixture.controller.openFolderForTesting(fixture.folder, scannerItems: fixture.items)
+            fixture.controller.openFirstFolderBrowserItemForTesting()
+            for _ in 0..<100 where !fixture.controller.canEditCurrentImageForTesting {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            fixture.controller.rotateClockwise(nil)
+            fixture.controller.goBackForTesting()
+            fixture.controller.selectFolderBrowserItemsForTesting([fixture.items[0].id])
+            fixture.controller.setUnsavedChangesChoiceForTesting(choice)
+            fixture.controller.batchActionDialogProviderForTesting = .init(
+                confirmTrash: { _ in true },
+                chooseDestinationFolder: { fixture.folder.appendingPathComponent("destination", isDirectory: true) }
+            )
+
+            switch action {
+            case .trash:
+                fixture.controller.triggerFolderBrowserTrashForTesting()
+            case .move:
+                fixture.controller.triggerFolderBrowserMoveForTesting()
+            }
+            for _ in 0..<100 where choice != .cancel && operationCount.value == 0 {
+                await Task.yield()
+            }
+
+            XCTAssertEqual(operationCount.value, choice == .cancel ? 0 : 1, "choice=\(choice)")
+            XCTAssertEqual(fixture.controller.hasUnsavedEditsForTesting, choice == .cancel, "choice=\(choice)")
+        }
+    }
+
     private func findTypeFilterPopUp(in view: NSView) -> NSPopUpButton? {
         if let popUp = view as? NSPopUpButton,
            popUp.itemTitles.contains(AppStrings.text("folderBrowser.typeFilter.all")) {
@@ -1664,6 +1789,7 @@ final class MainWindowControllerTests: XCTestCase {
     private func makeFolderNavigationFixture(
         itemNames: [String] = ["one.png"],
         moveToTrash: FolderBrowserViewModel.MoveToTrash? = nil,
+        moveToFolder: FolderBrowserViewModel.MoveToFolder? = nil,
         planBatchRename: FolderBrowserViewModel.PlanBatchRename? = nil,
         executeRenamePlan: FolderBrowserViewModel.ExecuteRenamePlan? = nil
     ) throws -> (
@@ -1687,6 +1813,7 @@ final class MainWindowControllerTests: XCTestCase {
                 return items
             },
             moveToTrash: moveToTrash,
+            moveToFolder: moveToFolder,
             planBatchRename: planBatchRename,
             executeRenamePlan: executeRenamePlan
         )

@@ -5,6 +5,22 @@ import XCTest
 
 @MainActor
 final class FolderBrowserCellViewTests: XCTestCase {
+    func testSelectedAppearanceRefreshesWhenEffectiveAppearanceChanges() {
+        let cell = FolderBrowserCellView()
+        cell.loadView()
+        cell.isSelected = true
+        let initialRefreshCount = cell.testingAppearanceRefreshCount
+        cell.view.appearance = NSAppearance(named: .aqua)
+        cell.view.viewDidChangeEffectiveAppearance()
+        let lightBackground = cell.testingSelectionBackgroundColor
+
+        cell.view.appearance = NSAppearance(named: .darkAqua)
+        cell.view.viewDidChangeEffectiveAppearance()
+
+        XCTAssertNotEqual(cell.testingSelectionBackgroundColor, lightBackground)
+        XCTAssertGreaterThanOrEqual(cell.testingAppearanceRefreshCount - initialRefreshCount, 2)
+    }
+
     func testSelectionChangesAppearanceWithoutChangingLayoutInLightAndDarkAppearances() {
         let item = ImageItem(
             url: URL(fileURLWithPath: "/tmp/a-very-long-image-filename-that-must-remain-visible.png"),

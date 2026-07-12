@@ -69,12 +69,31 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
             .map(\.title)
     }
     var testingIsCollectionVisible: Bool { !collectionScrollView.isHidden }
+    var testingScrollOrigin: NSPoint { collectionScrollView.contentView.bounds.origin }
+    var testingDoubleClickRecognizerCount: Int {
+        collectionView.gestureRecognizers.count {
+            ($0 as? NSClickGestureRecognizer)?.numberOfClicksRequired == 2
+        }
+    }
 
     func testingCell(at index: Int) -> FolderBrowserCellView? {
         guard index >= 0, index < items.count else { return nil }
         let indexPath = IndexPath(item: index, section: 0)
         collectionView.layoutSubtreeIfNeeded()
         return collectionView.item(at: indexPath) as? FolderBrowserCellView
+    }
+
+    func testingSetScrollOrigin(_ origin: NSPoint) {
+        collectionScrollView.contentView.scroll(to: origin)
+        collectionScrollView.reflectScrolledClipView(collectionScrollView.contentView)
+    }
+
+    func testingPerformDoubleClick(onItemAt index: Int) {
+        openItem(at: IndexPath(item: index, section: 0))
+    }
+
+    func testingPerformDoubleClickOnBlankSpace() {
+        openItem(at: nil)
     }
 
     init(thumbnailProvider: ThumbnailProvider = ThumbnailProvider()) {
@@ -471,8 +490,15 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
         perform(secondaryRecoveryAction)
     }
 
-    @objc private func openSelectedItem(_ sender: Any?) {
-        openFirstSelectedItem()
+    @objc private func openSelectedItem(_ sender: NSClickGestureRecognizer) {
+        let location = sender.location(in: collectionView)
+        openItem(at: collectionView.indexPathForItem(at: location))
+    }
+
+    private func openItem(at indexPath: IndexPath?) {
+        guard let indexPath, let item = item(at: indexPath) else { return }
+        collectionView.selectionIndexPaths = [indexPath]
+        onOpenItem?(item)
     }
 
     private func openFirstSelectedItem() {

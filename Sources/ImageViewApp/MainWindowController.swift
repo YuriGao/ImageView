@@ -127,6 +127,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
     private var gestureCoordinator: GestureCoordinator?
     private var keyMonitor: Any?
     private var displayedItemURL: URL?
+    private var associatedViewerURL: URL?
     private var externalFileCheckTimer: Timer?
     private var filmstripHideTimer: Timer?
     private var filmstripVisibilityGeneration = 0
@@ -195,6 +196,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         confirmUnsavedEditsIfNeeded(for: .opening) { [weak self] in
             guard let self else { return }
             self.currentRoute = .viewer(url.standardizedFileURL)
+            self.associatedViewerURL = nil
             self.backRoute = nil
             self.forwardRoute = nil
             self.openImageUsingExistingPipeline(url)
@@ -211,6 +213,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         invalidateFolderRetry()
         hasAssignedOpenRequest = true
         currentRoute = .folder(url.standardizedFileURL)
+        associatedViewerURL = nil
         backRoute = nil
         forwardRoute = nil
         enterFolderBrowserMode()
@@ -533,6 +536,9 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
                 self.displayedItemURL = newURL?.standardizedFileURL
                 if case .viewer = self.currentRoute, let newURL {
                     self.currentRoute = .viewer(newURL.standardizedFileURL)
+                    if self.associatedViewerURL != nil {
+                        self.associatedViewerURL = newURL.standardizedFileURL
+                    }
                 }
                 self.filmstripView.apply(items: state?.items ?? [], current: state?.currentItem)
                 let availability = Self.pageControlAvailability(navigationState: state)
@@ -752,6 +758,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
             return
         }
         let folderURL = viewerURL.deletingLastPathComponent().standardizedFileURL
+        associatedViewerURL = viewerURL.standardizedFileURL
         if folderBrowserViewModel.session?.folderURL.standardizedFileURL == folderURL {
             showRoute(.folder(folderURL), recordHistory: false)
             return
@@ -774,6 +781,9 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
     }
 
     private func associatedViewerRoute(folderState: FolderRouteState? = nil) -> ContentRoute? {
+        if let associatedViewerURL {
+            return .viewer(associatedViewerURL)
+        }
         let folderState = folderState ?? FolderRouteState(
             session: folderBrowserViewModel.session,
             isLoading: folderBrowserViewModel.isLoading
@@ -810,6 +820,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         confirmUnsavedEditsIfNeeded(for: .opening) { [weak self] in
             guard let self else { return }
             self.folderBrowserViewModel.recordOpenedItem(item)
+            self.associatedViewerURL = item.url.standardizedFileURL
             self.showRoute(.viewer(item.url.standardizedFileURL), recordHistory: true)
             self.hasAssignedOpenRequest = true
             self.openImageUsingExistingPipeline(item.url)
@@ -828,6 +839,10 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
             }
             backRoute = removingViewerRoute(backRoute, matchingAny: standardizedURLs)
             forwardRoute = removingViewerRoute(forwardRoute, matchingAny: standardizedURLs)
+            if let associatedViewerURL,
+               standardizedURLs.contains(associatedViewerURL.standardizedFileURL) {
+                self.associatedViewerURL = nil
+            }
             let replacementURL = viewModel.removeItemsFromNavigation(standardizedURLs)
             if currentViewerWasRemoved {
                 currentRoute = replacementURL.map(ContentRoute.viewer)
@@ -841,6 +856,10 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
             currentRoute = migratingViewerRoute(currentRoute, using: standardizedMigrations)
             backRoute = migratingViewerRoute(backRoute, using: standardizedMigrations)
             forwardRoute = migratingViewerRoute(forwardRoute, using: standardizedMigrations)
+            if let associatedViewerURL,
+               let destination = standardizedMigrations[associatedViewerURL.standardizedFileURL] {
+                self.associatedViewerURL = destination
+            }
             viewModel.applyItemURLMigrations(standardizedMigrations)
         }
     }
@@ -910,11 +929,14 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
             ?? confirmMoveSelectedFolderBrowserItemsToTrash(count: selectedItems.count)
         guard confirmed else { return }
 
-        folderBrowserViewModel.moveSelectedToTrash()
+        confirmUnsavedEditsForSelectedViewerIfNeeded(selectedItems, transition: .movingToTrash) { [weak self] in
+            self?.folderBrowserViewModel.moveSelectedToTrash()
+        }
     }
 
     private func moveSelectedFolderBrowserItemsToFolder() {
-        guard !folderBrowserViewModel.selectedItems.isEmpty else {
+        let selectedItems = folderBrowserViewModel.selectedItems
+        guard !selectedItems.isEmpty else {
             NSSound.beep()
             return
         }
@@ -923,7 +945,23 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
             ?? chooseDestinationFolderForBatchMove()
         guard let destination else { return }
 
-        folderBrowserViewModel.moveSelected(to: destination, conflictPolicy: .skip)
+        confirmUnsavedEditsForSelectedViewerIfNeeded(selectedItems, transition: .navigating) { [weak self] in
+            self?.folderBrowserViewModel.moveSelected(to: destination, conflictPolicy: .skip)
+        }
+    }
+
+    private func confirmUnsavedEditsForSelectedViewerIfNeeded(
+        _ selectedItems: [ImageItem],
+        transition: UnsavedChangesTransition,
+        perform action: () -> Void
+    ) {
+        let selectedURLs = Set(selectedItems.map { $0.url.standardizedFileURL })
+        guard let viewerURL = viewModel.navigationState?.currentItem?.url.standardizedFileURL,
+              selectedURLs.contains(viewerURL) else {
+            action()
+            return
+        }
+        confirmUnsavedEditsIfNeeded(for: transition, perform: action)
     }
 
     private func renameSelectedFolderBrowserItems() {
@@ -1677,6 +1715,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         invalidateFolderRetry()
         hasAssignedOpenRequest = true
         currentRoute = .folder(folderURL.standardizedFileURL)
+        associatedViewerURL = nil
         backRoute = nil
         forwardRoute = nil
         enterFolderBrowserMode()
@@ -1688,6 +1727,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         invalidateFolderRetry()
         hasAssignedOpenRequest = true
         currentRoute = .folder(folderURL.standardizedFileURL)
+        associatedViewerURL = nil
         backRoute = nil
         forwardRoute = nil
         enterFolderBrowserMode()
@@ -1749,6 +1789,12 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         viewModel.navigationState?.currentItem?.url.standardizedFileURL
     }
     var displayedItemURLForTesting: URL? { displayedItemURL }
+    var folderBrowserScrollOriginForTesting: NSPoint { folderBrowserView.testingScrollOrigin }
+
+    func setFolderBrowserScrollOriginForTesting(_ origin: NSPoint) {
+        folderBrowserView.testingSetScrollOrigin(origin)
+    }
+
     var viewerNavigationURLsForTesting: [URL] {
         viewModel.navigationState?.items.map { $0.url.standardizedFileURL } ?? []
     }

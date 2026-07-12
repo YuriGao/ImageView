@@ -8,6 +8,56 @@ import XCTest
 
 @MainActor
 final class ViewerViewModelTests: XCTestCase {
+    func testRemovingEditedCurrentItemClearsPendingEditsAsSecondLineProtection() async throws {
+        let firstURL = URL(fileURLWithPath: "/tmp/remove-edited-a.png")
+        let secondURL = URL(fileURLWithPath: "/tmp/remove-edited-b.png")
+        let image = try makeDecodedImage(width: 4, height: 3)
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: { _ in [
+                ImageItem(url: firstURL, format: .png),
+                ImageItem(url: secondURL, format: .png)
+            ] },
+            loadImageAtURL: { _, _ in image },
+            loadPreviewAtURL: { _, _ in image }
+        )
+        await viewModel.open(url: firstURL)
+        viewModel.applyEdit(.rotateClockwise)
+        XCTAssertTrue(viewModel.hasUnsavedEdits)
+
+        _ = viewModel.removeItemsFromNavigation([firstURL])
+
+        XCTAssertFalse(viewModel.hasUnsavedEdits)
+        XCTAssertEqual(viewModel.pendingOperationCountForTesting, 0)
+    }
+
+    func testRenameMigrationDuringLoadingCancelsOldRequestAndRestartsAtNewURL() async throws {
+        let firstURL = URL(fileURLWithPath: "/tmp/migration-first.png")
+        let oldURL = URL(fileURLWithPath: "/tmp/migration-old.png")
+        let newURL = URL(fileURLWithPath: "/tmp/migration-new.png")
+        let first = try makeDecodedImage(width: 4, height: 3)
+        let renamed = try makeDecodedImage(width: 9, height: 7)
+        let loader = ControlledImageLoader(images: [firstURL: first, oldURL: first, newURL: renamed])
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: { _ in [
+                ImageItem(url: firstURL, format: .png),
+                ImageItem(url: oldURL, format: .png)
+            ] },
+            loadImageAtURL: loader.load(url:format:),
+            loadPreviewAtURL: { _, _ in first }
+        )
+        await viewModel.open(url: firstURL)
+        await loader.pauseNextLoad(for: oldURL)
+        viewModel.showNext()
+        await loader.waitUntilPaused(url: oldURL)
+
+        viewModel.applyItemURLMigrations([oldURL: newURL])
+        await waitUntil { viewModel.loadPhase == .full && viewModel.currentImage?.pixelSize == renamed.pixelSize }
+
+        XCTAssertEqual(viewModel.navigationState?.currentItem?.url, newURL)
+        let renamedLoadCount = await loader.loadCount(for: newURL)
+        XCTAssertEqual(renamedLoadCount, 1)
+        try await loader.resume(url: oldURL)
+    }
     func testBatchRenameMigratesNonCurrentNeighborInNavigationItems() async throws {
         let firstURL = URL(fileURLWithPath: "/tmp/a.png")
         let secondURL = URL(fileURLWithPath: "/tmp/b.png")
@@ -1280,6 +1330,7 @@ private actor ControlledImageLoader {
     private let images: [URL: DecodedImage]
     private var pausedURLs: Set<URL> = []
     private var pausedRequests: [URL: PausedRequest] = [:]
+    private var loadCounts: [URL: Int] = [:]
 
     init(images: [URL: DecodedImage]) {
         self.images = images
@@ -1290,6 +1341,7 @@ private actor ControlledImageLoader {
     }
 
     func load(url: URL, format _: SupportedImageFormat) async throws -> DecodedImage {
+        loadCounts[url, default: 0] += 1
         if pausedURLs.remove(url) != nil {
             return try await withCheckedThrowingContinuation { continuation in
                 pausedRequests[url] = PausedRequest(continuation: continuation, isWaiting: true)
@@ -1300,6 +1352,10 @@ private actor ControlledImageLoader {
             throw ImageDecodeError.cannotCreateSource
         }
         return image
+    }
+
+    func loadCount(for url: URL) -> Int {
+        loadCounts[url, default: 0]
     }
 
     func waitUntilPaused(url: URL) async {

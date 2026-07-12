@@ -7,6 +7,7 @@ final class FolderBrowserCellView: NSCollectionViewItem {
     private let thumbnailView = NSImageView()
     private let filenameField = NSTextField(labelWithString: "")
     private var thumbnailRequest: ThumbnailRequest?
+    private(set) var testingAppearanceRefreshCount = 0
 
     var testingFilename: String {
         filenameField.stringValue
@@ -20,12 +21,22 @@ final class FolderBrowserCellView: NSCollectionViewItem {
         view.layer?.borderWidth == 1
     }
 
+    var testingSelectionBackgroundColor: CGColor? {
+        view.layer?.backgroundColor
+    }
+
     override var isSelected: Bool {
         didSet { updateSelectionAppearance() }
     }
 
     override func loadView() {
-        view = NSView()
+        let appearanceView = FolderBrowserAppearanceTrackingView()
+        appearanceView.onEffectiveAppearanceChanged = { [weak self] in
+            guard let self else { return }
+            self.testingAppearanceRefreshCount += 1
+            self.updateSelectionAppearance()
+        }
+        view = appearanceView
         view.translatesAutoresizingMaskIntoConstraints = false
 
         thumbnailView.translatesAutoresizingMaskIntoConstraints = false
@@ -91,11 +102,22 @@ final class FolderBrowserCellView: NSCollectionViewItem {
     private func updateSelectionAppearance() {
         view.wantsLayer = true
         view.layer?.cornerRadius = 10
-        view.layer?.backgroundColor = isSelected
-            ? NSColor.selectedContentBackgroundColor.withAlphaComponent(0.16).cgColor
-            : NSColor.clear.cgColor
+        view.effectiveAppearance.performAsCurrentDrawingAppearance {
+            view.layer?.backgroundColor = isSelected
+                ? NSColor.selectedContentBackgroundColor.withAlphaComponent(0.16).cgColor
+                : NSColor.clear.cgColor
+            view.layer?.borderColor = NSColor.keyboardFocusIndicatorColor.withAlphaComponent(0.65).cgColor
+        }
         view.layer?.borderWidth = isSelected ? 1 : 0
-        view.layer?.borderColor = NSColor.keyboardFocusIndicatorColor.withAlphaComponent(0.65).cgColor
         filenameField.font = .systemFont(ofSize: 12, weight: isSelected ? .semibold : .regular)
+    }
+}
+
+private final class FolderBrowserAppearanceTrackingView: NSView {
+    var onEffectiveAppearanceChanged: (() -> Void)?
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        onEffectiveAppearanceChanged?()
     }
 }

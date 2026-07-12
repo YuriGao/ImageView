@@ -166,6 +166,24 @@ final class FolderBrowserViewTests: XCTestCase {
         XCTAssertEqual(openedItem, item)
     }
 
+    func testDoubleClickOnlyOpensHitItemExactlyOnceAndIgnoresBlankSpace() {
+        let first = ImageItem(url: URL(fileURLWithPath: "/tmp/first.png"), format: .png)
+        let second = ImageItem(url: URL(fileURLWithPath: "/tmp/second.png"), format: .png)
+        let view = FolderBrowserView(thumbnailProvider: .stub)
+        view.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+        view.apply(items: [first, second], selectedIDs: [first.id])
+        view.layoutSubtreeIfNeeded()
+        XCTAssertEqual(view.testingDoubleClickRecognizerCount, 1)
+        var opened: [ImageItem] = []
+        view.onOpenItem = { opened.append($0) }
+
+        view.testingPerformDoubleClick(onItemAt: 1)
+        XCTAssertEqual(opened, [second])
+
+        view.testingPerformDoubleClickOnBlankSpace()
+        XCTAssertEqual(opened, [second])
+    }
+
     func testToolbarCallbacks() {
         let view = FolderBrowserView(thumbnailProvider: .stub)
         var searchText: String?
