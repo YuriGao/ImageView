@@ -169,13 +169,13 @@ final class MainWindowController: NSWindowController {
         canvas.translatesAutoresizingMaskIntoConstraints = false
         window?.contentView = rootView
         rootView.addSubview(canvas)
+        rootView.addSubview(emptyStateView)
         rootView.addSubview(titleBarView)
         rootView.addSubview(titleBarDivider)
         rootView.addSubview(bottomBarView)
         rootView.addSubview(bottomBarDivider)
         rootView.addSubview(filmstripOverlayView)
         rootView.addSubview(pageNavigationOverlayView)
-        canvas.addSubview(emptyStateView)
         canvas.addSubview(errorOverlay)
         rootView.addSubview(inspectorView)
         bottomBarView.addSubview(bottomDimensionLabel)

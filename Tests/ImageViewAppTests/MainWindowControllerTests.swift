@@ -364,6 +364,29 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertEqual(requestCount, 1)
     }
 
+    func testEmptyStateOpenButtonHasNoGestureRecognizerInAncestorChain() throws {
+        let controller = MainWindowController(settings: AppSettings(defaults: makeIsolatedDefaults()))
+        let contentView = try XCTUnwrap(controller.window?.contentView)
+
+        func findOpenButton(in view: NSView) -> NSButton? {
+            if let button = view as? NSButton,
+               button.title == "打开图片…" || button.title == "Open Image…" {
+                return button
+            }
+            return view.subviews.lazy.compactMap(findOpenButton).first
+        }
+
+        let button = try XCTUnwrap(findOpenButton(in: contentView))
+        var ancestor = button.superview
+        while let view = ancestor {
+            XCTAssertTrue(
+                view.gestureRecognizers.isEmpty,
+                "Interactive empty-state controls must not sit below a gesture-recognizing canvas"
+            )
+            ancestor = view.superview
+        }
+    }
+
     func testFilmstripMenuValidationReflectsSettingState() {
         let defaults = UserDefaults(suiteName: "ImageViewAppTests.Filmstrip.\(UUID().uuidString)")!
         let settings = AppSettings(defaults: defaults)
