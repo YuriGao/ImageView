@@ -1,9 +1,23 @@
 import XCTest
 import AppKit
+import ImageViewCore
 @testable import ImageViewApp
 
 @MainActor
 final class AppDelegateTests: XCTestCase {
+    func testOpenPanelAllowsOnlySupportedImageFormats() {
+        let panel = NSOpenPanel()
+
+        AppDelegate.configureOpenPanel(panel)
+
+        let expected = Set(SupportedImageFormat.allCases.compactMap(\.contentType).map(\.identifier))
+        XCTAssertEqual(Set(panel.allowedContentTypes.map(\.identifier)), expected)
+        XCTAssertFalse(panel.allowsOtherFileTypes)
+        XCTAssertFalse(panel.canChooseDirectories)
+        XCTAssertTrue(panel.canChooseFiles)
+        XCTAssertTrue(panel.allowsMultipleSelection)
+    }
+
     @MainActor
     private final class WindowHarness {
         var openRequests: [URL] = []

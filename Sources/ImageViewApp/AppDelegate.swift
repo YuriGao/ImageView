@@ -1,4 +1,5 @@
 import AppKit
+import ImageViewCore
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -31,8 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         openImageURL: @escaping (MainWindowController, URL) -> Void = { $0.open(url: $1) },
         chooseImageURLs: @escaping () -> [URL]? = {
             let panel = NSOpenPanel()
-            panel.allowsMultipleSelection = true
-            panel.canChooseDirectories = false
+            AppDelegate.configureOpenPanel(panel)
             return panel.runModal() == .OK ? panel.urls : nil
         },
         terminateApplication: @escaping () -> Void = { NSApp.terminate(nil) },
@@ -49,6 +49,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.noteRecentDocument = noteRecentDocument
         self.recentDocumentURLs = recentDocumentURLs
         super.init()
+    }
+
+    static func configureOpenPanel(_ panel: NSOpenPanel) {
+        panel.allowedContentTypes = SupportedImageFormat.allCases.compactMap(\.contentType)
+        panel.allowsOtherFileTypes = false
+        panel.allowsMultipleSelection = true
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
