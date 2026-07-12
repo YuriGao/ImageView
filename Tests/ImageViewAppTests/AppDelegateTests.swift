@@ -21,13 +21,16 @@ final class AppDelegateTests: XCTestCase {
     @MainActor
     private final class WindowHarness {
         var openRequests: [URL] = []
+        var folderOpenRequests: [URL] = []
         var recentURLs: [URL] = []
         var terminationCount = 0
         var showCounts: [ObjectIdentifier: Int] = [:]
         private let chosenURLs: [URL]?
+        private let chosenFolderURL: URL?
 
-        init(chosenURLs: [URL]? = nil) {
+        init(chosenURLs: [URL]? = nil, chosenFolderURL: URL? = nil) {
             self.chosenURLs = chosenURLs
+            self.chosenFolderURL = chosenFolderURL
         }
 
         func makeDelegate() -> AppDelegate {
@@ -44,6 +47,11 @@ final class AppDelegateTests: XCTestCase {
                     controller.open(url: url)
                 },
                 chooseImageURLs: { [weak self] in self?.chosenURLs },
+                chooseFolderURL: { [weak self] in self?.chosenFolderURL },
+                openFolderURL: { [weak self] controller, url in
+                    self?.folderOpenRequests.append(url)
+                    controller.openFolderForTesting(url, items: [])
+                },
                 terminateApplication: { [weak self] in self?.terminationCount += 1 },
                 noteRecentDocument: { [weak self] url in
                     guard let self else { return }
@@ -98,6 +106,21 @@ final class AppDelegateTests: XCTestCase {
 
         XCTAssertTrue(harness.openRequests.isEmpty)
         XCTAssertEqual(delegate.imageWindowCount, 1)
+    }
+
+    func testEmptyStateBrowseFolderRequestUsesExistingActiveWindowAndFolderPipeline() {
+        let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
+        let harness = WindowHarness(chosenFolderURL: folder)
+        let delegate = harness.makeDelegate()
+        delegate.finishLaunchingForTesting()
+        let controller = delegate.imageWindowControllersForTesting[0]
+
+        controller.onBrowseFolderRequested?()
+
+        XCTAssertEqual(harness.folderOpenRequests, [folder])
+        XCTAssertEqual(delegate.imageWindowCount, 1)
+        XCTAssertEqual(harness.showCount(for: controller), 2)
+        XCTAssertTrue(controller.isFolderBrowserVisibleForTesting)
     }
 
     func testCancelledChooserReturnsFailedRequestingWindowToEmptyState() async {
@@ -333,6 +356,7 @@ final class AppDelegateTests: XCTestCase {
             AppStrings.text("menu.help", preferredLanguages: ["en"])
         ])
         XCTAssertNotNil(menu.items[2].submenu?.item(withTitle: "Next Image"))
+        XCTAssertNotNil(menu.items[1].submenu?.item(withTitle: "Browse Folder…"))
         XCTAssertNotNil(menu.items[3].submenu?.item(withTitle: "Rotate Clockwise"))
         XCTAssertNotNil(menu.items[3].submenu?.item(withTitle: "Crop"))
     }
@@ -342,6 +366,7 @@ final class AppDelegateTests: XCTestCase {
         let menu = delegate.makeMainMenu(preferredLanguages: ["zh-Hans"])
 
         XCTAssertNotNil(menu.items[1].submenu?.item(withTitle: "打开…"))
+        XCTAssertNotNil(menu.items[1].submenu?.item(withTitle: "浏览文件夹…"))
         XCTAssertNotNil(menu.items[2].submenu?.item(withTitle: "显示胶片预览"))
         XCTAssertNotNil(menu.items[3].submenu?.item(withTitle: "顺时针旋转"))
         XCTAssertNotNil(menu.items[4].submenu?.item(withTitle: "全部置于前台"))

@@ -2,11 +2,13 @@ import AppKit
 
 final class EmptyStateView: NSView {
     var onOpenRequested: (() -> Void)?
+    var onBrowseFolderRequested: (() -> Void)?
 
     private let iconView = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let messageLabel = NSTextField(labelWithString: "")
     private let openButton = NSButton()
+    private let browseFolderButton = NSButton()
 
     init(preferredLanguages: [String] = Locale.preferredLanguages) {
         super.init(frame: .zero)
@@ -42,7 +44,18 @@ final class EmptyStateView: NSView {
         openButton.action = #selector(requestOpen(_:))
         openButton.setAccessibilityLabel(openButton.title)
 
-        let stack = NSStackView(views: [iconView, titleLabel, messageLabel, openButton])
+        browseFolderButton.title = text("emptyState.browseFolder")
+        browseFolderButton.bezelStyle = .rounded
+        browseFolderButton.target = self
+        browseFolderButton.action = #selector(requestBrowseFolder(_:))
+        browseFolderButton.setAccessibilityLabel(browseFolderButton.title)
+
+        let buttonStack = NSStackView(views: [openButton, browseFolderButton])
+        buttonStack.orientation = .horizontal
+        buttonStack.alignment = .centerY
+        buttonStack.spacing = 8
+
+        let stack = NSStackView(views: [iconView, titleLabel, messageLabel, buttonStack])
         stack.orientation = .vertical
         stack.alignment = .centerX
         stack.spacing = 8
@@ -63,12 +76,21 @@ final class EmptyStateView: NSView {
         onOpenRequested?()
     }
 
+    @objc private func requestBrowseFolder(_ sender: Any?) {
+        onBrowseFolderRequested?()
+    }
+
     var titleTextForTesting: String { titleLabel.stringValue }
     var messageTextForTesting: String { messageLabel.stringValue }
     var buttonTitleForTesting: String { openButton.title }
+    var browseFolderButtonTitleForTesting: String { browseFolderButton.title }
 
     func performOpenForTesting() {
         requestOpen(nil)
+    }
+
+    func performBrowseFolderForTesting() {
+        requestBrowseFolder(nil)
     }
 
     @available(*, unavailable)

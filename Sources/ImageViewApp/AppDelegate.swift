@@ -17,6 +17,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let showImageWindow: (MainWindowController) -> Void
     private let openImageURL: (MainWindowController, URL) -> Void
     private let chooseImageURLs: () -> [URL]?
+    private let chooseFolderURL: () -> URL?
+    private let openFolderURL: (MainWindowController, URL) -> Void
     private let terminateApplication: () -> Void
     private let noteRecentDocument: (URL) -> Void
     private let recentDocumentURLs: () -> [URL]
@@ -35,6 +37,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             AppDelegate.configureOpenPanel(panel)
             return panel.runModal() == .OK ? panel.urls : nil
         },
+        chooseFolderURL: @escaping () -> URL? = {
+            let panel = NSOpenPanel()
+            AppDelegate.configureFolderOpenPanel(panel)
+            return panel.runModal() == .OK ? panel.url : nil
+        },
+        openFolderURL: @escaping (MainWindowController, URL) -> Void = { $0.openFolder(url: $1) },
         terminateApplication: @escaping () -> Void = { NSApp.terminate(nil) },
         noteRecentDocument: @escaping (URL) -> Void = { NSDocumentController.shared.noteNewRecentDocumentURL($0) },
         recentDocumentURLs: @escaping () -> [URL] = { NSDocumentController.shared.recentDocumentURLs }
@@ -45,6 +53,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.showImageWindow = showImageWindow
         self.openImageURL = openImageURL
         self.chooseImageURLs = chooseImageURLs
+        self.chooseFolderURL = chooseFolderURL
+        self.openFolderURL = openFolderURL
         self.terminateApplication = terminateApplication
         self.noteRecentDocument = noteRecentDocument
         self.recentDocumentURLs = recentDocumentURLs
@@ -57,6 +67,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.allowsMultipleSelection = true
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
+    }
+
+    static func configureFolderOpenPanel(_ panel: NSOpenPanel) {
+        panel.allowedContentTypes = []
+        panel.allowsOtherFileTypes = true
+        panel.allowsMultipleSelection = false
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -99,6 +117,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         controller.onOpenRequested = { [weak self, weak controller] in
             self?.requestOpenImages(requesting: controller)
+        }
+        controller.onBrowseFolderRequested = { [weak self, weak controller] in
+            self?.requestOpenFolder(requesting: controller)
         }
         controller.onWindowDidBecomeKey = { [weak self] controller in
             self?.imageWindowDidBecomeKey(controller)
@@ -186,6 +207,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let openMenuItem = NSMenuItem(title: text("menu.file.open"), action: #selector(openImage(_:)), keyEquivalent: "o")
         openMenuItem.target = self
         fileMenu.addItem(openMenuItem)
+
+        let browseFolderMenuItem = NSMenuItem(title: text("menu.file.browseFolder"), action: #selector(browseFolder(_:)), keyEquivalent: "O")
+        browseFolderMenuItem.keyEquivalentModifierMask = [.command, .shift]
+        browseFolderMenuItem.target = self
+        fileMenu.addItem(browseFolderMenuItem)
 
         let openRecentItem = NSMenuItem(title: text("menu.file.openRecent"), action: nil, keyEquivalent: "")
         openRecentItem.identifier = Self.openRecentMenuItemIdentifier
@@ -314,6 +340,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         requestOpenImages(requesting: menuTargetImageController)
     }
 
+    @objc private func browseFolder(_ sender: Any?) {
+        requestOpenFolder(requesting: menuTargetImageController)
+    }
+
     private func requestOpenImages(requesting controller: MainWindowController? = nil) {
         guard let urls = chooseImageURLs() else {
             controller?.returnToEmptyStateAfterCancelledOpen()
@@ -321,6 +351,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         guard !urls.isEmpty else { return }
         openURLs(urls)
+    }
+
+    private func requestOpenFolder(requesting controller: MainWindowController? = nil) {
+        guard let url = chooseFolderURL() else { return }
+        let target = controller ?? menuTargetImageController ?? createImageWindow()
+        activeImageWindowController = target
+        openFolderURL(target, url)
+        showImageWindow(target)
+        connectMenuTargets()
     }
 
     @objc private func showHelp(_ sender: Any?) {

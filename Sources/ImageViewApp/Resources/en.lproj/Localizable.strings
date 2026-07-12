@@ -6,6 +6,7 @@
 "menu.app.settings" = "Settings…";
 "menu.app.quit" = "Quit";
 "menu.file.open" = "Open…";
+"menu.file.browseFolder" = "Browse Folder…";
 "menu.file.openRecent" = "Open Recent";
 "menu.file.rename" = "Rename…";
 "menu.file.reveal" = "Reveal in Finder";
@@ -39,6 +40,7 @@
 "emptyState.title" = "Open an Image";
 "emptyState.message" = "Drag an image here, or choose one below";
 "emptyState.open" = "Open Image…";
+"emptyState.browseFolder" = "Browse Folder…";
 "errorState.retry" = "Choose Another Image…";
 "settings.title" = "ImageView Settings";
 "settings.general.title" = "General";

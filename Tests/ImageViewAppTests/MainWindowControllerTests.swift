@@ -364,6 +364,16 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertEqual(requestCount, 1)
     }
 
+    func testEmptyStateBrowseFolderRequestIsForwarded() {
+        let controller = MainWindowController(settings: AppSettings(defaults: makeIsolatedDefaults()))
+        var requestCount = 0
+        controller.onBrowseFolderRequested = { requestCount += 1 }
+
+        controller.requestBrowseFolderFromEmptyStateForTesting()
+
+        XCTAssertEqual(requestCount, 1)
+    }
+
     func testErrorStateOnlyAppearsForAnErrorWithoutAnImage() {
         XCTAssertTrue(MainWindowController.shouldDisplayErrorState(
             hasCurrentImage: false,
@@ -571,6 +581,79 @@ final class MainWindowControllerTests: XCTestCase {
         settings.showsInspector = true
         XCTAssertTrue(controller.validateMenuItem(item))
         XCTAssertEqual(item.state, .on)
+    }
+
+    func testOpeningFolderShowsBrowserAndHidesImageOnlyStatus() {
+        let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
+        let item = ImageItem(url: folder.appendingPathComponent("one.png"), format: .png)
+        let controller = MainWindowController(settings: AppSettings(defaults: makeIsolatedDefaults()))
+
+        controller.openFolderForTesting(folder, items: [item])
+
+        XCTAssertTrue(controller.isFolderBrowserVisibleForTesting)
+        XCTAssertFalse(controller.isCanvasVisibleForTesting)
+        XCTAssertTrue(controller.isImageStatusContentHiddenForTesting)
+        XCTAssertFalse(controller.isInspectorVisibleForTesting)
+        XCTAssertFalse(controller.isFilmstripVisibleForTesting)
+        XCTAssertFalse(controller.isPageControlsVisibleForTesting)
+        XCTAssertEqual(controller.folderBrowserItemCountForTesting, 1)
+    }
+
+    func testOpeningImageAfterFolderModeReturnsToViewerMode() {
+        let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
+        let controller = MainWindowController(settings: AppSettings(defaults: makeIsolatedDefaults()))
+        controller.openFolderForTesting(folder, items: [])
+
+        controller.open(url: folder.appendingPathComponent("one.png"))
+
+        XCTAssertFalse(controller.isFolderBrowserVisibleForTesting)
+        XCTAssertTrue(controller.isCanvasVisibleForTesting)
+    }
+
+    func testBrowserOpenItemCallbackCallsOpenURLAndHidesFolderBrowser() {
+        let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
+        let item = ImageItem(url: folder.appendingPathComponent("one.png"), format: .png)
+        let controller = MainWindowController(settings: AppSettings(defaults: makeIsolatedDefaults()))
+        controller.openFolderForTesting(folder, items: [item])
+
+        controller.openFirstFolderBrowserItemForTesting()
+
+        XCTAssertTrue(controller.hasAssignedOpenRequest)
+        XCTAssertFalse(controller.isFolderBrowserVisibleForTesting)
+        XCTAssertTrue(controller.isCanvasVisibleForTesting)
+    }
+
+    func testTitleBarGridButtonOpensCurrentImageFolderWithoutChangingWindowTitle() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let imageURL = root.appendingPathComponent("one.png")
+        let representation = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 2,
+            pixelsHigh: 2,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        )
+        try XCTUnwrap(representation?.representation(using: .png, properties: [:])).write(to: imageURL)
+        let controller = MainWindowController(settings: AppSettings(defaults: makeIsolatedDefaults()))
+        controller.open(url: imageURL)
+        for _ in 0..<100 where controller.window?.title == "ImageView" {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let title = controller.window?.title
+
+        controller.performTitleBarBrowseCurrentFolderForTesting(items: [
+            ImageItem(url: imageURL, format: .png)
+        ])
+
+        XCTAssertTrue(controller.isFolderBrowserVisibleForTesting)
+        XCTAssertEqual(controller.window?.title, title)
     }
 
     private func makeIsolatedDefaults() -> UserDefaults {

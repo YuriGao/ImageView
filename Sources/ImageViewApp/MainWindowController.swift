@@ -17,6 +17,7 @@ final class MainWindowController: NSWindowController {
         didSet { viewModel.onSuccessfulOpen = onSuccessfulOpen }
     }
     var onOpenRequested: (() -> Void)?
+    var onBrowseFolderRequested: (() -> Void)?
     private(set) var hasAssignedOpenRequest = false
     var onWindowDidBecomeKey: ((MainWindowController) -> Void)?
     var onWindowDidClose: ((MainWindowController) -> Void)?
@@ -62,12 +63,15 @@ final class MainWindowController: NSWindowController {
     }
 
     private let viewModel = ViewerViewModel()
+    private let folderBrowserViewModel = FolderBrowserViewModel()
     private let settings: AppSettings
     private let rootView = RootInteractionView()
     private let titleBarView = NSVisualEffectView()
     private let titleBarDivider = NSBox()
     private let titleLabel = NSTextField(labelWithString: "ImageView")
+    private let titleBarGridButton = NSButton()
     private let canvas = ImageCanvasView()
+    private let folderBrowserView = FolderBrowserView()
     private let emptyStateView = EmptyStateView()
     private let errorStateView = ErrorStateView()
     private let cropOverlay = CropOverlayView()
@@ -93,6 +97,8 @@ final class MainWindowController: NSWindowController {
     private var pageControlsHideTimer: Timer?
     private var pageControlsVisibilityGeneration = 0
     private var isPointerOverPageControls = false
+    private var isFolderBrowserMode = false
+    private var currentFolderBrowserItems: [ImageItem] = []
 
     convenience init(settings: AppSettings = .shared) {
         let window = NSWindow(
@@ -118,10 +124,20 @@ final class MainWindowController: NSWindowController {
 
     func open(url: URL) {
         hasAssignedOpenRequest = true
+        exitFolderBrowserMode()
         cancelCrop(nil)
         confirmUnsavedEditsIfNeeded(for: .opening) { [weak self] in
             guard let self else { return }
             Task { await self.viewModel.open(url: url) }
+        }
+    }
+
+    func openFolder(url: URL) {
+        hasAssignedOpenRequest = true
+        enterFolderBrowserMode()
+        Task { [weak self] in
+            guard let self else { return }
+            await self.folderBrowserViewModel.openFolder(url)
         }
     }
 
@@ -138,12 +154,16 @@ final class MainWindowController: NSWindowController {
         emptyStateView.onOpenRequested = { [weak self] in
             self?.onOpenRequested?()
         }
+        emptyStateView.onBrowseFolderRequested = { [weak self] in
+            self?.onBrowseFolderRequested?()
+        }
         errorStateView.onRetryRequested = { [weak self] in
             self?.onOpenRequested?()
         }
         rootView.onPointerMoved = { [weak self] in
-            self?.revealFilmstripOverlay()
-            self?.revealPageControls()
+            guard let self, !self.isFolderBrowserMode else { return }
+            self.revealFilmstripOverlay()
+            self.revealPageControls()
         }
         filmstripOverlayView.onPointerEntered = { [weak self] in
             self?.isPointerOverFilmstrip = true
@@ -172,6 +192,7 @@ final class MainWindowController: NSWindowController {
         canvas.translatesAutoresizingMaskIntoConstraints = false
         window?.contentView = rootView
         rootView.addSubview(canvas)
+        rootView.addSubview(folderBrowserView)
         rootView.addSubview(emptyStateView)
         rootView.addSubview(errorStateView)
         rootView.addSubview(titleBarView)
@@ -188,6 +209,7 @@ final class MainWindowController: NSWindowController {
         filmstripOverlayView.addSubview(filmstripView)
         rootView.addSubview(cropOverlay)
         rootView.addSubview(cropControlsView)
+        folderBrowserView.translatesAutoresizingMaskIntoConstraints = false
         emptyStateView.translatesAutoresizingMaskIntoConstraints = false
         errorStateView.translatesAutoresizingMaskIntoConstraints = false
         inspectorView.translatesAutoresizingMaskIntoConstraints = false
@@ -217,6 +239,10 @@ final class MainWindowController: NSWindowController {
             titleLabel.centerYAnchor.constraint(equalTo: titleBarView.centerYAnchor),
             titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: titleBarView.leadingAnchor, constant: 72),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: titleBarView.trailingAnchor, constant: -72),
+            titleBarGridButton.leadingAnchor.constraint(equalTo: titleBarView.leadingAnchor, constant: 72),
+            titleBarGridButton.centerYAnchor.constraint(equalTo: titleBarView.centerYAnchor),
+            titleBarGridButton.widthAnchor.constraint(equalToConstant: 22),
+            titleBarGridButton.heightAnchor.constraint(equalToConstant: 22),
             bottomBarView.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
             bottomBarView.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
             bottomBarView.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
@@ -229,6 +255,10 @@ final class MainWindowController: NSWindowController {
             canvas.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
             canvas.topAnchor.constraint(equalTo: titleBarView.bottomAnchor),
             canvas.bottomAnchor.constraint(equalTo: bottomBarView.topAnchor),
+            folderBrowserView.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
+            folderBrowserView.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
+            folderBrowserView.topAnchor.constraint(equalTo: titleBarView.bottomAnchor),
+            folderBrowserView.bottomAnchor.constraint(equalTo: bottomBarView.topAnchor),
             emptyStateView.centerXAnchor.constraint(equalTo: canvas.centerXAnchor),
             emptyStateView.centerYAnchor.constraint(equalTo: canvas.centerYAnchor),
             emptyStateView.leadingAnchor.constraint(greaterThanOrEqualTo: canvas.leadingAnchor, constant: 24),
@@ -287,6 +317,21 @@ final class MainWindowController: NSWindowController {
         filmstripView.onSelect = { [weak self] item in
             self?.selectImage(item)
         }
+        folderBrowserView.onOpenItem = { [weak self] item in
+            self?.open(url: item.url)
+        }
+        folderBrowserView.onSelectionChanged = { [weak self] selectedIDs in
+            self?.folderBrowserViewModel.setSelection(Array(selectedIDs))
+        }
+        folderBrowserView.onSearchChanged = { [weak self] searchText in
+            self?.folderBrowserViewModel.searchText = searchText
+        }
+        folderBrowserView.onSortChanged = { [weak self] sortMode in
+            self?.folderBrowserViewModel.setSortMode(sortMode)
+        }
+        folderBrowserView.onTypeFilterChanged = { [weak self] formats in
+            self?.folderBrowserViewModel.setAllowedFormats(formats)
+        }
 
         viewModel.$currentImage
             .sink { [weak self] image in
@@ -302,6 +347,17 @@ final class MainWindowController: NSWindowController {
                     context.duration = 0.12
                     self.canvas.animator().alphaValue = 1
                 }
+            }
+            .store(in: &cancellables)
+
+        folderBrowserViewModel.$session
+            .sink { [weak self] session in
+                guard let self else { return }
+                self.currentFolderBrowserItems = session?.visibleItems ?? []
+                self.folderBrowserView.apply(
+                    items: self.currentFolderBrowserItems,
+                    selectedIDs: Set(session?.selectedItemIDs ?? [])
+                )
             }
             .store(in: &cancellables)
 
@@ -540,6 +596,14 @@ final class MainWindowController: NSWindowController {
 
     @objc func zoomToFit(_ sender: Any?) {
         canvas.resetViewTransform()
+    }
+
+    @objc func browseCurrentImageFolder(_ sender: Any?) {
+        guard let displayedItemURL else {
+            NSSound.beep()
+            return
+        }
+        openFolder(url: displayedItemURL.deletingLastPathComponent())
     }
 
     private func installKeyMonitor() {
@@ -933,6 +997,14 @@ final class MainWindowController: NSWindowController {
         titleLabel.maximumNumberOfLines = 1
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleBarView.addSubview(titleLabel)
+        titleBarGridButton.translatesAutoresizingMaskIntoConstraints = false
+        titleBarGridButton.image = NSImage(systemSymbolName: "square.grid.2x2", accessibilityDescription: "Browse Folder")
+        titleBarGridButton.bezelStyle = .toolbar
+        titleBarGridButton.isBordered = false
+        titleBarGridButton.toolTip = "Browse Current Folder"
+        titleBarGridButton.target = self
+        titleBarGridButton.action = #selector(browseCurrentImageFolder(_:))
+        titleBarView.addSubview(titleBarGridButton)
         let titleBarDoubleClick = NSClickGestureRecognizer(target: self, action: #selector(toggleWindowZoom(_:)))
         titleBarDoubleClick.numberOfClicksRequired = 2
         titleBarView.addGestureRecognizer(titleBarDoubleClick)
@@ -955,6 +1027,7 @@ final class MainWindowController: NSWindowController {
 
         filmstripOverlayView.isHidden = true
         pageNavigationOverlayView.isHidden = true
+        folderBrowserView.isHidden = true
     }
 
     static func canvasBackgroundColor() -> NSColor {
@@ -974,17 +1047,17 @@ final class MainWindowController: NSWindowController {
         loadPhase: ImageLoadPhase,
         hasError: Bool
     ) {
-        emptyStateView.isHidden = !Self.shouldDisplayEmptyState(
+        emptyStateView.isHidden = isFolderBrowserMode || !Self.shouldDisplayEmptyState(
             hasCurrentImage: hasCurrentImage,
             loadPhase: loadPhase,
             hasError: hasError
         )
-        errorStateView.isHidden = !Self.shouldDisplayErrorState(
+        errorStateView.isHidden = isFolderBrowserMode || !Self.shouldDisplayErrorState(
             hasCurrentImage: hasCurrentImage,
             hasError: hasError
         )
 
-        let shouldHideStatusContent = Self.shouldHideImageStatusContent(
+        let shouldHideStatusContent = isFolderBrowserMode || Self.shouldHideImageStatusContent(
             hasCurrentImage: hasCurrentImage
         )
         for view in [bottomDimensionLabel, bottomPageLabel, bottomZoomLabel, bottomInfoButton] {
@@ -993,7 +1066,28 @@ final class MainWindowController: NSWindowController {
         inspectorView.isHidden = !Self.shouldDisplayInspector(
             isEnabled: settings.showsInspector,
             hasCurrentImage: hasCurrentImage
-        )
+        ) || isFolderBrowserMode
+    }
+
+    private func enterFolderBrowserMode() {
+        isFolderBrowserMode = true
+        canvas.isHidden = true
+        folderBrowserView.isHidden = false
+        emptyStateView.isHidden = true
+        errorStateView.isHidden = true
+        hideFilmstripOverlay(immediately: true)
+        hidePageControls(immediately: true)
+        cropOverlay.isHidden = true
+        cropControlsView.isHidden = true
+        updateEmptyStatePresentation()
+    }
+
+    private func exitFolderBrowserMode() {
+        guard isFolderBrowserMode || !folderBrowserView.isHidden || canvas.isHidden else { return }
+        isFolderBrowserMode = false
+        folderBrowserView.isHidden = true
+        canvas.isHidden = false
+        updateEmptyStatePresentation()
     }
 
     static func shouldDisplayEmptyState(
@@ -1029,13 +1123,41 @@ final class MainWindowController: NSWindowController {
     }
 
     var isInspectorVisibleForTesting: Bool { !inspectorView.isHidden }
+    var isFolderBrowserVisibleForTesting: Bool { !folderBrowserView.isHidden }
+    var isCanvasVisibleForTesting: Bool { !canvas.isHidden }
+    var isFilmstripVisibleForTesting: Bool { !filmstripOverlayView.isHidden }
+    var isPageControlsVisibleForTesting: Bool { !pageNavigationOverlayView.isHidden }
+    var folderBrowserItemCountForTesting: Int { folderBrowserView.testingItemCount }
 
     func requestOpenFromEmptyStateForTesting() {
         emptyStateView.performOpenForTesting()
     }
 
+    func requestBrowseFolderFromEmptyStateForTesting() {
+        emptyStateView.performBrowseFolderForTesting()
+    }
+
     func requestOpenFromErrorStateForTesting() {
         errorStateView.performRetryForTesting()
+    }
+
+    func openFolderForTesting(_ folderURL: URL, items: [ImageItem]) {
+        hasAssignedOpenRequest = true
+        enterFolderBrowserMode()
+        currentFolderBrowserItems = items
+        folderBrowserView.apply(items: items, selectedIDs: [])
+    }
+
+    func openFirstFolderBrowserItemForTesting() {
+        guard let firstItem = currentFolderBrowserItems.first else { return }
+        folderBrowserView.onOpenItem?(firstItem)
+    }
+
+    func performTitleBarBrowseCurrentFolderForTesting(items: [ImageItem]) {
+        let folderURL = displayedItemURL?.deletingLastPathComponent()
+            ?? items.first?.url.deletingLastPathComponent()
+            ?? URL(fileURLWithPath: "/", isDirectory: true)
+        openFolderForTesting(folderURL, items: items)
     }
 
     func returnToEmptyStateAfterCancelledOpen() {

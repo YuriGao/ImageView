@@ -6,6 +6,7 @@
 "menu.app.settings" = "设置…";
 "menu.app.quit" = "退出";
 "menu.file.open" = "打开…";
+"menu.file.browseFolder" = "浏览文件夹…";
 "menu.file.openRecent" = "打开最近使用";
 "menu.file.rename" = "重命名…";
 "menu.file.reveal" = "在访达中显示";
@@ -39,6 +40,7 @@
 "emptyState.title" = "打开图片";
 "emptyState.message" = "将图片拖到这里，或点击下方按钮";
 "emptyState.open" = "打开图片…";
+"emptyState.browseFolder" = "浏览文件夹…";
 "errorState.retry" = "重新选择图片…";
 "settings.title" = "ImageView 设置";
 "settings.general.title" = "通用";
