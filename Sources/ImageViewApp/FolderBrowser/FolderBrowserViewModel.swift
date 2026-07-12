@@ -33,6 +33,7 @@ final class FolderBrowserViewModel: ObservableObject {
     typealias ExecuteRenamePlan = @Sendable (BatchRenamePlan) -> BatchOperationResult
 
     @Published private(set) var session: FolderSession?
+    @Published private(set) var selectedItemIDs: [ImageItem.ID] = []
     @Published private(set) var isLoading = false
     @Published private(set) var isOperating = false
     @Published private(set) var operationMessage: String?
@@ -48,7 +49,8 @@ final class FolderBrowserViewModel: ObservableObject {
     }
 
     var selectedItems: [ImageItem] {
-        session?.selectedItems ?? []
+        let selectedIDs = Set(selectedItemIDs)
+        return visibleItems.filter { selectedIDs.contains($0.id) }
     }
 
     var presentation: FolderBrowserPresentation {
@@ -134,6 +136,7 @@ final class FolderBrowserViewModel: ObservableObject {
                 beforeOpenFolderCommitForTesting?()
                 _ = openFolderRequestTracker.withCurrent(requestID, perform: {
                     session = FolderSession(folderURL: folderURL, items: items)
+                    selectedItemIDs = []
                     loadErrorMessage = nil
                     isLoading = false
                 })
@@ -150,6 +153,7 @@ final class FolderBrowserViewModel: ObservableObject {
                 beforeOpenFolderCommitForTesting?()
                 _ = openFolderRequestTracker.withCurrent(requestID, perform: {
                     session = FolderSession(folderURL: folderURL, items: [])
+                    selectedItemIDs = []
                     loadErrorMessage = String(
                         format: AppStrings.text("folderBrowser.error.openFolder"),
                         error.localizedDescription
@@ -185,12 +189,13 @@ final class FolderBrowserViewModel: ObservableObject {
     }
 
     func setSelection(_ selectedItemIDs: [ImageItem.ID]) {
-        guard let session else { return }
-        let selectedIDs = Set(selectedItemIDs)
-        let orderedIDs = session.visibleItems
-            .map(\.id)
-            .filter(selectedIDs.contains)
-        self.session?.selectedItemIDs = orderedIDs
+        guard session != nil else { return }
+        var seenIDs: Set<ImageItem.ID> = []
+        let orderedIDs = selectedItemIDs.filter { id in
+            seenIDs.insert(id).inserted
+        }
+        guard self.selectedItemIDs != orderedIDs else { return }
+        self.selectedItemIDs = orderedIDs
     }
 
     func recordOpenedItem(_ item: ImageItem) {
@@ -203,6 +208,7 @@ final class FolderBrowserViewModel: ObservableObject {
 
     func setFilter(_ filter: FolderFilter) {
         session?.filter = filter
+        reconcileSelection()
     }
 
     func setAllowedFormats(_ allowedFormats: Set<SupportedImageFormat>) {
@@ -222,7 +228,7 @@ final class FolderBrowserViewModel: ObservableObject {
         }
 
         let failedIDs = result.failures.map(\.url)
-        session?.selectedItemIDs = failedIDs
+        setSelection(failedIDs)
         operationMessage = message(for: result)
     }
 
@@ -375,6 +381,11 @@ final class FolderBrowserViewModel: ObservableObject {
         }
         update(&filter)
         session?.filter = filter
+        reconcileSelection()
+    }
+
+    private func reconcileSelection() {
+        setSelection(selectedItemIDs)
     }
 
     private func message(for result: BatchOperationResult) -> String? {
@@ -405,7 +416,7 @@ final class FolderBrowserViewModel: ObservableObject {
         if !result.failures.isEmpty || !result.recoveryFailures.isEmpty {
             switch rescanOutcome {
             case .notRequired:
-                session?.selectedItemIDs = result.failures.map(\.url)
+                setSelection(result.failures.map(\.url))
             case .success(let folderURL, let items):
                 guard session?.folderURL == folderURL else { return }
                 session?.replaceItems(items)
@@ -413,9 +424,9 @@ final class FolderBrowserViewModel: ObservableObject {
                     result.failures.map(\.url) +
                     result.recoveryFailures.flatMap { [$0.expectedURL, $0.actualURL] }
                 )
-                session?.selectedItemIDs = session?.visibleItems
+                setSelection(session?.visibleItems
                     .map(\.url)
-                    .filter(candidateURLs.contains) ?? []
+                    .filter(candidateURLs.contains) ?? [])
                 loadErrorMessage = nil
             case .failure(let folderURL, let reason):
                 if session?.folderURL == folderURL {
@@ -457,10 +468,10 @@ final class FolderBrowserViewModel: ObservableObject {
                }) {
                 session.recordOpenedItem(with: renamedItem.id)
             }
-            session.selectedItemIDs = result.failures.map(\.url) + successfulDestinationsBySource.values.map { $0 }
             self.session = session
+            setSelection(result.failures.map(\.url) + successfulDestinationsBySource.values.map { $0 })
         } else {
-            session?.selectedItemIDs = result.failures.map(\.url)
+            setSelection(result.failures.map(\.url))
         }
 
         operationMessage = message(for: result)
