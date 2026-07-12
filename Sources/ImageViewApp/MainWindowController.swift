@@ -713,15 +713,15 @@ final class MainWindowController: NSWindowController {
     }
 
     private func associatedViewerRoute() -> ContentRoute? {
-        if let lastOpenedItemID = folderBrowserViewModel.session?.lastOpenedItemID,
-           let item = folderBrowserViewModel.session?.items.first(where: { $0.id == lastOpenedItemID }) {
-            return .viewer(item.url.standardizedFileURL)
-        }
         if let displayedItemURL,
            folderBrowserViewModel.session?.items.contains(where: {
                $0.url.standardizedFileURL == displayedItemURL.standardizedFileURL
            }) != false {
             return .viewer(displayedItemURL.standardizedFileURL)
+        }
+        if let lastOpenedItemID = folderBrowserViewModel.session?.lastOpenedItemID,
+           let item = folderBrowserViewModel.session?.items.first(where: { $0.id == lastOpenedItemID }) {
+            return .viewer(item.url.standardizedFileURL)
         }
         if case let .viewer(url)? = backRoute ?? forwardRoute {
             return .viewer(url)
@@ -1529,6 +1529,7 @@ final class MainWindowController: NSWindowController {
     var viewerNavigationURLForTesting: URL? {
         viewModel.navigationState?.currentItem?.url.standardizedFileURL
     }
+    var displayedItemURLForTesting: URL? { displayedItemURL }
     var viewerNavigationURLsForTesting: [URL] {
         viewModel.navigationState?.items.map { $0.url.standardizedFileURL } ?? []
     }

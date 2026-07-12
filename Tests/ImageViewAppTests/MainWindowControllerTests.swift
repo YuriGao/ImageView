@@ -921,6 +921,29 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertEqual(fixture.scanCount.value, 1)
     }
 
+    func testGridToggleReturnsToDisplayedViewerAfterNavigatingAwayFromLastOpenedItem() async throws {
+        let fixture = try makeFolderNavigationFixture(itemNames: ["a.png", "b.png"])
+        defer { try? FileManager.default.removeItem(at: fixture.folder) }
+        await fixture.controller.openFolderForTesting(fixture.folder, scannerItems: fixture.items)
+        fixture.controller.openFolderBrowserItemForTesting(at: 1)
+        for _ in 0..<100 where fixture.controller.viewerNavigationURLsForTesting.count != 2 {
+            await Task.yield()
+        }
+        fixture.controller.showPreviousImage(nil)
+        for _ in 0..<100 where fixture.controller.viewerNavigationURLForTesting != fixture.items[0].url {
+            await Task.yield()
+        }
+
+        fixture.controller.performTitleBarGridToggleForTesting()
+        fixture.controller.performTitleBarGridToggleForTesting()
+
+        let expectedURL = fixture.items[0].url.standardizedFileURL
+        XCTAssertEqual(fixture.controller.currentViewerRouteURLForTesting, expectedURL)
+        XCTAssertEqual(fixture.controller.viewerNavigationURLForTesting, expectedURL)
+        XCTAssertEqual(fixture.controller.displayedItemURLForTesting, expectedURL)
+        XCTAssertTrue(fixture.controller.isCanvasVisibleForTesting)
+    }
+
     func testOpeningGridItemEnablesBackAndBackForwardReuseLiveViews() async throws {
         let fixture = try makeFolderNavigationFixture()
         defer { try? FileManager.default.removeItem(at: fixture.folder) }
