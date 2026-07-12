@@ -404,6 +404,42 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertFalse(controller.hasAssignedOpenRequest)
     }
 
+    func testErrorStateGetsVisibleLayoutAfterFailedOpen() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let invalidPNG = root.appendingPathComponent("invalid.png")
+        try Data("not an image".utf8).write(to: invalidPNG)
+
+        let controller = MainWindowController(settings: AppSettings(defaults: makeIsolatedDefaults()))
+        controller.showWindow(nil)
+        controller.open(url: invalidPNG)
+        for _ in 0..<100 where !controller.isShowingRecoverableErrorForTesting {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        controller.window?.contentView?.layoutSubtreeIfNeeded()
+        let button = try XCTUnwrap(controller.errorRetryButtonForTesting)
+        var ancestor: NSView? = button
+        while let current = ancestor, !(current is ErrorStateView) {
+            ancestor = current.superview
+        }
+        let errorStateView = try XCTUnwrap(ancestor)
+
+        XCTAssertGreaterThan(errorStateView.frame.width, 0)
+        XCTAssertGreaterThan(errorStateView.frame.height, 0)
+        var visibilityChain: [String] = []
+        var visibilityAncestor: NSView? = errorStateView
+        while let current = visibilityAncestor {
+            visibilityChain.append("\(type(of: current)): hidden=\(current.isHidden) frame=\(current.frame)")
+            visibilityAncestor = current.superview
+        }
+        XCTAssertFalse(
+            errorStateView.isHiddenOrHasHiddenAncestor,
+            visibilityChain.joined(separator: " | ")
+        )
+    }
+
     func testErrorStateButtonHasNoGestureRecognizerInAncestorChain() throws {
         let controller = MainWindowController(settings: AppSettings(defaults: makeIsolatedDefaults()))
         let button = try XCTUnwrap(controller.errorRetryButtonForTesting)

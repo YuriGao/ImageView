@@ -295,7 +295,6 @@ final class MainWindowController: NSWindowController {
                 if image == nil {
                     self.hideFilmstripOverlay(immediately: true)
                 }
-                self.updateEmptyStatePresentation()
                 guard self.settings.animatesNavigationTransitions,
                       image != nil else { return }
                 self.canvas.alphaValue = 0
@@ -316,13 +315,20 @@ final class MainWindowController: NSWindowController {
         viewModel.$errorMessage
             .sink { [weak self] message in
                 self?.errorStateView.message = message ?? ""
-                self?.updateEmptyStatePresentation()
             }
             .store(in: &cancellables)
 
-        viewModel.$loadPhase
-            .sink { [weak self] _ in
-                self?.updateEmptyStatePresentation()
+        Publishers.CombineLatest3(
+            viewModel.$currentImage,
+            viewModel.$loadPhase,
+            viewModel.$errorMessage
+        )
+            .sink { [weak self] image, loadPhase, errorMessage in
+                self?.updateEmptyStatePresentation(
+                    hasCurrentImage: image != nil,
+                    loadPhase: loadPhase,
+                    hasError: errorMessage != nil
+                )
             }
             .store(in: &cancellables)
 
@@ -956,11 +962,21 @@ final class MainWindowController: NSWindowController {
     }
 
     private func updateEmptyStatePresentation() {
-        let hasCurrentImage = viewModel.currentImage != nil
-        let hasError = viewModel.errorMessage != nil
+        updateEmptyStatePresentation(
+            hasCurrentImage: viewModel.currentImage != nil,
+            loadPhase: viewModel.loadPhase,
+            hasError: viewModel.errorMessage != nil
+        )
+    }
+
+    private func updateEmptyStatePresentation(
+        hasCurrentImage: Bool,
+        loadPhase: ImageLoadPhase,
+        hasError: Bool
+    ) {
         emptyStateView.isHidden = !Self.shouldDisplayEmptyState(
             hasCurrentImage: hasCurrentImage,
-            loadPhase: viewModel.loadPhase,
+            loadPhase: loadPhase,
             hasError: hasError
         )
         errorStateView.isHidden = !Self.shouldDisplayErrorState(
