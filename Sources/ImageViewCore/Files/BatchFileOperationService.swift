@@ -292,6 +292,7 @@ public final class BatchFileOperationService {
         name != "." &&
         name != ".." &&
         !name.contains("/") &&
+        !name.contains(":") &&
         !name.contains("\0")
     }
 

@@ -24,6 +24,24 @@ final class BatchFileOperationServiceTests: XCTestCase {
         XCTAssertEqual(plan.failures.first?.reason, .destinationExists)
     }
 
+    func testRenamePlanRejectsColonInBaseName() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = try writeFile(named: "old-a.jpg", in: root)
+
+        let plan = BatchFileOperationService().planBatchRename(
+            urls: [source],
+            baseName: "bad:name",
+            startNumber: 1,
+            padding: 2
+        )
+
+        XCTAssertFalse(plan.isExecutable)
+        XCTAssertEqual(plan.failures, [
+            BatchFileFailure(url: source, reason: .invalidName)
+        ])
+    }
+
     func testMoveToFolderSkipConflictDoesNotOverwriteDestinationFile() throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
