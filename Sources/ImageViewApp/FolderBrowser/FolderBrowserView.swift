@@ -43,17 +43,13 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
     var testingSelectedIDs: Set<ImageItem.ID> {
         Set(collectionView.selectionIndexPaths.compactMap { item(at: $0)?.id })
     }
+    var testingReloadCount: Int { collectionView.reloadCount }
 
     func testingCell(at index: Int) -> FolderBrowserCellView? {
         guard index >= 0, index < items.count else { return nil }
         let indexPath = IndexPath(item: index, section: 0)
-        if let cell = collectionView.item(at: indexPath) as? FolderBrowserCellView {
-            return cell
-        }
-        return collectionView(
-            collectionView,
-            itemForRepresentedObjectAt: indexPath
-        ) as? FolderBrowserCellView
+        collectionView.layoutSubtreeIfNeeded()
+        return collectionView.item(at: indexPath) as? FolderBrowserCellView
     }
 
     init(thumbnailProvider: ThumbnailProvider = ThumbnailProvider()) {
@@ -395,6 +391,12 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
 
 private final class ReturnOpeningCollectionView: NSCollectionView {
     var openSelectedItem: (() -> Void)?
+    private(set) var reloadCount = 0
+
+    override func reloadData() {
+        reloadCount += 1
+        super.reloadData()
+    }
 
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 36 {

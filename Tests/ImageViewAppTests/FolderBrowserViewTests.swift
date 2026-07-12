@@ -40,12 +40,17 @@ final class FolderBrowserViewTests: XCTestCase {
             return {}
         })
         let view = FolderBrowserView(thumbnailProvider: provider)
+        view.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+        view.layoutSubtreeIfNeeded()
         view.applyItems([item])
-        _ = view.testingCell(at: 0)
+        view.layoutSubtreeIfNeeded()
+        XCTAssertNotNil(view.testingCell(at: 0))
+        let reloadCount = view.testingReloadCount
 
         view.applySelection([item.id])
 
         XCTAssertEqual(loadCount.value, 1)
+        XCTAssertEqual(view.testingReloadCount, reloadCount)
         XCTAssertEqual(view.testingSelectedIDs, [item.id])
     }
 
