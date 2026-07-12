@@ -167,8 +167,8 @@ final class BatchRenameSheetController: NSWindowController {
         guard !trimmedBaseName.contains("/"), !trimmedBaseName.contains(":") else {
             return .invalid("Base name cannot contain / or :.")
         }
-        guard parameters.startNumber > 0, parameters.padding > 0 else {
-            return .invalid("Start number and padding must be positive.")
+        guard parameters.startNumber > 0, parameters.padding >= 0 else {
+            return .invalid("Start number must be positive and padding cannot be negative.")
         }
         return .valid(RenameParameters(
             baseName: trimmedBaseName,

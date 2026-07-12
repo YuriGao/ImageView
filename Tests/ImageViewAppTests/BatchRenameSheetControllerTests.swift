@@ -32,6 +32,21 @@ final class BatchRenameSheetControllerTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(received), .init(baseName: "Review", startNumber: 3, padding: 2))
     }
 
+    func testPaddingZeroConfirmsAndPreviewsUnpaddedNumbers() throws {
+        let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
+        let item = ImageItem(url: folder.appendingPathComponent("one.png"), format: .png)
+        let controller = BatchRenameSheetController(items: [item])
+        controller.setBatchRenameInputsForTesting(baseName: "Batch", startNumber: 1, padding: 0)
+        var received: BatchRenameSheetController.RenameParameters?
+        controller.onConfirm = { received = $0 }
+
+        XCTAssertEqual(controller.previewRowsForTesting.map(\.newName), ["Batch 1.png"])
+        controller.confirmForTesting()
+
+        XCTAssertEqual(try XCTUnwrap(received), .init(baseName: "Batch", startNumber: 1, padding: 0))
+        XCTAssertNil(controller.validationErrorForTesting)
+    }
+
     func testConfirmRejectsInvalidInputsWithoutCallingCallback() {
         let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
         let item = ImageItem(url: folder.appendingPathComponent("one.webp"), format: .webp)
@@ -49,11 +64,11 @@ final class BatchRenameSheetControllerTests: XCTestCase {
 
         controller.setBatchRenameInputsForTesting(baseName: "Batch", startNumber: 0, padding: 2)
         controller.confirmForTesting()
-        XCTAssertEqual(controller.validationErrorForTesting, "Start number and padding must be positive.")
+        XCTAssertEqual(controller.validationErrorForTesting, "Start number must be positive and padding cannot be negative.")
 
-        controller.setBatchRenameInputsForTesting(baseName: "Batch", startNumber: 1, padding: 0)
+        controller.setBatchRenameInputsForTesting(baseName: "Batch", startNumber: 1, padding: -1)
         controller.confirmForTesting()
-        XCTAssertEqual(controller.validationErrorForTesting, "Start number and padding must be positive.")
+        XCTAssertEqual(controller.validationErrorForTesting, "Start number must be positive and padding cannot be negative.")
 
         XCTAssertEqual(confirmCount, 0)
     }
