@@ -83,7 +83,10 @@ final class FolderBrowserViewModel: ObservableObject {
                 return
             }
             session = FolderSession(folderURL: folderURL, items: [])
-            operationMessage = "Failed to open folder: \(error.localizedDescription)"
+            operationMessage = String(
+                format: AppStrings.text("folderBrowser.error.openFolder"),
+                error.localizedDescription
+            )
         }
 
         isLoading = false

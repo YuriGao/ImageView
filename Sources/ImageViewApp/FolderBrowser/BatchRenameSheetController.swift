@@ -17,7 +17,7 @@ final class BatchRenameSheetController: NSWindowController {
     var onConfirm: ((RenameParameters) -> Void)?
 
     private let items: [ImageItem]
-    private let baseNameField = NSTextField(string: "Image")
+    private let baseNameField = NSTextField(string: AppStrings.text("batchRename.defaultBaseName"))
     private let startNumberField = NSTextField(string: "1")
     private let paddingField = NSTextField(string: "2")
     private let previewStack = NSStackView()

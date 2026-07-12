@@ -76,6 +76,19 @@ final class AppStringsTests: XCTestCase {
         }
     }
 
+    func testEveryInteractionLabelHasChineseAndEnglishTranslations() {
+        for key in AppStrings.interactionKeys {
+            XCTAssertNotEqual(AppStrings.text(key, preferredLanguages: ["en"]), key)
+            XCTAssertNotEqual(AppStrings.text(key, preferredLanguages: ["zh-Hans"]), key)
+        }
+    }
+
+    func testSafetyPromptsLocalizeInSimplifiedChinese() {
+        XCTAssertEqual(AppStrings.text("viewer.confirmTrash.title", preferredLanguages: ["zh-Hans"]), "移到废纸篓？")
+        XCTAssertEqual(AppStrings.text("unsavedChanges.button.save", preferredLanguages: ["zh-Hans"]), "保存")
+        XCTAssertEqual(AppStrings.text("crop.button.apply", preferredLanguages: ["zh-Hans"]), "应用")
+    }
+
     func testInspectorLabelsLocalizeInSimplifiedChinese() {
         XCTAssertEqual(AppStrings.text("inspector.title", preferredLanguages: ["zh-Hans"]), "信息")
         XCTAssertEqual(AppStrings.text("inspector.format", preferredLanguages: ["zh-Hans"]), "格式")

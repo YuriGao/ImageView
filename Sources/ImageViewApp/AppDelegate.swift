@@ -365,8 +365,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func showHelp(_ sender: Any?) {
         let alert = NSAlert()
         alert.messageText = AppStrings.text("menu.help.imageView")
-        alert.informativeText = "Open an image, use the View menu to browse and zoom, and use the Image menu to edit or save changes."
-        alert.addButton(withTitle: "OK")
+        alert.informativeText = AppStrings.text("help.message")
+        alert.addButton(withTitle: AppStrings.text("common.ok"))
         alert.runModal()
     }
 

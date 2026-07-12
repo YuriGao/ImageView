@@ -21,13 +21,13 @@ final class PageNavigationOverlayView: NSView {
         configure(
             previousButton,
             symbol: "chevron.left",
-            description: "Previous Image",
+            description: AppStrings.text("menu.view.previousImage"),
             action: #selector(showPrevious)
         )
         configure(
             nextButton,
             symbol: "chevron.right",
-            description: "Next Image",
+            description: AppStrings.text("menu.view.nextImage"),
             action: #selector(showNext)
         )
         addSubview(previousButton)

@@ -8,8 +8,8 @@ final class PageNavigationOverlayViewTests: XCTestCase {
         let view = PageNavigationOverlayView()
 
         XCTAssertEqual(PageNavigationOverlayView.controlSize, CGSize(width: 44, height: 64))
-        XCTAssertEqual(view.debugPreviousButton.image?.accessibilityDescription, "Previous Image")
-        XCTAssertEqual(view.debugNextButton.image?.accessibilityDescription, "Next Image")
+        XCTAssertEqual(view.debugPreviousButton.image?.accessibilityDescription, AppStrings.text("menu.view.previousImage"))
+        XCTAssertEqual(view.debugNextButton.image?.accessibilityDescription, AppStrings.text("menu.view.nextImage"))
     }
 
     func testUpdateAppliesSequenceBoundaryStates() {

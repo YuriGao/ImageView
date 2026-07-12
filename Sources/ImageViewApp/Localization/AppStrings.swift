@@ -98,6 +98,29 @@ enum AppStrings {
         "inspector.unknown"
     ]
 
+    static let interactionKeys = [
+        "viewer.confirmTrash.title",
+        "viewer.confirmTrash.message",
+        "viewer.confirmTrash.button",
+        "viewer.confirmTrash.cancel",
+        "unsavedChanges.title",
+        "unsavedChanges.message",
+        "unsavedChanges.button.save",
+        "unsavedChanges.button.discard",
+        "unsavedChanges.button.cancel",
+        "unsavedChanges.transition.opening",
+        "unsavedChanges.transition.navigating",
+        "unsavedChanges.transition.renaming",
+        "unsavedChanges.transition.movingToTrash",
+        "unsavedChanges.transition.closing",
+        "crop.button.cancel",
+        "crop.button.apply",
+        "folderBrowser.error.openFolder",
+        "help.message",
+        "common.ok",
+        "batchRename.defaultBaseName"
+    ]
+
     static func text(_ key: String, preferredLanguages: [String] = Locale.preferredLanguages) -> String {
         let localization = preferredLanguages.contains { $0.lowercased().hasPrefix("zh") } ? "zh-hans" : "en"
         let resourceBundle = packagedResourceBundle ?? Bundle.module

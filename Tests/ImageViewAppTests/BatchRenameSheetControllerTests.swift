@@ -5,6 +5,13 @@ import XCTest
 
 @MainActor
 final class BatchRenameSheetControllerTests: XCTestCase {
+    func testDefaultBaseNameIsLocalized() {
+        let item = ImageItem(url: URL(fileURLWithPath: "/tmp/original.png"), format: .png)
+        let controller = BatchRenameSheetController(items: [item])
+
+        XCTAssertEqual(controller.previewRowsForTesting.first?.newName, "\(AppStrings.text("batchRename.defaultBaseName")) 01.png")
+    }
+
     func testPreviewDisplaysOldAndNewNamesPreservingExtensions() {
         let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
         let items = [

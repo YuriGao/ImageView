@@ -939,10 +939,13 @@ final class MainWindowController: NSWindowController {
         guard settings.confirmsDelete else { return true }
 
         let alert = NSAlert()
-        alert.messageText = "Move to Trash?"
-        alert.informativeText = "This will move \"\(item.url.lastPathComponent)\" to the Trash."
-        alert.addButton(withTitle: "Move to Trash")
-        alert.addButton(withTitle: "Cancel")
+        alert.messageText = AppStrings.text("viewer.confirmTrash.title")
+        alert.informativeText = String(
+            format: AppStrings.text("viewer.confirmTrash.message"),
+            item.url.lastPathComponent
+        )
+        alert.addButton(withTitle: AppStrings.text("viewer.confirmTrash.button"))
+        alert.addButton(withTitle: AppStrings.text("viewer.confirmTrash.cancel"))
 
         return alert.runModal() == .alertFirstButtonReturn
     }
@@ -1181,10 +1184,12 @@ final class MainWindowController: NSWindowController {
         bottomDimensionLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         bottomPageLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         bottomZoomLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
-        bottomInfoButton.image = NSImage(systemSymbolName: Self.bottomBarInfoSymbolName, accessibilityDescription: "Show Info")
+        let showInfoText = AppStrings.text("menu.view.showInfo")
+        bottomInfoButton.image = NSImage(systemSymbolName: Self.bottomBarInfoSymbolName, accessibilityDescription: showInfoText)
         bottomInfoButton.bezelStyle = .toolbar
         bottomInfoButton.isBordered = false
-        bottomInfoButton.toolTip = "Show Info"
+        bottomInfoButton.toolTip = showInfoText
+        bottomInfoButton.setAccessibilityLabel(showInfoText)
         bottomInfoButton.target = self
         bottomInfoButton.action = #selector(toggleInspector(_:))
 
@@ -1452,11 +1457,14 @@ final class MainWindowController: NSWindowController {
 
     private func promptForUnsavedChanges(transition: UnsavedChangesTransition) -> UnsavedChangesChoice {
         let alert = NSAlert()
-        alert.messageText = "Save changes before \(transition.description)?"
-        alert.informativeText = "You have unsaved edits for the current image."
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Discard")
-        alert.addButton(withTitle: "Cancel")
+        alert.messageText = String(
+            format: AppStrings.text("unsavedChanges.title"),
+            transition.localizedDescription
+        )
+        alert.informativeText = AppStrings.text("unsavedChanges.message")
+        alert.addButton(withTitle: AppStrings.text("unsavedChanges.button.save"))
+        alert.addButton(withTitle: AppStrings.text("unsavedChanges.button.discard"))
+        alert.addButton(withTitle: AppStrings.text("unsavedChanges.button.cancel"))
 
         switch alert.runModal() {
         case .alertFirstButtonReturn:
@@ -1560,18 +1568,18 @@ private enum UnsavedChangesTransition {
     case movingToTrash
     case closing
 
-    var description: String {
+    var localizedDescription: String {
         switch self {
         case .opening:
-            return "opening another image"
+            return AppStrings.text("unsavedChanges.transition.opening")
         case .navigating:
-            return "changing images"
+            return AppStrings.text("unsavedChanges.transition.navigating")
         case .renaming:
-            return "renaming this file"
+            return AppStrings.text("unsavedChanges.transition.renaming")
         case .movingToTrash:
-            return "moving this file to the Trash"
+            return AppStrings.text("unsavedChanges.transition.movingToTrash")
         case .closing:
-            return "closing the window"
+            return AppStrings.text("unsavedChanges.transition.closing")
         }
     }
 }

@@ -6,9 +6,9 @@ struct CropControlsView: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Button("Cancel", action: onCancel)
+            Button(AppStrings.text("crop.button.cancel"), action: onCancel)
                 .keyboardShortcut(.cancelAction)
-            Button("Apply", action: onApply)
+            Button(AppStrings.text("crop.button.apply"), action: onApply)
                 .keyboardShortcut(.defaultAction)
         }
         .buttonStyle(.borderedProminent)
