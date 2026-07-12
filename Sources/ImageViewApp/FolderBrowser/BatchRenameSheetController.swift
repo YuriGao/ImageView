@@ -211,13 +211,17 @@ final class BatchRenameSheetController: NSWindowController, NSTextFieldDelegate 
             plannedParameters.padding
         )
 
-        let validationMessage: String?
+        let localValidationMessage: String?
         switch validation {
         case .invalid(let message):
-            validationMessage = message
+            localValidationMessage = message
         case .valid:
-            validationMessage = planFailureMessage(validatedPlan)
+            localValidationMessage = nil
         }
+        let validationMessage = combinedValidationMessage(
+            local: localValidationMessage,
+            plan: planFailureMessage(validatedPlan)
+        )
         if let validationMessage {
             errorLabel.stringValue = validationMessage
             errorLabel.isHidden = false
@@ -252,6 +256,15 @@ final class BatchRenameSheetController: NSWindowController, NSTextFieldDelegate 
             }
             return "\(names): \(failureReasonText(failure.reason))"
         }.joined(separator: "\n")
+    }
+
+    private func combinedValidationMessage(local: String?, plan: String?) -> String? {
+        var seenLines: Set<String> = []
+        let lines = [local, plan]
+            .compactMap { $0 }
+            .flatMap { $0.split(separator: "\n").map(String.init) }
+            .filter { !$0.isEmpty && seenLines.insert($0).inserted }
+        return lines.isEmpty ? nil : lines.joined(separator: "\n")
     }
 
     private func failureReasonText(_ reason: BatchFileFailureReason) -> String {

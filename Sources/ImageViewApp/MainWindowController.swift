@@ -1761,6 +1761,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
     var canEditCurrentImageForTesting: Bool { viewModel.canEditCurrentImage }
     var hasUnsavedEditsForTesting: Bool { viewModel.hasUnsavedEdits }
     var isFolderBrowserVisibleForTesting: Bool { !folderBrowserView.isHidden }
+    var folderBrowserIsOperatingForTesting: Bool { folderBrowserViewModel.isOperating }
     var isCanvasVisibleForTesting: Bool { !canvas.isHidden }
     var isFilmstripVisibleForTesting: Bool { !filmstripOverlayView.isHidden }
     var isPageControlsVisibleForTesting: Bool { !pageNavigationOverlayView.isHidden }

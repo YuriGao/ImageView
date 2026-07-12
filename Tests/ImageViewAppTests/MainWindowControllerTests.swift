@@ -839,11 +839,8 @@ final class MainWindowControllerTests: XCTestCase {
             fixture.controller.selectFolderBrowserItemsForTesting(fixture.items.map(\.id))
 
             fixture.controller.triggerFolderBrowserMoveForTesting()
-            for _ in 0..<100 where choice != .cancel && executedPlans.value.isEmpty {
+            for _ in 0..<100 where fixture.controller.folderBrowserIsOperatingForTesting {
                 await Task.yield()
-            }
-            if choice == .cancel {
-                for _ in 0..<100 { await Task.yield() }
             }
 
             switch choice {

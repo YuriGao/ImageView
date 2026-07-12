@@ -82,6 +82,41 @@ final class BatchRenameSheetControllerTests: XCTestCase {
         parent.endSheet(sheet)
     }
 
+    func testInvalidLocalParametersAlsoDisplayEveryCorePlanFailureAndRejectConfirm() {
+        let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
+        let first = ImageItem(url: folder.appendingPathComponent("one.png"), format: .png)
+        let second = ImageItem(url: folder.appendingPathComponent("two.jpg"), format: .jpeg)
+        let plan = BatchRenamePlan(
+            proposals: [
+                RenameProposal(source: first.url, destination: folder.appendingPathComponent("Bad 01.png")),
+                RenameProposal(source: second.url, destination: folder.appendingPathComponent("Bad 02.jpg"))
+            ],
+            failures: [
+                BatchFileFailure(url: first.url, reason: .emptyName),
+                BatchFileFailure(url: second.url, reason: .invalidName)
+            ]
+        )
+        let controller = BatchRenameSheetController(items: [first, second]) { _, _, _, _ in plan }
+        var confirmCount = 0
+        controller.onConfirm = { _, _ in confirmCount += 1 }
+
+        controller.setBatchRenameInputsForTesting(baseName: "bad/name", startNumber: 1, padding: 2)
+
+        XCTAssertEqual(
+            controller.validationErrorForTesting,
+            [
+                AppStrings.text("batchRename.validation.baseNameInvalid"),
+                "one.png → Bad 01.png: \(AppStrings.text("folderBrowser.failure.emptyName"))",
+                "two.jpg → Bad 02.jpg: \(AppStrings.text("folderBrowser.failure.invalidName"))"
+            ].joined(separator: "\n")
+        )
+        XCTAssertFalse(controller.renameButtonEnabledForTesting)
+
+        controller.confirmForTesting()
+
+        XCTAssertEqual(confirmCount, 0)
+    }
+
     func testPreviewDisplaysOldAndNewNamesPreservingExtensions() {
         let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
         let items = [
@@ -171,11 +206,23 @@ final class BatchRenameSheetControllerTests: XCTestCase {
 
         controller.setBatchRenameInputsForTesting(baseName: " ", startNumber: 1, padding: 2)
         controller.confirmForTesting()
-        XCTAssertEqual(controller.validationErrorForTesting, AppStrings.text("batchRename.validation.baseNameRequired"))
+        XCTAssertEqual(
+            controller.validationErrorForTesting,
+            [
+                AppStrings.text("batchRename.validation.baseNameRequired"),
+                "one.webp: \(AppStrings.text("folderBrowser.failure.emptyName"))"
+            ].joined(separator: "\n")
+        )
 
         controller.setBatchRenameInputsForTesting(baseName: "bad/name", startNumber: 1, padding: 2)
         controller.confirmForTesting()
-        XCTAssertEqual(controller.validationErrorForTesting, AppStrings.text("batchRename.validation.baseNameInvalid"))
+        XCTAssertEqual(
+            controller.validationErrorForTesting,
+            [
+                AppStrings.text("batchRename.validation.baseNameInvalid"),
+                "one.webp: \(AppStrings.text("folderBrowser.failure.invalidName"))"
+            ].joined(separator: "\n")
+        )
 
         controller.setBatchRenameInputsForTesting(baseName: "Batch", startNumber: 0, padding: 2)
         controller.confirmForTesting()
