@@ -94,6 +94,13 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         }
     }
 
+    struct RecoveryAlertPresentation: Equatable {
+        let folderURL: URL
+        let title: String
+        let message: String
+        let details: String
+    }
+
     struct PageControlAvailability: Equatable {
         let previous: Bool
         let next: Bool
@@ -167,6 +174,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
     }
     private var activeBatchRenameSheet: BatchRenameSheetController?
     var batchActionDialogProviderForTesting: BatchActionDialogProvider?
+    var recoveryAlertPresenterForTesting: ((RecoveryAlertPresentation) -> Void)?
     private var unsavedChangesChoiceForTesting: UnsavedChangesChoice?
 
     convenience init(
@@ -449,6 +457,9 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         }
         folderBrowserViewModel.onItemURLMutation = { [weak self] mutation in
             self?.applyFolderItemURLMutation(mutation)
+        }
+        folderBrowserViewModel.onRecoveryRequired = { [weak self] folderURL, failures in
+            self?.presentRecoveryRequiredAlert(folderURL: folderURL, failures: failures)
         }
 
         viewModel.$currentImage
@@ -881,6 +892,73 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
             }
             viewModel.applyItemURLMigrations(standardizedMigrations)
         }
+    }
+
+    private func presentRecoveryRequiredAlert(folderURL: URL, failures: [BatchRecoveryFailure]) {
+        let presentation = Self.recoveryAlertPresentation(folderURL: folderURL, failures: failures)
+        if let recoveryAlertPresenterForTesting {
+            recoveryAlertPresenterForTesting(presentation)
+            return
+        }
+
+        let alert = NSAlert()
+        alert.alertStyle = .critical
+        alert.messageText = presentation.title
+        alert.informativeText = presentation.message
+        alert.addButton(withTitle: AppStrings.text("common.ok"))
+
+        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 520, height: 180))
+        scrollView.hasVerticalScroller = true
+        scrollView.borderType = .bezelBorder
+        let textView = NSTextView(frame: scrollView.bounds)
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.drawsBackground = false
+        textView.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        textView.string = presentation.details
+        textView.isVerticallyResizable = true
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.containerSize = NSSize(
+            width: scrollView.contentSize.width,
+            height: .greatestFiniteMagnitude
+        )
+        scrollView.documentView = textView
+        alert.accessoryView = scrollView
+
+        if let window {
+            alert.beginSheetModal(for: window)
+        } else {
+            alert.runModal()
+        }
+    }
+
+    private static func recoveryAlertPresentation(
+        folderURL: URL,
+        failures: [BatchRecoveryFailure]
+    ) -> RecoveryAlertPresentation {
+        let detailLines = failures.flatMap { failure -> [String] in
+            let detail = String(
+                format: AppStrings.text("folderBrowser.recovery.item"),
+                failure.expectedURL.lastPathComponent,
+                failure.actualURL.lastPathComponent,
+                failure.reason
+            )
+            guard failure.actualURL.lastPathComponent.hasPrefix(".batch-rename-"),
+                  failure.actualURL.pathExtension == "tmp" else {
+                return [detail]
+            }
+            return [detail, AppStrings.text("folderBrowser.recovery.hiddenTemporaryHint")]
+        }
+        return RecoveryAlertPresentation(
+            folderURL: folderURL,
+            title: AppStrings.text("folderBrowser.recovery.alert.title"),
+            message: String(
+                format: AppStrings.text("folderBrowser.recovery.alert.folder"),
+                folderURL.path
+            ),
+            details: detailLines.joined(separator: "\n")
+        )
     }
 
     private func migratingViewerRoute(_ route: ContentRoute?, using migrations: [URL: URL]) -> ContentRoute? {
@@ -1868,6 +1946,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         guard case let .viewer(url) = forwardRoute else { return nil }
         return url
     }
+    var associatedViewerURLForTesting: URL? { associatedViewerURL }
     var currentViewerRouteURLForTesting: URL? {
         guard case let .viewer(url) = currentRoute else { return nil }
         return url

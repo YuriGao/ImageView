@@ -322,6 +322,10 @@ final class FolderBrowserViewModelTests: XCTestCase {
                 return BatchOperationResult(succeeded: [old.url])
             }
         )
+        let mutations = LockedValue<[FolderItemURLMutation]>([])
+        viewModel.onItemURLMutation = { mutation in
+            mutations.withValue { $0.append(mutation) }
+        }
         await viewModel.openFolder(folder)
         viewModel.setSelection([old.id])
 
@@ -333,6 +337,7 @@ final class FolderBrowserViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.selectedItems.map(\.url), [newURL])
         XCTAssertEqual(viewModel.operationFailures, [])
         XCTAssertEqual(viewModel.operationMessage, Self.succeededMessage(1))
+        XCTAssertEqual(mutations.value, [.renamed([old.url: newURL])])
     }
 
     func testRenameSelectedMigratesLastOpenedItemToNewURL() async {
@@ -619,7 +624,7 @@ final class FolderBrowserViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.isOperating)
     }
 
-    func testSuccessfulRenameIgnoresLateResultAfterOpeningDifferentFolder() async {
+    func testSuccessfulRenamePublishesFileMutationWithoutChangingReplacementFolder() async {
         let folderA = URL(fileURLWithPath: "/tmp/photos-a", isDirectory: true)
         let folderB = URL(fileURLWithPath: "/tmp/photos-b", isDirectory: true)
         let itemA = ImageItem(url: folderA.appendingPathComponent("a.png"), format: .png)
@@ -653,7 +658,61 @@ final class FolderBrowserViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.selectedItems.isEmpty)
         XCTAssertTrue(viewModel.operationFailures.isEmpty)
         XCTAssertNil(viewModel.operationMessage)
-        XCTAssertEqual(mutations.value, [])
+        XCTAssertEqual(mutations.value, [
+            .renamed([itemA.url: renamedA])
+        ])
+        XCTAssertFalse(viewModel.isOperating)
+    }
+
+    func testStaleRenameRecoveryPublishesGlobalNoticeWithoutPollutingReplacementSession() async {
+        let folderA = URL(fileURLWithPath: "/tmp/photos-a", isDirectory: true)
+        let folderB = URL(fileURLWithPath: "/tmp/photos-b", isDirectory: true)
+        let itemA = ImageItem(url: folderA.appendingPathComponent("a.png"), format: .png)
+        let itemB = ImageItem(url: folderB.appendingPathComponent("b.png"), format: .png)
+        let recovery = BatchRecoveryFailure(
+            expectedURL: itemA.url,
+            actualURL: folderA.appendingPathComponent(".batch-rename-stranded.tmp"),
+            reason: "rollback permission denied"
+        )
+        let failure = BatchFileFailure(url: itemA.url, reason: .renameFailed("injected"))
+        let scanner = RenameRescanSessionScanner(
+            folderA: folderA,
+            initialItemsA: [itemA],
+            folderB: folderB,
+            itemsB: [itemB]
+        )
+        let plan = BatchRenamePlan(
+            proposals: [RenameProposal(source: itemA.url, destination: folderA.appendingPathComponent("new.png"))],
+            failures: []
+        )
+        let notice = LockedValue<RecoveryNotice?>(nil)
+        let viewModel = FolderBrowserViewModel(
+            scanFolder: { try await scanner.scan($0) },
+            planBatchRename: { _, _, _, _ in plan },
+            executeRenamePlan: { _ in
+                BatchOperationResult(failures: [failure], recoveryFailures: [recovery])
+            }
+        )
+        viewModel.onRecoveryRequired = { folderURL, failures in
+            notice.set(RecoveryNotice(folderURL: folderURL, failures: failures))
+        }
+        await viewModel.openFolder(folderA)
+        viewModel.setSelection([itemA.id])
+
+        let renameTask = viewModel.renameSelected(baseName: "new")
+        await scanner.waitUntilRescanStarts()
+        await viewModel.openFolder(folderB)
+        await scanner.finishRescan(with: .success([itemA]))
+        await renameTask?.value
+
+        XCTAssertEqual(notice.value, RecoveryNotice(folderURL: folderA, failures: [recovery]))
+        XCTAssertEqual(viewModel.session?.folderURL, folderB)
+        XCTAssertEqual(viewModel.visibleItems, [itemB])
+        XCTAssertTrue(viewModel.selectedItems.isEmpty)
+        XCTAssertTrue(viewModel.operationFailures.isEmpty)
+        XCTAssertTrue(viewModel.operationRecoveryFailures.isEmpty)
+        XCTAssertNil(viewModel.operationMessage)
+        XCTAssertNil(viewModel.loadErrorMessage)
         XCTAssertFalse(viewModel.isOperating)
     }
 
@@ -762,6 +821,11 @@ private enum TestFolderError: LocalizedError {
     case denied
 
     var errorDescription: String? { "Permission denied" }
+}
+
+private struct RecoveryNotice: Equatable {
+    let folderURL: URL
+    let failures: [BatchRecoveryFailure]
 }
 
 private actor AsyncStartFlag {

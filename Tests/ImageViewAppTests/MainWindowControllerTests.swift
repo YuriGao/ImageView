@@ -1442,6 +1442,71 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertTrue(fixture.controller.isCanvasVisibleForTesting)
     }
 
+    func testStaleRenameSuccessMigratesForwardRouteAssociatedViewerAndViewerNavigation() async throws {
+        let folderA = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let folderB = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: folderA, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: folderB, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: folderA)
+            try? FileManager.default.removeItem(at: folderB)
+        }
+        let oldURL = folderA.appendingPathComponent("old.png")
+        let renamedURL = folderA.appendingPathComponent("renamed.png")
+        let itemA = ImageItem(url: oldURL, format: .png)
+        let itemB = ImageItem(url: folderB.appendingPathComponent("b.png"), format: .png)
+        try writeTestPNG(to: oldURL)
+        try writeTestPNG(to: itemB.url)
+        let gate = MainWindowBlockingBatchOperation()
+        let plan = BatchRenamePlan(
+            proposals: [RenameProposal(source: oldURL, destination: renamedURL)],
+            failures: []
+        )
+        let viewModel = FolderBrowserViewModel(
+            scanFolder: { folder in folder == folderA ? [itemA] : [itemB] },
+            planBatchRename: { _, _, _, _ in plan },
+            executeRenamePlan: { _ in gate.run(result: BatchOperationResult(succeeded: [oldURL])) }
+        )
+        let controller = MainWindowController(
+            settings: AppSettings(defaults: makeIsolatedDefaults()),
+            folderBrowserViewModel: viewModel
+        )
+        controller.batchActionDialogProviderForTesting = .init(
+            requestRenameParameters: { items, planRename, confirm in
+                let parameters = BatchRenameSheetController.RenameParameters(
+                    baseName: "renamed",
+                    startNumber: 1,
+                    padding: 2
+                )
+                confirm(parameters, planRename(items.map(\.url), parameters.baseName, parameters.startNumber, parameters.padding))
+            }
+        )
+        await controller.openFolderForTesting(folderA, scannerItems: [itemA])
+        controller.openFirstFolderBrowserItemForTesting()
+        for _ in 0..<100 where controller.viewerNavigationURLForTesting != oldURL.standardizedFileURL {
+            await Task.yield()
+        }
+        controller.goBackForTesting()
+        controller.selectFolderBrowserItemsForTesting([itemA.id])
+
+        controller.triggerFolderBrowserRenameForTesting()
+        await gate.waitUntilStarted()
+        await viewModel.openFolder(folderB)
+        gate.finish()
+        for _ in 0..<100 where controller.forwardViewerURLForTesting != renamedURL.standardizedFileURL {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(viewModel.session?.folderURL, folderB)
+        XCTAssertEqual(viewModel.visibleItems, [itemB])
+        XCTAssertEqual(controller.forwardViewerURLForTesting, renamedURL.standardizedFileURL)
+        XCTAssertEqual(controller.associatedViewerURLForTesting, renamedURL.standardizedFileURL)
+        XCTAssertEqual(controller.viewerNavigationURLForTesting, renamedURL.standardizedFileURL)
+        XCTAssertNil(controller.folderBrowserOperationStatusTextForTesting)
+    }
+
     func testDeletingNavigatedForwardTargetAfterBackClearsForwardAndViewerNavigation() async throws {
         let fixture = try makeFolderNavigationFixture(
             itemNames: ["a.png", "b.png"],
@@ -1639,6 +1704,70 @@ final class MainWindowControllerTests: XCTestCase {
             "locked"
         )
         XCTAssertTrue(status?.contains(ordinaryFailure) == true, "ordinary failure details must remain visible")
+    }
+
+    func testStaleRenameRecoveryShowsIndependentAlertWithoutPollutingReplacementFolderStatus() async throws {
+        let folderA = URL(fileURLWithPath: "/tmp/recovery-a", isDirectory: true)
+        let folderB = URL(fileURLWithPath: "/tmp/recovery-b", isDirectory: true)
+        let itemA = ImageItem(url: folderA.appendingPathComponent("original.png"), format: .png)
+        let itemB = ImageItem(url: folderB.appendingPathComponent("b.png"), format: .png)
+        let recovery = BatchRecoveryFailure(
+            expectedURL: itemA.url,
+            actualURL: folderA.appendingPathComponent(".batch-rename-stranded.tmp"),
+            reason: "rollback permission denied"
+        )
+        let failure = BatchFileFailure(url: itemA.url, reason: .renameFailed("locked"))
+        let gate = MainWindowBlockingBatchOperation()
+        let plan = BatchRenamePlan(
+            proposals: [RenameProposal(source: itemA.url, destination: folderA.appendingPathComponent("new.png"))],
+            failures: []
+        )
+        let viewModel = FolderBrowserViewModel(
+            scanFolder: { folder in folder == folderA ? [itemA] : [itemB] },
+            planBatchRename: { _, _, _, _ in plan },
+            executeRenamePlan: { _ in
+                gate.run(result: BatchOperationResult(failures: [failure], recoveryFailures: [recovery]))
+            }
+        )
+        let controller = MainWindowController(
+            settings: AppSettings(defaults: makeIsolatedDefaults()),
+            folderBrowserViewModel: viewModel
+        )
+        let presentation = MainWindowLockedValue<MainWindowController.RecoveryAlertPresentation?>(nil)
+        controller.recoveryAlertPresenterForTesting = { presentation.set($0) }
+        controller.batchActionDialogProviderForTesting = .init(
+            requestRenameParameters: { items, planRename, confirm in
+                let parameters = BatchRenameSheetController.RenameParameters(
+                    baseName: "new",
+                    startNumber: 1,
+                    padding: 2
+                )
+                confirm(parameters, planRename(items.map(\.url), parameters.baseName, parameters.startNumber, parameters.padding))
+            }
+        )
+        await controller.openFolderForTesting(folderA, scannerItems: [itemA])
+        controller.selectFolderBrowserItemsForTesting([itemA.id])
+
+        controller.triggerFolderBrowserRenameForTesting()
+        await gate.waitUntilStarted()
+        await viewModel.openFolder(folderB)
+        gate.finish()
+        for _ in 0..<100 where presentation.value == nil {
+            await Task.yield()
+        }
+
+        let alert = try XCTUnwrap(presentation.value)
+        XCTAssertEqual(alert.folderURL, folderA)
+        XCTAssertEqual(alert.title, AppStrings.text("folderBrowser.recovery.alert.title"))
+        XCTAssertTrue(alert.message.contains(folderA.path))
+        XCTAssertTrue(alert.details.contains("original.png → .batch-rename-stranded.tmp"))
+        XCTAssertTrue(alert.details.contains("rollback permission denied"))
+        XCTAssertTrue(alert.details.contains(AppStrings.text("folderBrowser.recovery.hiddenTemporaryHint")))
+        XCTAssertEqual(viewModel.session?.folderURL, folderB)
+        XCTAssertEqual(viewModel.visibleItems, [itemB])
+        XCTAssertTrue(viewModel.operationFailures.isEmpty)
+        XCTAssertTrue(viewModel.operationRecoveryFailures.isEmpty)
+        XCTAssertNil(controller.folderBrowserOperationStatusTextForTesting)
     }
 
     func testFolderBrowserClearFiltersAndChooseAnotherFolderCallbacksAreIntegrated() async throws {
@@ -2195,6 +2324,12 @@ private final class MainWindowBlockingBatchOperation: @unchecked Sendable {
         Task { await started.markStarted() }
         finished.wait()
         return BatchOperationResult(succeeded: urls)
+    }
+
+    func run(result: BatchOperationResult) -> BatchOperationResult {
+        Task { await started.markStarted() }
+        finished.wait()
+        return result
     }
 
     func waitUntilStarted() async {

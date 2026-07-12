@@ -122,4 +122,23 @@ final class AppStringsTests: XCTestCase {
             XCTAssertEqual(AppStrings.text(key, preferredLanguages: ["zh-Hans"]), chinese, key)
         }
     }
+
+    func testStaleRecoveryAlertLabelsHaveEnglishAndSimplifiedChineseCopy() {
+        XCTAssertEqual(
+            AppStrings.text("folderBrowser.recovery.alert.title", preferredLanguages: ["en"]),
+            "File Recovery Required"
+        )
+        XCTAssertEqual(
+            AppStrings.text("folderBrowser.recovery.alert.title", preferredLanguages: ["zh-Hans"]),
+            "需要恢复文件"
+        )
+        XCTAssertEqual(
+            AppStrings.text("folderBrowser.recovery.alert.folder", preferredLanguages: ["en"]),
+            "A batch rename in this folder requires manual recovery: %@"
+        )
+        XCTAssertEqual(
+            AppStrings.text("folderBrowser.recovery.alert.folder", preferredLanguages: ["zh-Hans"]),
+            "此文件夹中的批量重命名需要手动恢复：%@"
+        )
+    }
 }

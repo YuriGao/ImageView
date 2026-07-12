@@ -79,6 +79,8 @@
 "folderBrowser.recovery.heading" = "Recovery required:";
 "folderBrowser.recovery.item" = "%@ → %@: %@";
 "folderBrowser.recovery.hiddenTemporaryHint" = "A recovered file remains hidden as a .batch-rename temporary file. Show hidden files in Finder and move it to a safe visible name before retrying.";
+"folderBrowser.recovery.alert.title" = "File Recovery Required";
+"folderBrowser.recovery.alert.folder" = "A batch rename in this folder requires manual recovery: %@";
 "folderBrowser.operation.succeeded" = "%d succeeded";
 "folderBrowser.operation.failed" = "%d failed";
 "folderBrowser.operation.succeededAndFailed" = "%d succeeded, %d failed";

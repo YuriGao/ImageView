@@ -82,6 +82,8 @@ enum AppStrings {
         "folderBrowser.recovery.heading",
         "folderBrowser.recovery.item",
         "folderBrowser.recovery.hiddenTemporaryHint",
+        "folderBrowser.recovery.alert.title",
+        "folderBrowser.recovery.alert.folder",
         "folderBrowser.operation.succeeded",
         "folderBrowser.operation.failed",
         "folderBrowser.operation.succeededAndFailed",

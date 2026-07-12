@@ -79,6 +79,8 @@
 "folderBrowser.recovery.heading" = "需要手动恢复：";
 "folderBrowser.recovery.item" = "%@ → %@：%@";
 "folderBrowser.recovery.hiddenTemporaryHint" = "恢复文件仍是隐藏的 .batch-rename 临时文件。请在访达中显示隐藏文件，并先将它改为安全的可见名称，再重试。";
+"folderBrowser.recovery.alert.title" = "需要恢复文件";
+"folderBrowser.recovery.alert.folder" = "此文件夹中的批量重命名需要手动恢复：%@";
 "folderBrowser.operation.succeeded" = "%d 个成功";
 "folderBrowser.operation.failed" = "%d 个失败";
 "folderBrowser.operation.succeededAndFailed" = "%d 个成功，%d 个失败";

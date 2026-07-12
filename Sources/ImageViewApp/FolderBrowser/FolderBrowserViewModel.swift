@@ -41,6 +41,7 @@ final class FolderBrowserViewModel: ObservableObject {
     @Published private(set) var loadErrorMessage: String?
     private(set) var requestedFolderURL: URL?
     var onItemURLMutation: ((FolderItemURLMutation) -> Void)?
+    var onRecoveryRequired: ((URL, [BatchRecoveryFailure]) -> Void)?
 
     var visibleItems: [ImageItem] {
         session?.visibleItems ?? []
@@ -332,9 +333,15 @@ final class FolderBrowserViewModel: ObservableObject {
             }
             return BatchRenameOperation(plan: plan, result: result, rescanOutcome: rescanOutcome)
         } apply: { [weak self] (operation: BatchRenameOperation) in
-            guard let self,
-                  self.sessionGeneration == operationSessionGeneration,
-                  self.session?.folderURL == activeFolderURL else { return }
+            guard let self else { return }
+            self.publishRenameMutation(for: operation.result, plan: operation.plan)
+            guard self.sessionGeneration == operationSessionGeneration,
+                  self.session?.folderURL == activeFolderURL else {
+                if !operation.result.recoveryFailures.isEmpty {
+                    self.onRecoveryRequired?(activeFolderURL, operation.result.recoveryFailures)
+                }
+                return
+            }
             self.applyRenameResult(
                 operation.result,
                 plan: operation.plan,
@@ -426,12 +433,7 @@ final class FolderBrowserViewModel: ObservableObject {
             return
         }
 
-        let succeededSources = Set(result.succeeded)
-        let successfulDestinationsBySource = Dictionary(
-            uniqueKeysWithValues: plan.proposals
-                .filter { succeededSources.contains($0.source) }
-                .map { ($0.source, $0.destination) }
-        )
+        let successfulDestinationsBySource = successfulRenameMigrations(for: result, plan: plan)
 
         if !successfulDestinationsBySource.isEmpty, var session {
             let lastOpenedSourceURL = session.lastOpenedItemID.flatMap { lastOpenedItemID in
@@ -457,12 +459,29 @@ final class FolderBrowserViewModel: ObservableObject {
             }
             session.selectedItemIDs = result.failures.map(\.url) + successfulDestinationsBySource.values.map { $0 }
             self.session = session
-            onItemURLMutation?(.renamed(successfulDestinationsBySource))
         } else {
             session?.selectedItemIDs = result.failures.map(\.url)
         }
 
         operationMessage = message(for: result)
+    }
+
+    private func publishRenameMutation(for result: BatchOperationResult, plan: BatchRenamePlan) {
+        let migrations = successfulRenameMigrations(for: result, plan: plan)
+        guard !migrations.isEmpty else { return }
+        onItemURLMutation?(.renamed(migrations))
+    }
+
+    private func successfulRenameMigrations(
+        for result: BatchOperationResult,
+        plan: BatchRenamePlan
+    ) -> [URL: URL] {
+        let succeededSources = Set(result.succeeded)
+        return Dictionary(
+            uniqueKeysWithValues: plan.proposals
+                .filter { succeededSources.contains($0.source) }
+                .map { ($0.source, $0.destination) }
+        )
     }
 }
 
