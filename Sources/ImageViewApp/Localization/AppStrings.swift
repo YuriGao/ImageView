@@ -42,7 +42,11 @@ enum AppStrings {
     ]
 
     static let titleBarKeys = [
-        "titleBar.browseCurrentFolder"
+        "titleBar.browseCurrentFolder",
+        "titleBar.back",
+        "titleBar.forward",
+        "titleBar.showFolder",
+        "titleBar.showImage"
     ]
 
     static let folderBrowserKeys = [
@@ -54,6 +58,16 @@ enum AppStrings {
         "folderBrowser.button.trash",
         "folderBrowser.button.move",
         "folderBrowser.button.rename",
+        "folderBrowser.state.loading.title",
+        "folderBrowser.state.loading.message",
+        "folderBrowser.state.emptyFolder.title",
+        "folderBrowser.state.emptyFolder.message",
+        "folderBrowser.state.filteredEmpty.title",
+        "folderBrowser.state.filteredEmpty.message",
+        "folderBrowser.state.loadFailed.title",
+        "folderBrowser.button.retry",
+        "folderBrowser.button.clearFilters",
+        "folderBrowser.button.chooseAnotherFolder",
         "folderBrowser.status.working",
         "folderBrowser.status.failure.one",
         "folderBrowser.status.failure.other",

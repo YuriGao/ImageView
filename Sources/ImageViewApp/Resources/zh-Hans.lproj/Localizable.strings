@@ -43,6 +43,10 @@
 "emptyState.browseFolder" = "浏览文件夹…";
 "errorState.retry" = "重新选择图片…";
 "titleBar.browseCurrentFolder" = "浏览当前文件夹";
+"titleBar.back" = "返回";
+"titleBar.forward" = "前进";
+"titleBar.showFolder" = "显示文件夹";
+"titleBar.showImage" = "显示图片";
 "folderBrowser.searchPlaceholder" = "搜索图片";
 "folderBrowser.sort.name" = "名称";
 "folderBrowser.sort.modified" = "修改时间";
@@ -51,6 +55,16 @@
 "folderBrowser.button.trash" = "废纸篓";
 "folderBrowser.button.move" = "移动";
 "folderBrowser.button.rename" = "重命名";
+"folderBrowser.state.loading.title" = "正在加载…";
+"folderBrowser.state.loading.message" = "正在扫描此文件夹中的图片。";
+"folderBrowser.state.emptyFolder.title" = "文件夹为空";
+"folderBrowser.state.emptyFolder.message" = "此文件夹中没有受支持的图片。";
+"folderBrowser.state.filteredEmpty.title" = "没有符合筛选条件的结果";
+"folderBrowser.state.filteredEmpty.message" = "没有图片符合当前搜索和类型筛选条件。";
+"folderBrowser.state.loadFailed.title" = "加载失败";
+"folderBrowser.button.retry" = "重试";
+"folderBrowser.button.clearFilters" = "清除筛选";
+"folderBrowser.button.chooseAnotherFolder" = "选择其他文件夹…";
 "folderBrowser.status.working" = "正在处理…";
 "folderBrowser.status.failure.one" = "%d 个失败";
 "folderBrowser.status.failure.other" = "%d 个失败";

@@ -43,6 +43,10 @@
 "emptyState.browseFolder" = "Browse Folder…";
 "errorState.retry" = "Choose Another Image…";
 "titleBar.browseCurrentFolder" = "Browse Current Folder";
+"titleBar.back" = "Back";
+"titleBar.forward" = "Forward";
+"titleBar.showFolder" = "Show Folder";
+"titleBar.showImage" = "Show Image";
 "folderBrowser.searchPlaceholder" = "Search images";
 "folderBrowser.sort.name" = "Name";
 "folderBrowser.sort.modified" = "Modified";
@@ -51,6 +55,16 @@
 "folderBrowser.button.trash" = "Trash";
 "folderBrowser.button.move" = "Move";
 "folderBrowser.button.rename" = "Rename";
+"folderBrowser.state.loading.title" = "Loading…";
+"folderBrowser.state.loading.message" = "Scanning this folder for images.";
+"folderBrowser.state.emptyFolder.title" = "Empty Folder";
+"folderBrowser.state.emptyFolder.message" = "This folder does not contain any supported images.";
+"folderBrowser.state.filteredEmpty.title" = "No Filter Results";
+"folderBrowser.state.filteredEmpty.message" = "No images match the current search and type filters.";
+"folderBrowser.state.loadFailed.title" = "Load Failed";
+"folderBrowser.button.retry" = "Retry";
+"folderBrowser.button.clearFilters" = "Clear Filters";
+"folderBrowser.button.chooseAnotherFolder" = "Choose Another Folder…";
 "folderBrowser.status.working" = "Working…";
 "folderBrowser.status.failure.one" = "%d failure";
 "folderBrowser.status.failure.other" = "%d failures";

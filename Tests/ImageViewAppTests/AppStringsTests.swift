@@ -101,4 +101,25 @@ final class AppStringsTests: XCTestCase {
         XCTAssertEqual(AppStrings.text("batchRename.title", preferredLanguages: ["en"]), "Batch Rename")
         XCTAssertEqual(AppStrings.text("batchRename.title", preferredLanguages: ["zh-Hans"]), "批量重命名")
     }
+
+    func testFolderBrowserNavigationAndRecoveryLabelsHaveExactEnglishAndSimplifiedChineseCopy() {
+        let expected: [(String, String, String)] = [
+            ("titleBar.back", "Back", "返回"),
+            ("titleBar.forward", "Forward", "前进"),
+            ("titleBar.showFolder", "Show Folder", "显示文件夹"),
+            ("titleBar.showImage", "Show Image", "显示图片"),
+            ("folderBrowser.state.loading.title", "Loading…", "正在加载…"),
+            ("folderBrowser.state.emptyFolder.title", "Empty Folder", "文件夹为空"),
+            ("folderBrowser.state.filteredEmpty.title", "No Filter Results", "没有符合筛选条件的结果"),
+            ("folderBrowser.state.loadFailed.title", "Load Failed", "加载失败"),
+            ("folderBrowser.button.retry", "Retry", "重试"),
+            ("folderBrowser.button.clearFilters", "Clear Filters", "清除筛选"),
+            ("folderBrowser.button.chooseAnotherFolder", "Choose Another Folder…", "选择其他文件夹…")
+        ]
+
+        for (key, english, chinese) in expected {
+            XCTAssertEqual(AppStrings.text(key, preferredLanguages: ["en"]), english, key)
+            XCTAssertEqual(AppStrings.text(key, preferredLanguages: ["zh-Hans"]), chinese, key)
+        }
+    }
 }

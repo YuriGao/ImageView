@@ -14,10 +14,17 @@ final class FolderBrowserViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.presentation, .content)
 
         viewModel.searchText = "missing"
+        viewModel.setAllowedFormats([.png])
         XCTAssertEqual(viewModel.presentation, .filteredEmpty)
 
         viewModel.clearFilters()
         XCTAssertEqual(viewModel.presentation, .content)
+        XCTAssertEqual(viewModel.session?.filter.searchText, "")
+        XCTAssertEqual(
+            viewModel.session?.filter.allowedFormats,
+            Set(SupportedImageFormat.allCases),
+            "Clear Filters must restore all supported formats"
+        )
 
         let empty = FolderBrowserViewModel(scanFolder: { _ in [] })
         await empty.openFolder(folder)

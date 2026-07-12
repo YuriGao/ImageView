@@ -913,8 +913,11 @@ final class MainWindowControllerTests: XCTestCase {
         await fixture.controller.openFolderForTesting(fixture.folder, scannerItems: [fixture.items[0]])
         fixture.controller.openFirstFolderBrowserItemForTesting()
 
+        XCTAssertEqual(fixture.controller.titleBarGridButtonForTesting.toolTip, AppStrings.text("titleBar.showFolder"))
+
         fixture.controller.performTitleBarGridToggleForTesting()
         XCTAssertTrue(fixture.controller.isFolderBrowserVisibleForTesting)
+        XCTAssertEqual(fixture.controller.titleBarGridButtonForTesting.toolTip, AppStrings.text("titleBar.showImage"))
 
         fixture.controller.performTitleBarGridToggleForTesting()
         XCTAssertTrue(fixture.controller.isCanvasVisibleForTesting)
@@ -1013,8 +1016,14 @@ final class MainWindowControllerTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: fixture.folder) }
         let controller = fixture.controller
 
-        XCTAssertEqual(controller.titleBarBackButtonForTesting.image?.accessibilityDescription, "Back")
-        XCTAssertEqual(controller.titleBarForwardButtonForTesting.image?.accessibilityDescription, "Forward")
+        XCTAssertEqual(
+            controller.titleBarBackButtonForTesting.image?.accessibilityDescription,
+            AppStrings.text("titleBar.back")
+        )
+        XCTAssertEqual(
+            controller.titleBarForwardButtonForTesting.image?.accessibilityDescription,
+            AppStrings.text("titleBar.forward")
+        )
         XCTAssertNotNil(controller.titleBarGridButtonForTesting.image)
         XCTAssertFalse(controller.titleBarBackButtonForTesting.isEnabled)
         XCTAssertFalse(controller.titleBarForwardButtonForTesting.isEnabled)
@@ -1353,13 +1362,82 @@ final class MainWindowControllerTests: XCTestCase {
 
     func testTitleBarGridButtonTooltipIsLocalized() {
         XCTAssertEqual(
-            MainWindowController.titleBarBrowseFolderToolTip(preferredLanguages: ["en"]),
-            "Browse Current Folder"
+            AppStrings.text("titleBar.showFolder", preferredLanguages: ["en"]),
+            "Show Folder"
         )
         XCTAssertEqual(
-            MainWindowController.titleBarBrowseFolderToolTip(preferredLanguages: ["zh-Hans"]),
-            "浏览当前文件夹"
+            AppStrings.text("titleBar.showFolder", preferredLanguages: ["zh-Hans"]),
+            "显示文件夹"
         )
+    }
+
+    func testFolderBrowserPresentationAndRecoveryCallbacksAreIntegrated() async throws {
+        let folder = URL(fileURLWithPath: "/tmp/recovery", isDirectory: true)
+        let item = ImageItem(url: folder.appendingPathComponent("one.png"), format: .png)
+        let attempts = MainWindowLockedValue(0)
+        let viewModel = FolderBrowserViewModel(scanFolder: { _ in
+            attempts.update { $0 += 1 }
+            if attempts.value == 1 {
+                throw NSError(domain: "MainWindowControllerTests", code: 1)
+            }
+            return [item]
+        })
+        let controller = MainWindowController(
+            settings: AppSettings(defaults: makeIsolatedDefaults()),
+            folderBrowserViewModel: viewModel
+        )
+
+        await controller.openFolderForTesting(folder, scannerItems: [])
+        XCTAssertEqual(
+            controller.folderBrowserPresentationTitleForTesting,
+            AppStrings.text("folderBrowser.state.loadFailed.title")
+        )
+        controller.triggerPrimaryFolderBrowserRecoveryForTesting()
+        for _ in 0..<100 where viewModel.presentation != .content {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(attempts.value, 2)
+        XCTAssertEqual(viewModel.presentation, .content)
+        XCTAssertEqual(controller.folderBrowserItemCountForTesting, 1)
+    }
+
+    func testFolderBrowserClearFiltersAndChooseAnotherFolderCallbacksAreIntegrated() async throws {
+        let folder = URL(fileURLWithPath: "/tmp/filtered", isDirectory: true)
+        let item = ImageItem(url: folder.appendingPathComponent("one.png"), format: .png)
+        let viewModel = FolderBrowserViewModel(scanFolder: { _ in [item] })
+        let controller = MainWindowController(
+            settings: AppSettings(defaults: makeIsolatedDefaults()),
+            folderBrowserViewModel: viewModel
+        )
+        var browseRequests = 0
+        controller.onBrowseFolderRequested = { browseRequests += 1 }
+
+        await controller.openFolderForTesting(folder, scannerItems: [item])
+        viewModel.searchText = "missing"
+        viewModel.setAllowedFormats([.png])
+        XCTAssertEqual(
+            controller.folderBrowserPresentationTitleForTesting,
+            AppStrings.text("folderBrowser.state.filteredEmpty.title")
+        )
+        controller.triggerPrimaryFolderBrowserRecoveryForTesting()
+        XCTAssertEqual(viewModel.presentation, .content)
+        XCTAssertEqual(viewModel.session?.filter.allowedFormats, Set(SupportedImageFormat.allCases))
+
+        let emptyViewModel = FolderBrowserViewModel(scanFolder: { _ in [] })
+        let emptyController = MainWindowController(
+            settings: AppSettings(defaults: makeIsolatedDefaults()),
+            folderBrowserViewModel: emptyViewModel
+        )
+        emptyController.onBrowseFolderRequested = { browseRequests += 1 }
+        await emptyController.openFolderForTesting(folder, scannerItems: [])
+        XCTAssertEqual(
+            emptyController.folderBrowserPresentationTitleForTesting,
+            AppStrings.text("folderBrowser.state.emptyFolder.title")
+        )
+        emptyController.triggerPrimaryFolderBrowserRecoveryForTesting()
+
+        XCTAssertEqual(browseRequests, 1)
     }
 
     private func writeTestPNG(to url: URL) throws {

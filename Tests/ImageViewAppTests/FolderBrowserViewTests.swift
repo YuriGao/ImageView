@@ -15,6 +15,9 @@ final class FolderBrowserViewTests: XCTestCase {
         view.onChooseAnotherFolder = { choseAnotherFolder = true }
 
         view.applyPresentation(.loading)
+        XCTAssertTrue(view.testingHasSortControl, "The toolbar must remain mounted outside content state")
+        XCTAssertTrue(view.testingHasTypeFilterControl, "The toolbar must remain mounted outside content state")
+        XCTAssertTrue(view.testingHasTrashButton, "The toolbar must remain mounted outside content state")
         XCTAssertEqual(view.testingPresentationTitle, AppStrings.text("folderBrowser.state.loading.title"))
         XCTAssertEqual(view.testingPresentationMessage, AppStrings.text("folderBrowser.state.loading.message"))
         XCTAssertTrue(view.testingIsProgressVisible)

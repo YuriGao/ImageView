@@ -14,7 +14,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
     static let overlayAutoHideDelay: TimeInterval = 1.8
     static let overlayFadeOutDuration: TimeInterval = 0.18
     static func titleBarBrowseFolderToolTip(preferredLanguages: [String] = Locale.preferredLanguages) -> String {
-        AppStrings.text("titleBar.browseCurrentFolder", preferredLanguages: preferredLanguages)
+        AppStrings.text("titleBar.showFolder", preferredLanguages: preferredLanguages)
     }
 
     var onSuccessfulOpen: ((URL) -> Void)? {
@@ -397,6 +397,17 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         folderBrowserView.onTypeFilterChanged = { [weak self] formats in
             self?.folderBrowserViewModel.setAllowedFormats(formats)
         }
+        folderBrowserView.onClearFilters = { [weak self] in
+            self?.folderBrowserViewModel.clearFilters()
+        }
+        folderBrowserView.onRetryFolder = { [weak self] in
+            Task { [weak self] in
+                await self?.folderBrowserViewModel.retryOpenFolder()
+            }
+        }
+        folderBrowserView.onChooseAnotherFolder = { [weak self] in
+            self?.onBrowseFolderRequested?()
+        }
         folderBrowserView.onMoveToTrash = { [weak self] in
             self?.moveSelectedFolderBrowserItemsToTrash()
         }
@@ -427,8 +438,12 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
             }
             .store(in: &cancellables)
 
-        Publishers.CombineLatest(folderBrowserViewModel.$session, folderBrowserViewModel.$isLoading)
-            .sink { [weak self] session, isLoading in
+        Publishers.CombineLatest3(
+            folderBrowserViewModel.$session,
+            folderBrowserViewModel.$isLoading,
+            folderBrowserViewModel.$loadErrorMessage
+        )
+            .sink { [weak self] session, isLoading, loadErrorMessage in
                 guard let self else { return }
                 let items = session?.visibleItems ?? []
                 if self.currentFolderBrowserItems != items {
@@ -436,6 +451,11 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
                     self.folderBrowserView.applyItems(items)
                 }
                 self.folderBrowserView.applySelection(Set(session?.selectedItemIDs ?? []))
+                self.folderBrowserView.applyPresentation(Self.folderBrowserPresentation(
+                    session: session,
+                    isLoading: isLoading,
+                    loadErrorMessage: loadErrorMessage
+                ))
                 self.updateTitleBarControlAvailability(
                     folderState: FolderRouteState(session: session, isLoading: isLoading)
                 )
@@ -1369,13 +1389,13 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         configureTitleBarButton(
             titleBarBackButton,
             symbolName: "chevron.backward",
-            accessibilityDescription: "Back",
+            accessibilityDescription: AppStrings.text("titleBar.back"),
             action: #selector(goBackFromTitleBar(_:))
         )
         configureTitleBarButton(
             titleBarForwardButton,
             symbolName: "chevron.forward",
-            accessibilityDescription: "Forward",
+            accessibilityDescription: AppStrings.text("titleBar.forward"),
             action: #selector(goForwardFromTitleBar(_:))
         )
         let browseCurrentFolderText = Self.titleBarBrowseFolderToolTip()
@@ -1442,6 +1462,15 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         titleBarBackButton.isEnabled = backRoute != nil && backRoute != currentRoute
         titleBarForwardButton.isEnabled = forwardRoute != nil && forwardRoute != currentRoute
         titleBarGridButton.isEnabled = canToggleTitleBarGrid(folderState: folderState)
+        let gridText: String
+        if case .folder = currentRoute {
+            gridText = AppStrings.text("titleBar.showImage")
+        } else {
+            gridText = AppStrings.text("titleBar.showFolder")
+        }
+        titleBarGridButton.toolTip = gridText
+        titleBarGridButton.setAccessibilityLabel(gridText)
+        titleBarGridButton.image?.accessibilityDescription = gridText
     }
 
     private func canToggleTitleBarGrid(folderState: FolderRouteState?) -> Bool {
@@ -1453,6 +1482,19 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         case nil:
             false
         }
+    }
+
+    private static func folderBrowserPresentation(
+        session: FolderSession?,
+        isLoading: Bool,
+        loadErrorMessage: String?
+    ) -> FolderBrowserPresentation {
+        if isLoading { return .loading }
+        if let loadErrorMessage { return .loadFailed(loadErrorMessage) }
+        guard let session else { return .loading }
+        if session.items.isEmpty { return .emptyFolder }
+        if session.visibleItems.isEmpty { return .filteredEmpty }
+        return .content
     }
 
     private func shouldRecognizeTitleBarDoubleClick(hitView: NSView?) -> Bool {
@@ -1561,6 +1603,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
     var isPageControlsVisibleForTesting: Bool { !pageNavigationOverlayView.isHidden }
     var folderBrowserItemCountForTesting: Int { folderBrowserView.testingItemCount }
     var folderBrowserOperationStatusTextForTesting: String? { folderBrowserView.testingOperationStatusText }
+    var folderBrowserPresentationTitleForTesting: String? { folderBrowserView.testingPresentationTitle }
     var titleBarBackButtonForTesting: NSButton { titleBarBackButton }
     var titleBarForwardButtonForTesting: NSButton { titleBarForwardButton }
     var titleBarGridButtonForTesting: NSButton { titleBarGridButton }
@@ -1622,6 +1665,14 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
 
     func triggerFolderBrowserRenameForTesting() {
         folderBrowserView.testingTriggerRename()
+    }
+
+    func triggerPrimaryFolderBrowserRecoveryForTesting() {
+        folderBrowserView.testingTriggerPrimaryRecovery()
+    }
+
+    func triggerSecondaryFolderBrowserRecoveryForTesting() {
+        folderBrowserView.testingTriggerSecondaryRecovery()
     }
 
     func openFirstFolderBrowserItemForTesting() {
