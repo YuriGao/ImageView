@@ -26,6 +26,30 @@ public struct BatchFileFailure: Equatable {
     }
 }
 
+public struct BatchMoveProposal: Equatable, Sendable {
+    public let source: URL
+    public let destination: URL
+
+    public init(source: URL, destination: URL) {
+        self.source = source
+        self.destination = destination
+    }
+}
+
+public struct BatchMovePlan: Equatable, @unchecked Sendable {
+    public let proposals: [BatchMoveProposal]
+    public let failures: [BatchFileFailure]
+
+    public var conflictingNames: [String] {
+        failures.compactMap { $0.reason == .destinationExists ? $0.url.lastPathComponent : nil }
+    }
+
+    public init(proposals: [BatchMoveProposal], failures: [BatchFileFailure]) {
+        self.proposals = proposals
+        self.failures = failures
+    }
+}
+
 public struct BatchOperationResult: Equatable {
     public let succeeded: [URL]
     public let failures: [BatchFileFailure]
@@ -93,31 +117,77 @@ public final class BatchFileOperationService {
         destinationFolder: URL,
         conflictPolicy: MoveConflictPolicy
     ) -> BatchOperationResult {
-        var succeeded: [URL] = []
+        executeMovePlan(planMoveToFolder(
+            urls,
+            destinationFolder: destinationFolder,
+            conflictPolicy: conflictPolicy
+        ))
+    }
+
+    public func planMoveToFolder(
+        _ urls: [URL],
+        destinationFolder: URL,
+        conflictPolicy: MoveConflictPolicy
+    ) -> BatchMovePlan {
+        let existingURLs = (try? fileManager.contentsOfDirectory(
+            at: destinationFolder,
+            includingPropertiesForKeys: nil
+        )) ?? []
+        var reservedPaths = Set(existingURLs.map(normalizedPath))
+        var proposals: [BatchMoveProposal] = []
         var failures: [BatchFileFailure] = []
 
         for url in urls {
-            do {
-                guard fileManager.fileExists(atPath: url.path) else {
-                    failures.append(BatchFileFailure(url: url, reason: .sourceMissing))
+            guard fileManager.fileExists(atPath: url.path) else {
+                failures.append(BatchFileFailure(url: url, reason: .sourceMissing))
+                continue
+            }
+
+            var destination = destinationFolder.appendingPathComponent(url.lastPathComponent)
+            if reservedPaths.contains(normalizedPath(destination)) {
+                switch conflictPolicy {
+                case .skip:
+                    failures.append(BatchFileFailure(url: url, reason: .destinationExists))
                     continue
+                case .keepBoth:
+                    destination = nextAvailableURL(for: destination, reservedPaths: reservedPaths)
                 }
+            }
 
-                var destination = destinationFolder.appendingPathComponent(url.lastPathComponent)
-                if fileManager.fileExists(atPath: destination.path) {
-                    switch conflictPolicy {
-                    case .skip:
-                        failures.append(BatchFileFailure(url: url, reason: .destinationExists))
-                        continue
-                    case .keepBoth:
-                        destination = nextAvailableURL(for: destination)
-                    }
-                }
+            reservedPaths.insert(normalizedPath(destination))
+            proposals.append(BatchMoveProposal(source: url, destination: destination))
+        }
 
-                try fileManager.moveItem(at: url, to: destination)
-                succeeded.append(url)
+        return BatchMovePlan(proposals: proposals, failures: failures)
+    }
+
+    public func executeMovePlan(_ plan: BatchMovePlan) -> BatchOperationResult {
+        var succeeded: [URL] = []
+        var failures = plan.failures
+        var destinationPaths: Set<String> = []
+
+        for proposal in plan.proposals {
+            guard fileManager.fileExists(atPath: proposal.source.path) else {
+                failures.append(BatchFileFailure(url: proposal.source, reason: .sourceMissing))
+                continue
+            }
+
+            let destinationPath = normalizedPath(proposal.destination)
+            guard destinationPaths.insert(destinationPath).inserted else {
+                failures.append(BatchFileFailure(url: proposal.source, reason: .duplicateDestination))
+                continue
+            }
+
+            guard !fileManager.fileExists(atPath: proposal.destination.path) else {
+                failures.append(BatchFileFailure(url: proposal.source, reason: .destinationExists))
+                continue
+            }
+
+            do {
+                try fileManager.moveItem(at: proposal.source, to: proposal.destination)
+                succeeded.append(proposal.source)
             } catch {
-                failures.append(BatchFileFailure(url: url, reason: .moveFailed(error.localizedDescription)))
+                failures.append(BatchFileFailure(url: proposal.source, reason: .moveFailed(error.localizedDescription)))
             }
         }
 
@@ -255,18 +325,20 @@ public final class BatchFileOperationService {
         return destination
     }
 
-    private func nextAvailableURL(for original: URL) -> URL {
+    private func nextAvailableURL(for original: URL, reservedPaths: Set<String>) -> URL {
         let folder = original.deletingLastPathComponent()
         let pathExtension = original.pathExtension
         let baseName = original.deletingPathExtension().lastPathComponent
 
-        var index = 2
+        var index = 1
         while true {
-            var candidate = folder.appendingPathComponent("\(baseName) \(index)")
+            let suffix = index == 1 ? " copy" : " copy \(index)"
+            var candidate = folder.appendingPathComponent("\(baseName)\(suffix)")
             if !pathExtension.isEmpty {
                 candidate = candidate.appendingPathExtension(pathExtension)
             }
-            if !fileManager.fileExists(atPath: candidate.path) {
+            if !reservedPaths.contains(normalizedPath(candidate)),
+               !fileManager.fileExists(atPath: candidate.path) {
                 return candidate
             }
             index += 1

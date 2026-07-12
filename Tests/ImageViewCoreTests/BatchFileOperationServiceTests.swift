@@ -65,6 +65,88 @@ final class BatchFileOperationServiceTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: destination, encoding: .utf8), "destination")
     }
 
+    func testPlanMoveToFolderReturnsEveryConflictWithoutMovingSources() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sourceFolder = root.appendingPathComponent("source", isDirectory: true)
+        let destinationFolder = root.appendingPathComponent("destination", isDirectory: true)
+        try FileManager.default.createDirectory(at: sourceFolder, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: destinationFolder, withIntermediateDirectories: true)
+        let first = try writeFile(named: "first.jpg", in: sourceFolder)
+        let second = try writeFile(named: "second.jpg", in: sourceFolder)
+        let available = try writeFile(named: "available.jpg", in: sourceFolder)
+        _ = try writeFile(named: "first.jpg", in: destinationFolder)
+        _ = try writeFile(named: "second.jpg", in: destinationFolder)
+
+        let plan = BatchFileOperationService().planMoveToFolder(
+            [first, second, available],
+            destinationFolder: destinationFolder,
+            conflictPolicy: .skip
+        )
+
+        XCTAssertEqual(plan.proposals, [
+            BatchMoveProposal(
+                source: available,
+                destination: destinationFolder.appendingPathComponent("available.jpg")
+            )
+        ])
+        XCTAssertEqual(plan.conflictingNames, ["first.jpg", "second.jpg"])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: first.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: second.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: available.path))
+    }
+
+    func testPlanMoveKeepBothReservesNamesAcrossBatch() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sourceFolder = root.appendingPathComponent("source", isDirectory: true)
+        let nestedFolder = sourceFolder.appendingPathComponent("nested", isDirectory: true)
+        let destinationFolder = root.appendingPathComponent("destination", isDirectory: true)
+        try FileManager.default.createDirectory(at: nestedFolder, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: destinationFolder, withIntermediateDirectories: true)
+        let sourceA = try writeFile(named: "photo.png", in: sourceFolder)
+        let sourceB = try writeFile(named: "photo.png", in: nestedFolder)
+        _ = try writeFile(named: "photo.png", in: destinationFolder)
+        _ = try writeFile(named: "photo copy.png", in: destinationFolder)
+
+        let plan = BatchFileOperationService().planMoveToFolder(
+            [sourceA, sourceB],
+            destinationFolder: destinationFolder,
+            conflictPolicy: .keepBoth
+        )
+
+        XCTAssertEqual(plan.proposals.map(\.destination.lastPathComponent), [
+            "photo copy 2.png", "photo copy 3.png"
+        ])
+        XCTAssertTrue(plan.failures.isEmpty)
+    }
+
+    func testExecuteMovePlanDoesNotOverwriteConflictCreatedAfterPlanning() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sourceFolder = root.appendingPathComponent("source", isDirectory: true)
+        let destinationFolder = root.appendingPathComponent("destination", isDirectory: true)
+        try FileManager.default.createDirectory(at: sourceFolder, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: destinationFolder, withIntermediateDirectories: true)
+        let source = try writeFile(named: "same.jpg", contents: "source", in: sourceFolder)
+        let service = BatchFileOperationService()
+        let plan = service.planMoveToFolder(
+            [source],
+            destinationFolder: destinationFolder,
+            conflictPolicy: .skip
+        )
+        let destination = try writeFile(named: "same.jpg", contents: "destination", in: destinationFolder)
+
+        let result = service.executeMovePlan(plan)
+
+        XCTAssertTrue(result.succeeded.isEmpty)
+        XCTAssertEqual(result.failures, [
+            BatchFileFailure(url: source, reason: .destinationExists)
+        ])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
+        XCTAssertEqual(try String(contentsOf: destination, encoding: .utf8), "destination")
+    }
+
     func testExecuteRenamePlanHandlesIntraSelectionSwap() throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
