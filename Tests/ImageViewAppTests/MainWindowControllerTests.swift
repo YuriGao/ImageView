@@ -1045,6 +1045,80 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertTrue(controller.isCanvasVisibleForTesting)
     }
 
+    func testGridAvailabilityRefreshesAfterAsyncFolderLoadRejectsDisplayedViewer() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let oldFolder = root.appendingPathComponent("old", isDirectory: true)
+        let newFolder = root.appendingPathComponent("new", isDirectory: true)
+        try FileManager.default.createDirectory(at: oldFolder, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: newFolder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let oldURL = oldFolder.appendingPathComponent("old.png")
+        let newURL = newFolder.appendingPathComponent("new.png")
+        try writeTestPNG(to: oldURL)
+        try writeTestPNG(to: newURL)
+        let newItem = ImageItem(url: newURL, format: .png)
+        let folderViewModel = FolderBrowserViewModel(scanFolder: { _ in [newItem] })
+        let controller = MainWindowController(
+            settings: AppSettings(defaults: makeIsolatedDefaults()),
+            folderBrowserViewModel: folderViewModel
+        )
+        controller.open(url: oldURL)
+        for _ in 0..<100 where controller.displayedItemURLForTesting != oldURL.standardizedFileURL {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(controller.titleBarGridButtonForTesting.isEnabled)
+
+        await controller.openFolderForTesting(newFolder, scannerItems: [newItem])
+
+        XCTAssertTrue(controller.isFolderBrowserVisibleForTesting)
+        XCTAssertFalse(controller.titleBarGridButtonForTesting.isEnabled)
+    }
+
+    func testTitleBarDoubleClickOnlyZoomsBarBackground() throws {
+        let controller = MainWindowController(settings: AppSettings(defaults: makeIsolatedDefaults()))
+        let window = try XCTUnwrap(controller.window)
+        window.contentView?.layoutSubtreeIfNeeded()
+        let initialZoomState = window.isZoomed
+        let recognizer = controller.titleBarDoubleClickRecognizerForTesting
+
+        for protectedView in [
+            controller.titleBarBackButtonForTesting,
+            controller.titleBarForwardButtonForTesting,
+            controller.titleBarGridButtonForTesting,
+            controller.titleBarControlsStackForTesting
+        ] {
+            XCTAssertFalse(controller.shouldRecognizeTitleBarDoubleClickForTesting(hitView: protectedView))
+            let location = protectedView.convert(
+                NSPoint(x: protectedView.bounds.midX, y: protectedView.bounds.midY),
+                to: nil
+            )
+            let event = try XCTUnwrap(NSEvent.mouseEvent(
+                with: .leftMouseDown,
+                location: location,
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: window.windowNumber,
+                context: nil,
+                eventNumber: 0,
+                clickCount: 2,
+                pressure: 1
+            ))
+            XCTAssertFalse(controller.gestureRecognizer(
+                recognizer,
+                shouldAttemptToRecognizeWith: event
+            ))
+            controller.performTitleBarDoubleClickForTesting(hitView: protectedView)
+            XCTAssertEqual(window.isZoomed, initialZoomState)
+        }
+
+        XCTAssertTrue(controller.shouldRecognizeTitleBarDoubleClickForTesting(
+            hitView: controller.titleBarViewForTesting
+        ))
+        controller.performTitleBarDoubleClickForTesting(hitView: controller.titleBarViewForTesting)
+        XCTAssertNotEqual(window.isZoomed, initialZoomState)
+    }
+
     func testDirectImageOpenDoesNotInventBackHistory() throws {
         let fixture = try makeFolderNavigationFixture()
         defer { try? FileManager.default.removeItem(at: fixture.folder) }

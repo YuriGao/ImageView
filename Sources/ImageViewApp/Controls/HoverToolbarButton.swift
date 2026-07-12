@@ -4,10 +4,15 @@ import AppKit
 final class HoverToolbarButton: NSButton {
     static let controlSize = NSSize(width: 24, height: 24)
 
+    static func acceptsMouseClick(clickCount: Int) -> Bool {
+        clickCount == 1
+    }
+
     private var isHovered = false
     private var isPressed = false
     private var focusedForTesting: Bool?
     private var hoverTrackingArea: NSTrackingArea?
+    private(set) var testingAppearanceRefreshCount = 0
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -57,6 +62,11 @@ final class HoverToolbarButton: NSButton {
         updateAppearance()
     }
 
+    override func mouseDown(with event: NSEvent) {
+        guard Self.acceptsMouseClick(clickCount: event.clickCount) else { return }
+        super.mouseDown(with: event)
+    }
+
     override func highlight(_ flag: Bool) {
         super.highlight(flag)
         isPressed = flag && isEnabled
@@ -75,11 +85,16 @@ final class HoverToolbarButton: NSButton {
         return resignedFirstResponder
     }
 
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        testingAppearanceRefreshCount += 1
+        updateAppearance()
+    }
+
     override var focusRingMaskBounds: NSRect { bounds }
 
     override func drawFocusRingMask() {
         guard testingShowsFocus else { return }
-        NSFocusRingPlacement.only.set()
         NSBezierPath(roundedRect: bounds.insetBy(dx: 2, dy: 2), xRadius: 5, yRadius: 5).fill()
     }
 

@@ -4,7 +4,7 @@ import ImageViewCore
 import SwiftUI
 
 @MainActor
-final class MainWindowController: NSWindowController {
+final class MainWindowController: NSWindowController, NSGestureRecognizerDelegate {
     static let externalFileCheckInterval: TimeInterval = 2
     static let titleBarHeight: CGFloat = 32
     static let bottomBarHeight: CGFloat = 28
@@ -87,6 +87,11 @@ final class MainWindowController: NSWindowController {
         case folder(URL)
     }
 
+    private struct FolderRouteState {
+        let session: FolderSession?
+        let isLoading: Bool
+    }
+
     private let viewModel = ViewerViewModel()
     private let folderBrowserViewModel: FolderBrowserViewModel
     private let settings: AppSettings
@@ -98,6 +103,10 @@ final class MainWindowController: NSWindowController {
     private let titleBarForwardButton = HoverToolbarButton()
     private let titleBarGridButton = HoverToolbarButton()
     private let titleBarControlsStack = NSStackView()
+    private lazy var titleBarDoubleClickRecognizer = NSClickGestureRecognizer(
+        target: self,
+        action: #selector(toggleWindowZoom(_:))
+    )
     private let canvas = ImageCanvasView()
     private let folderBrowserView = FolderBrowserView()
     private let emptyStateView = EmptyStateView()
@@ -418,8 +427,8 @@ final class MainWindowController: NSWindowController {
             }
             .store(in: &cancellables)
 
-        folderBrowserViewModel.$session
-            .sink { [weak self] session in
+        Publishers.CombineLatest(folderBrowserViewModel.$session, folderBrowserViewModel.$isLoading)
+            .sink { [weak self] session, isLoading in
                 guard let self else { return }
                 let items = session?.visibleItems ?? []
                 if self.currentFolderBrowserItems != items {
@@ -427,6 +436,9 @@ final class MainWindowController: NSWindowController {
                     self.folderBrowserView.applyItems(items)
                 }
                 self.folderBrowserView.applySelection(Set(session?.selectedItemIDs ?? []))
+                self.updateTitleBarControlAvailability(
+                    folderState: FolderRouteState(session: session, isLoading: isLoading)
+                )
             }
             .store(in: &cancellables)
 
@@ -508,6 +520,7 @@ final class MainWindowController: NSWindowController {
                     self.hidePageControls(immediately: true)
                 }
                 self.updatePageStatus(navigationState: state)
+                self.updateTitleBarControlAvailability()
             }
             .store(in: &cancellables)
 
@@ -529,6 +542,15 @@ final class MainWindowController: NSWindowController {
     override func keyDown(with event: NSEvent) {
         guard !handleKeyDown(event) else { return }
         super.keyDown(with: event)
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: NSGestureRecognizer,
+        shouldAttemptToRecognizeWith event: NSEvent
+    ) -> Bool {
+        guard gestureRecognizer === titleBarDoubleClickRecognizer else { return true }
+        let location = titleBarView.convert(event.locationInWindow, from: nil)
+        return shouldRecognizeTitleBarDoubleClick(hitView: titleBarView.hitTest(location))
     }
 
     @objc func renameCurrentImage(_ sender: Any?) {
@@ -719,11 +741,15 @@ final class MainWindowController: NSWindowController {
         return displayedItemURL
     }
 
-    private func associatedViewerRoute() -> ContentRoute? {
+    private func associatedViewerRoute(folderState: FolderRouteState? = nil) -> ContentRoute? {
+        let folderState = folderState ?? FolderRouteState(
+            session: folderBrowserViewModel.session,
+            isLoading: folderBrowserViewModel.isLoading
+        )
         let matchingLoadedSession: FolderSession?
         if case let .folder(folderURL) = currentRoute,
-           !folderBrowserViewModel.isLoading,
-           let session = folderBrowserViewModel.session,
+           !folderState.isLoading,
+           let session = folderState.session,
            session.folderURL.standardizedFileURL == folderURL.standardizedFileURL {
             matchingLoadedSession = session
         } else {
@@ -1368,9 +1394,9 @@ final class MainWindowController: NSWindowController {
         [titleBarBackButton, titleBarForwardButton, titleBarGridButton].forEach(titleBarControlsStack.addArrangedSubview)
         titleBarView.addSubview(titleBarControlsStack)
         updateTitleBarControlAvailability()
-        let titleBarDoubleClick = NSClickGestureRecognizer(target: self, action: #selector(toggleWindowZoom(_:)))
-        titleBarDoubleClick.numberOfClicksRequired = 2
-        titleBarView.addGestureRecognizer(titleBarDoubleClick)
+        titleBarDoubleClickRecognizer.numberOfClicksRequired = 2
+        titleBarDoubleClickRecognizer.delegate = self
+        titleBarView.addGestureRecognizer(titleBarDoubleClickRecognizer)
 
         for label in [bottomDimensionLabel, bottomPageLabel, bottomZoomLabel] {
             label.font = .systemFont(ofSize: 10, weight: .medium)
@@ -1412,10 +1438,25 @@ final class MainWindowController: NSWindowController {
         button.action = action
     }
 
-    private func updateTitleBarControlAvailability() {
+    private func updateTitleBarControlAvailability(folderState: FolderRouteState? = nil) {
         titleBarBackButton.isEnabled = backRoute != nil && backRoute != currentRoute
         titleBarForwardButton.isEnabled = forwardRoute != nil && forwardRoute != currentRoute
-        titleBarGridButton.isEnabled = currentViewerURL != nil || associatedViewerRoute() != nil
+        titleBarGridButton.isEnabled = canToggleTitleBarGrid(folderState: folderState)
+    }
+
+    private func canToggleTitleBarGrid(folderState: FolderRouteState?) -> Bool {
+        switch currentRoute {
+        case .viewer:
+            true
+        case .folder:
+            associatedViewerRoute(folderState: folderState) != nil
+        case nil:
+            false
+        }
+    }
+
+    private func shouldRecognizeTitleBarDoubleClick(hitView: NSView?) -> Bool {
+        hitView === titleBarView
     }
 
     static func canvasBackgroundColor() -> NSColor {
@@ -1523,6 +1564,18 @@ final class MainWindowController: NSWindowController {
     var titleBarBackButtonForTesting: NSButton { titleBarBackButton }
     var titleBarForwardButtonForTesting: NSButton { titleBarForwardButton }
     var titleBarGridButtonForTesting: NSButton { titleBarGridButton }
+    var titleBarControlsStackForTesting: NSView { titleBarControlsStack }
+    var titleBarViewForTesting: NSView { titleBarView }
+    var titleBarDoubleClickRecognizerForTesting: NSClickGestureRecognizer { titleBarDoubleClickRecognizer }
+
+    func shouldRecognizeTitleBarDoubleClickForTesting(hitView: NSView) -> Bool {
+        shouldRecognizeTitleBarDoubleClick(hitView: hitView)
+    }
+
+    func performTitleBarDoubleClickForTesting(hitView: NSView) {
+        guard shouldRecognizeTitleBarDoubleClick(hitView: hitView) else { return }
+        toggleWindowZoom(nil)
+    }
 
     func requestOpenFromEmptyStateForTesting() {
         emptyStateView.performOpenForTesting()
