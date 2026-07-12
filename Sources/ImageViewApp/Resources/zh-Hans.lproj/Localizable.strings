@@ -110,3 +110,13 @@
 "settings.format.heif" = "HEIF";
 "settings.format.avif" = "AVIF";
 "settings.format.svg" = "SVG";
+"inspector.title" = "信息";
+"inspector.format" = "格式";
+"inspector.pixels" = "像素";
+"inspector.size" = "大小";
+"inspector.modified" = "修改时间";
+"inspector.captured" = "拍摄时间";
+"inspector.camera" = "相机";
+"inspector.file" = "文件";
+"inspector.noImage" = "未打开图片";
+"inspector.unknown" = "未知";

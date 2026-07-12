@@ -6,23 +6,23 @@ struct InspectorView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Info")
+            Text(AppStrings.text("inspector.title"))
                 .font(.system(size: 13, weight: .semibold))
 
             if let metadata {
-                row("Format", metadata.format.displayName)
-                row("Pixels", "\(metadata.pixelWidth) x \(metadata.pixelHeight)")
-                row("Size", Self.fileSizeText(metadata.fileSize))
-                row("Modified", Self.dateText(metadata.modifiedAt))
+                row(AppStrings.text("inspector.format"), metadata.format.displayName)
+                row(AppStrings.text("inspector.pixels"), "\(metadata.pixelWidth) x \(metadata.pixelHeight)")
+                row(AppStrings.text("inspector.size"), Self.fileSizeText(metadata.fileSize))
+                row(AppStrings.text("inspector.modified"), Self.dateText(metadata.modifiedAt))
                 if let capturedAt = metadata.capturedAt {
-                    row("Captured", Self.dateText(capturedAt))
+                    row(AppStrings.text("inspector.captured"), Self.dateText(capturedAt))
                 }
                 if let camera = Self.cameraText(metadata) {
-                    row("Camera", camera)
+                    row(AppStrings.text("inspector.camera"), camera)
                 }
-                row("File", metadata.url.lastPathComponent)
+                row(AppStrings.text("inspector.file"), metadata.url.lastPathComponent)
             } else {
-                Text("No image")
+                Text(AppStrings.text("inspector.noImage"))
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
@@ -46,12 +46,12 @@ struct InspectorView: View {
     }
 
     static func fileSizeText(_ bytes: Int64?) -> String {
-        guard let bytes else { return "Unknown" }
+        guard let bytes else { return AppStrings.text("inspector.unknown") }
         return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 
     static func dateText(_ date: Date?) -> String {
-        guard let date else { return "Unknown" }
+        guard let date else { return AppStrings.text("inspector.unknown") }
         return date.formatted(date: .abbreviated, time: .shortened)
     }
 

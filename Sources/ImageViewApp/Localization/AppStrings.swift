@@ -85,6 +85,19 @@ enum AppStrings {
         "folderBrowser.movePanel.prompt"
     ]
 
+    static let inspectorKeys = [
+        "inspector.title",
+        "inspector.format",
+        "inspector.pixels",
+        "inspector.size",
+        "inspector.modified",
+        "inspector.captured",
+        "inspector.camera",
+        "inspector.file",
+        "inspector.noImage",
+        "inspector.unknown"
+    ]
+
     static func text(_ key: String, preferredLanguages: [String] = Locale.preferredLanguages) -> String {
         let localization = preferredLanguages.contains { $0.lowercased().hasPrefix("zh") } ? "zh-hans" : "en"
         let resourceBundle = packagedResourceBundle ?? Bundle.module

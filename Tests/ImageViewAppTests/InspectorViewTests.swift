@@ -4,8 +4,9 @@ import XCTest
 @MainActor
 final class InspectorViewTests: XCTestCase {
     func testUnknownMetadataFormattingFallbacksAreExplicit() {
-        XCTAssertEqual(InspectorView.fileSizeText(nil), "Unknown")
-        XCTAssertEqual(InspectorView.dateText(nil), "Unknown")
+        let expected = AppStrings.text("inspector.unknown")
+        XCTAssertEqual(InspectorView.fileSizeText(nil), expected)
+        XCTAssertEqual(InspectorView.dateText(nil), expected)
     }
 
     func testFileSizeFormattingUsesReadableUnits() {

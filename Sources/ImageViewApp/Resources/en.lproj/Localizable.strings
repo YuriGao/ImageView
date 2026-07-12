@@ -110,3 +110,13 @@
 "settings.format.heif" = "HEIF";
 "settings.format.avif" = "AVIF";
 "settings.format.svg" = "SVG";
+"inspector.title" = "Info";
+"inspector.format" = "Format";
+"inspector.pixels" = "Pixels";
+"inspector.size" = "Size";
+"inspector.modified" = "Modified";
+"inspector.captured" = "Captured";
+"inspector.camera" = "Camera";
+"inspector.file" = "File";
+"inspector.noImage" = "No image";
+"inspector.unknown" = "Unknown";

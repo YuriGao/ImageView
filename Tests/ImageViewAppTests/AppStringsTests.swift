@@ -69,6 +69,19 @@ final class AppStringsTests: XCTestCase {
         }
     }
 
+    func testEveryInspectorLabelHasChineseAndEnglishTranslations() {
+        for key in AppStrings.inspectorKeys {
+            XCTAssertNotEqual(AppStrings.text(key, preferredLanguages: ["en"]), key)
+            XCTAssertNotEqual(AppStrings.text(key, preferredLanguages: ["zh-Hans"]), key)
+        }
+    }
+
+    func testInspectorLabelsLocalizeInSimplifiedChinese() {
+        XCTAssertEqual(AppStrings.text("inspector.title", preferredLanguages: ["zh-Hans"]), "信息")
+        XCTAssertEqual(AppStrings.text("inspector.format", preferredLanguages: ["zh-Hans"]), "格式")
+        XCTAssertEqual(AppStrings.text("inspector.modified", preferredLanguages: ["zh-Hans"]), "修改时间")
+    }
+
     func testFolderBrowserWorkflowLabelsLocalizeInEnglishAndSimplifiedChinese() {
         XCTAssertEqual(AppStrings.text("folderBrowser.searchPlaceholder", preferredLanguages: ["en"]), "Search images")
         XCTAssertEqual(AppStrings.text("folderBrowser.searchPlaceholder", preferredLanguages: ["zh-Hans"]), "搜索图片")
