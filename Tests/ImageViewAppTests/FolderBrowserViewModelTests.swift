@@ -96,6 +96,81 @@ final class FolderBrowserViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.isLoading)
     }
 
+    func testCancelOpenFolderRequestIgnoresLateScannerSuccess() async {
+        let baselineFolder = URL(fileURLWithPath: "/tmp/baseline", isDirectory: true)
+        let cancelledFolder = URL(fileURLWithPath: "/tmp/cancelled", isDirectory: true)
+        let baselineItem = ImageItem(url: baselineFolder.appendingPathComponent("baseline.png"), format: .png)
+        let lateItem = ImageItem(url: cancelledFolder.appendingPathComponent("late.png"), format: .png)
+        let scanner = CancelledOpenFolderScanner(
+            baselineFolder: baselineFolder,
+            baselineItems: [baselineItem]
+        )
+        let viewModel = FolderBrowserViewModel(scanFolder: { folder in
+            try await scanner.scan(folder)
+        })
+        await viewModel.openFolder(baselineFolder)
+        let task = Task { await viewModel.openFolder(cancelledFolder) }
+        await scanner.waitUntilPendingScanStarts()
+
+        viewModel.cancelOpenFolderRequest()
+        let cancelledSession = viewModel.session
+        let cancelledPresentation = viewModel.presentation
+        await scanner.finish(with: .success([lateItem]))
+        await task.value
+
+        XCTAssertEqual(viewModel.session, cancelledSession)
+        XCTAssertEqual(viewModel.presentation, cancelledPresentation)
+        XCTAssertEqual(viewModel.session?.folderURL, baselineFolder)
+        XCTAssertFalse(viewModel.isLoading)
+        XCTAssertNil(viewModel.loadErrorMessage)
+    }
+
+    func testCancelOpenFolderRequestIgnoresLateScannerFailure() async {
+        let baselineFolder = URL(fileURLWithPath: "/tmp/baseline", isDirectory: true)
+        let cancelledFolder = URL(fileURLWithPath: "/tmp/cancelled", isDirectory: true)
+        let baselineItem = ImageItem(url: baselineFolder.appendingPathComponent("baseline.png"), format: .png)
+        let scanner = CancelledOpenFolderScanner(
+            baselineFolder: baselineFolder,
+            baselineItems: [baselineItem]
+        )
+        let viewModel = FolderBrowserViewModel(scanFolder: { folder in
+            try await scanner.scan(folder)
+        })
+        await viewModel.openFolder(baselineFolder)
+        let task = Task { await viewModel.openFolder(cancelledFolder) }
+        await scanner.waitUntilPendingScanStarts()
+
+        viewModel.cancelOpenFolderRequest()
+        let cancelledSession = viewModel.session
+        let cancelledPresentation = viewModel.presentation
+        await scanner.finish(with: .failure(TestFolderError.denied))
+        await task.value
+
+        XCTAssertEqual(viewModel.session, cancelledSession)
+        XCTAssertEqual(viewModel.presentation, cancelledPresentation)
+        XCTAssertEqual(viewModel.session?.folderURL, baselineFolder)
+        XCTAssertFalse(viewModel.isLoading)
+        XCTAssertNil(viewModel.loadErrorMessage)
+    }
+
+    func testCancellationErrorDoesNotPublishLoadFailure() async {
+        let baselineFolder = URL(fileURLWithPath: "/tmp/baseline", isDirectory: true)
+        let cancelledFolder = URL(fileURLWithPath: "/tmp/cancelled", isDirectory: true)
+        let baselineItem = ImageItem(url: baselineFolder.appendingPathComponent("baseline.png"), format: .png)
+        let viewModel = FolderBrowserViewModel(scanFolder: { folder in
+            if folder == cancelledFolder { throw CancellationError() }
+            return [baselineItem]
+        })
+        await viewModel.openFolder(baselineFolder)
+
+        await viewModel.openFolder(cancelledFolder)
+
+        XCTAssertEqual(viewModel.session?.folderURL, baselineFolder)
+        XCTAssertEqual(viewModel.presentation, .content)
+        XCTAssertFalse(viewModel.isLoading)
+        XCTAssertNil(viewModel.loadErrorMessage)
+    }
+
     func testOpenFolderLoadsSessionWithNoSelection() async {
         let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
         let items = [
@@ -422,5 +497,37 @@ private actor ControlledFolderScanner {
     func finishSlowScan() {
         slowContinuation?.resume(returning: slowItems)
         slowContinuation = nil
+    }
+}
+
+private actor CancelledOpenFolderScanner {
+    private let baselineFolder: URL
+    private let baselineItems: [ImageItem]
+    private var pendingContinuation: CheckedContinuation<[ImageItem], Error>?
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+    private var pendingScanStarted = false
+
+    init(baselineFolder: URL, baselineItems: [ImageItem]) {
+        self.baselineFolder = baselineFolder
+        self.baselineItems = baselineItems
+    }
+
+    func scan(_ folder: URL) async throws -> [ImageItem] {
+        guard folder != baselineFolder else { return baselineItems }
+        pendingScanStarted = true
+        let pending = startWaiters
+        startWaiters.removeAll()
+        pending.forEach { $0.resume() }
+        return try await withCheckedThrowingContinuation { pendingContinuation = $0 }
+    }
+
+    func waitUntilPendingScanStarts() async {
+        guard !pendingScanStarted else { return }
+        await withCheckedContinuation { startWaiters.append($0) }
+    }
+
+    func finish(with result: Result<[ImageItem], Error>) {
+        pendingContinuation?.resume(with: result)
+        pendingContinuation = nil
     }
 }

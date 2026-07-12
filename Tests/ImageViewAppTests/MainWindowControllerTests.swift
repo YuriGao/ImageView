@@ -1537,6 +1537,101 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertEqual(snapshot.cancellations, 1)
     }
 
+    func testWindowCloseInvalidatesRetryWhenScannerIgnoresTaskCancellation() async {
+        let folder = URL(fileURLWithPath: "/tmp/close-stale-retry", isDirectory: true)
+        let lateItem = ImageItem(url: folder.appendingPathComponent("late.png"), format: .png)
+        let scanner = MainWindowIgnoringCancellationRetryScanner(failingFolder: folder)
+        let viewModel = FolderBrowserViewModel(scanFolder: { folder in
+            try await scanner.scan(folder)
+        })
+        let controller = MainWindowController(
+            settings: AppSettings(defaults: makeIsolatedDefaults()),
+            folderBrowserViewModel: viewModel
+        )
+        await controller.openFolderForTesting(folder, scannerItems: [])
+        controller.requestFolderRetryForTesting()
+        await scanner.waitForRetryToStart()
+
+        controller.windowWillClose(Notification(name: NSWindow.willCloseNotification, object: controller.window))
+        let closedSession = viewModel.session
+        let closedPresentation = viewModel.presentation
+        XCTAssertFalse(viewModel.isLoading)
+        XCTAssertNil(viewModel.loadErrorMessage)
+        await scanner.finishRetry(with: .success([lateItem]))
+        await scanner.waitForRetryToReturn()
+
+        XCTAssertEqual(viewModel.session, closedSession)
+        XCTAssertEqual(viewModel.presentation, closedPresentation)
+        XCTAssertFalse(viewModel.isLoading)
+        XCTAssertNil(viewModel.loadErrorMessage)
+    }
+
+    func testControllerDeinitInvalidatesRetryWhenScannerIgnoresTaskCancellation() async {
+        let folder = URL(fileURLWithPath: "/tmp/deinit-stale-retry", isDirectory: true)
+        let lateItem = ImageItem(url: folder.appendingPathComponent("late.png"), format: .png)
+        let scanner = MainWindowIgnoringCancellationRetryScanner(failingFolder: folder)
+        let viewModel = FolderBrowserViewModel(scanFolder: { folder in
+            try await scanner.scan(folder)
+        })
+        var controller: MainWindowController? = MainWindowController(
+            settings: AppSettings(defaults: makeIsolatedDefaults()),
+            folderBrowserViewModel: viewModel
+        )
+        await controller?.openFolderForTesting(folder, scannerItems: [])
+        controller?.requestFolderRetryForTesting()
+        await scanner.waitForRetryToStart()
+        weak let weakController = controller
+
+        controller = nil
+        XCTAssertNil(weakController)
+        for _ in 0..<100 where viewModel.isLoading {
+            await Task.yield()
+        }
+        XCTAssertFalse(viewModel.isLoading)
+        XCTAssertNil(viewModel.loadErrorMessage)
+        let deinitSession = viewModel.session
+        let deinitPresentation = viewModel.presentation
+        await scanner.finishRetry(with: .success([lateItem]))
+        await scanner.waitForRetryToReturn()
+
+        XCTAssertEqual(viewModel.session, deinitSession)
+        XCTAssertEqual(viewModel.presentation, deinitPresentation)
+    }
+
+    func testSwitchingFoldersRejectsLateRetryPublishFromCancellationIgnoringScanner() async {
+        let failingFolder = URL(fileURLWithPath: "/tmp/switch-stale-retry", isDirectory: true)
+        let replacementFolder = URL(fileURLWithPath: "/tmp/switch-replacement", isDirectory: true)
+        let lateItem = ImageItem(url: failingFolder.appendingPathComponent("late.png"), format: .png)
+        let replacementItem = ImageItem(url: replacementFolder.appendingPathComponent("replacement.png"), format: .png)
+        let scanner = MainWindowIgnoringCancellationRetryScanner(
+            failingFolder: failingFolder,
+            replacementFolder: replacementFolder,
+            replacementItems: [replacementItem]
+        )
+        let viewModel = FolderBrowserViewModel(scanFolder: { folder in
+            try await scanner.scan(folder)
+        })
+        let controller = MainWindowController(
+            settings: AppSettings(defaults: makeIsolatedDefaults()),
+            folderBrowserViewModel: viewModel
+        )
+        await controller.openFolderForTesting(failingFolder, scannerItems: [])
+        controller.requestFolderRetryForTesting()
+        await scanner.waitForRetryToStart()
+
+        controller.openFolder(url: replacementFolder)
+        await scanner.waitForReplacementScan()
+        XCTAssertEqual(viewModel.session?.folderURL, replacementFolder)
+        XCTAssertEqual(viewModel.presentation, .content)
+        await scanner.finishRetry(with: .success([lateItem]))
+        await scanner.waitForRetryToReturn()
+
+        XCTAssertEqual(viewModel.session?.folderURL, replacementFolder)
+        XCTAssertEqual(viewModel.visibleItems, [replacementItem])
+        XCTAssertEqual(viewModel.presentation, .content)
+        XCTAssertNil(viewModel.loadErrorMessage)
+    }
+
     private func findSearchField(in view: NSView) -> NSSearchField? {
         if let searchField = view as? NSSearchField { return searchField }
         return view.subviews.lazy.compactMap { self.findSearchField(in: $0) }.first
@@ -1695,6 +1790,75 @@ private actor MainWindowRetryScanner {
 
     func counts() -> (scans: Int, cancellations: Int) {
         (scanCount, cancellationCount)
+    }
+}
+
+private actor MainWindowIgnoringCancellationRetryScanner {
+    private let failingFolder: URL
+    private let replacementFolder: URL?
+    private let replacementItems: [ImageItem]
+    private var failingScanCount = 0
+    private var retryContinuation: CheckedContinuation<Result<[ImageItem], Error>, Never>?
+    private var retryStarted = false
+    private var retryStartWaiters: [CheckedContinuation<Void, Never>] = []
+    private var retryReturned = false
+    private var retryReturnWaiters: [CheckedContinuation<Void, Never>] = []
+    private var replacementScanned = false
+    private var replacementWaiters: [CheckedContinuation<Void, Never>] = []
+
+    init(
+        failingFolder: URL,
+        replacementFolder: URL? = nil,
+        replacementItems: [ImageItem] = []
+    ) {
+        self.failingFolder = failingFolder.standardizedFileURL
+        self.replacementFolder = replacementFolder?.standardizedFileURL
+        self.replacementItems = replacementItems
+    }
+
+    func scan(_ folder: URL) async throws -> [ImageItem] {
+        if folder.standardizedFileURL == replacementFolder {
+            replacementScanned = true
+            let pending = replacementWaiters
+            replacementWaiters.removeAll()
+            pending.forEach { $0.resume() }
+            return replacementItems
+        }
+        guard folder.standardizedFileURL == failingFolder else { return [] }
+        failingScanCount += 1
+        if failingScanCount == 1 {
+            throw NSError(domain: "MainWindowIgnoringCancellationRetryScanner", code: 1)
+        }
+        retryStarted = true
+        let startPending = retryStartWaiters
+        retryStartWaiters.removeAll()
+        startPending.forEach { $0.resume() }
+        let result = await withCheckedContinuation { retryContinuation = $0 }
+        retryReturned = true
+        let returnPending = retryReturnWaiters
+        retryReturnWaiters.removeAll()
+        returnPending.forEach { $0.resume() }
+        return try result.get()
+    }
+
+    func waitForRetryToStart() async {
+        guard !retryStarted else { return }
+        await withCheckedContinuation { retryStartWaiters.append($0) }
+    }
+
+    func finishRetry(with result: Result<[ImageItem], Error>) {
+        retryContinuation?.resume(returning: result)
+        retryContinuation = nil
+    }
+
+    func waitForRetryToReturn() async {
+        guard !retryReturned else { return }
+        await withCheckedContinuation { retryReturnWaiters.append($0) }
+    }
+
+    func waitForReplacementScan() async {
+        guard !replacementScanned else { return }
+        await withCheckedContinuation { replacementWaiters.append($0) }
     }
 }
 

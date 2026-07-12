@@ -66,7 +66,7 @@ final class FolderBrowserViewModel: ObservableObject {
     private let moveToFolderOperation: MoveToFolder
     private let planBatchRenameOperation: PlanBatchRename
     private let executeRenamePlanOperation: ExecuteRenamePlan
-    private var openFolderRequestID: UInt64 = 0
+    nonisolated private let openFolderRequestTracker = OpenFolderRequestTracker()
 
     init(
         scanFolder: @escaping ScanFolder = {
@@ -92,8 +92,7 @@ final class FolderBrowserViewModel: ObservableObject {
 
     func openFolder(_ folderURL: URL) async {
         requestedFolderURL = folderURL
-        openFolderRequestID += 1
-        let requestID = openFolderRequestID
+        let requestID = openFolderRequestTracker.next()
         isLoading = true
         loadErrorMessage = nil
         operationMessage = nil
@@ -101,13 +100,20 @@ final class FolderBrowserViewModel: ObservableObject {
 
         do {
             let items = try await scanFolder(folderURL)
-            guard requestID == openFolderRequestID else {
+            guard openFolderRequestTracker.isCurrent(requestID) else {
                 return
             }
             session = FolderSession(folderURL: folderURL, items: items)
             loadErrorMessage = nil
+        } catch is CancellationError {
+            guard openFolderRequestTracker.isCurrent(requestID) else {
+                return
+            }
+            isLoading = false
+            loadErrorMessage = nil
+            return
         } catch {
-            guard requestID == openFolderRequestID else {
+            guard openFolderRequestTracker.isCurrent(requestID) else {
                 return
             }
             session = FolderSession(folderURL: folderURL, items: [])
@@ -118,6 +124,17 @@ final class FolderBrowserViewModel: ObservableObject {
         }
 
         isLoading = false
+    }
+
+    nonisolated func invalidateOpenFolderRequest() {
+        openFolderRequestTracker.invalidate()
+    }
+
+    func cancelOpenFolderRequest() {
+        invalidateOpenFolderRequest()
+        requestedFolderURL = nil
+        isLoading = false
+        loadErrorMessage = nil
     }
 
     func retryOpenFolder() async {
@@ -291,6 +308,30 @@ final class FolderBrowserViewModel: ObservableObject {
         }
 
         operationMessage = message(for: result)
+    }
+}
+
+private final class OpenFolderRequestTracker: @unchecked Sendable {
+    private let lock = NSLock()
+    private var generation: UInt64 = 0
+
+    func next() -> UInt64 {
+        lock.lock()
+        defer { lock.unlock() }
+        generation &+= 1
+        return generation
+    }
+
+    func invalidate() {
+        lock.lock()
+        generation &+= 1
+        lock.unlock()
+    }
+
+    func isCurrent(_ requestID: UInt64) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return generation == requestID
     }
 }
 

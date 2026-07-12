@@ -183,6 +183,11 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
 
     deinit {
         folderRetryTask?.cancel()
+        let folderBrowserViewModel = folderBrowserViewModel
+        folderBrowserViewModel.invalidateOpenFolderRequest()
+        Task { @MainActor in
+            folderBrowserViewModel.cancelOpenFolderRequest()
+        }
     }
 
     func open(url: URL) {
@@ -203,7 +208,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
     }
 
     func openFolder(url: URL) {
-        cancelFolderRetry()
+        invalidateFolderRetry()
         hasAssignedOpenRequest = true
         currentRoute = .folder(url.standardizedFileURL)
         backRoute = nil
@@ -754,7 +759,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
 
         currentRoute = .folder(folderURL)
         enterFolderBrowserMode()
-        cancelFolderRetry()
+        invalidateFolderRetry()
         Task { [weak self] in
             guard let self else { return }
             await self.folderBrowserViewModel.openFolder(folderURL)
@@ -1504,10 +1509,20 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         }
     }
 
-    private func cancelFolderRetry() {
+    private func stopFolderRetryTask() {
         folderRetryGeneration &+= 1
         folderRetryTask?.cancel()
         folderRetryTask = nil
+    }
+
+    private func invalidateFolderRetry() {
+        stopFolderRetryTask()
+        folderBrowserViewModel.invalidateOpenFolderRequest()
+    }
+
+    private func cancelFolderRetry() {
+        stopFolderRetryTask()
+        folderBrowserViewModel.cancelOpenFolderRequest()
     }
 
     private static func folderBrowserPresentation(
@@ -1659,7 +1674,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
     }
 
     func openFolderForTesting(_ folderURL: URL, items: [ImageItem]) {
-        cancelFolderRetry()
+        invalidateFolderRetry()
         hasAssignedOpenRequest = true
         currentRoute = .folder(folderURL.standardizedFileURL)
         backRoute = nil
@@ -1670,7 +1685,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
     }
 
     func openFolderForTesting(_ folderURL: URL, scannerItems: [ImageItem]) async {
-        cancelFolderRetry()
+        invalidateFolderRetry()
         hasAssignedOpenRequest = true
         currentRoute = .folder(folderURL.standardizedFileURL)
         backRoute = nil
