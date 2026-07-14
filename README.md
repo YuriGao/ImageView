@@ -48,7 +48,7 @@ scripts/install-app.sh
 
 ## Support
 
-Slidr Free is open source and free to use. If it helps you, you can support the project via Alipay:
+ImageView is open source and free to use. If it helps you, you can support the project via Alipay:
 
 <img src="docs/assets/alipay-qr.jpg" alt="Alipay donation QR code" width="220">
 
