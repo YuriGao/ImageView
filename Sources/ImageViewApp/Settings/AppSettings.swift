@@ -50,9 +50,9 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(hasShownUsageHint, forKey: Self.hasShownUsageHintKey) }
     }
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard, showsFilmstripOverride: Bool? = nil) {
         self.defaults = defaults
-        showsFilmstrip = defaults.bool(forKey: Self.showsFilmstripKey)
+        showsFilmstrip = showsFilmstripOverride ?? defaults.bool(forKey: Self.showsFilmstripKey)
         showsInspector = defaults.bool(forKey: Self.showsInspectorKey)
         confirmsDelete = defaults.object(forKey: Self.confirmsDeleteKey) as? Bool ?? true
         animatesNavigationTransitions = defaults.object(forKey: Self.animatesNavigationTransitionsKey) as? Bool ?? true

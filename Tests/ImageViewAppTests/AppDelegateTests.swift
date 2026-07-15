@@ -157,6 +157,21 @@ final class AppDelegateTests: XCTestCase {
         XCTAssertEqual(harness.showCount(for: delegate.imageWindowControllersForTesting[1]), 1)
     }
 
+    func testOpeningDirectoryURLUsesFolderRouteForMemoryBenchmark() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let harness = WindowHarness()
+        let delegate = harness.makeDelegate()
+        delegate.finishLaunchingForTesting()
+
+        delegate.openURLs([folder])
+
+        XCTAssertEqual(harness.folderOpenRequests, [folder])
+        XCTAssertTrue(harness.openRequests.isEmpty)
+        XCTAssertTrue(delegate.imageWindowControllersForTesting[0].isFolderBrowserVisibleForTesting)
+    }
+
     func testPrelaunchURLsRetainFullOrderAndDuplicates() {
         let harness = WindowHarness()
         let delegate = harness.makeDelegate()

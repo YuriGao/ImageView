@@ -36,7 +36,13 @@ public struct NavigationState: Equatable, Sendable {
 
     public mutating func replaceCurrentURL(_ newURL: URL, format: SupportedImageFormat) {
         guard let currentIndex, items.indices.contains(currentIndex) else { return }
-        items[currentIndex] = ImageItem(url: newURL, format: format)
+        let previous = items[currentIndex]
+        items[currentIndex] = ImageItem(
+            url: newURL,
+            format: format,
+            contentModificationDate: previous.contentModificationDate,
+            fileSize: previous.fileSize
+        )
         items.sort { NaturalSort.compare($0.url.lastPathComponent, $1.url.lastPathComponent) }
         self.currentIndex = items.firstIndex { $0.url == newURL } ?? items.firstIndex { $0.url.standardizedFileURL == newURL.standardizedFileURL }
     }
@@ -50,7 +56,9 @@ public struct NavigationState: Equatable, Sendable {
             guard let destination = migrations[standardizedURL] else { return item }
             return ImageItem(
                 url: destination,
-                format: SupportedImageFormat(fileExtension: destination.pathExtension) ?? item.format
+                format: SupportedImageFormat(fileExtension: destination.pathExtension) ?? item.format,
+                contentModificationDate: item.contentModificationDate,
+                fileSize: item.fileSize
             )
         }
         items.sort { NaturalSort.compare($0.url.lastPathComponent, $1.url.lastPathComponent) }

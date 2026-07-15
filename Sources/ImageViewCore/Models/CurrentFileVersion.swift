@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 
-public struct CurrentFileVersion: Equatable, Sendable {
+public struct CurrentFileVersion: Equatable, Hashable, Sendable {
     public let device: UInt64
     public let inode: UInt64
     public let fileSize: Int64

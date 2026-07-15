@@ -3,14 +3,17 @@ import Foundation
 public struct FolderSession: Equatable, Sendable {
     public var folderURL: URL
     public var items: [ImageItem] {
-        didSet { trimSelectionToVisibleItems() }
+        didSet { rebuildVisibleItems() }
     }
     public var filter: FolderFilter {
-        didSet { trimSelectionToVisibleItems() }
+        didSet { rebuildVisibleItems() }
     }
-    public var sortMode: FolderSortMode
+    public var sortMode: FolderSortMode {
+        didSet { rebuildVisibleItems() }
+    }
     public var selectedItemIDs: [ImageItem.ID]
     public var lastOpenedItemID: ImageItem.ID?
+    public private(set) var visibleItems: [ImageItem]
 
     public init(
         folderURL: URL,
@@ -26,13 +29,8 @@ public struct FolderSession: Equatable, Sendable {
         self.sortMode = sortMode
         self.selectedItemIDs = selectedItemIDs
         self.lastOpenedItemID = lastOpenedItemID
-        trimSelectionToVisibleItems()
-    }
-
-    public var visibleItems: [ImageItem] {
-        items
-            .filter(matchesFilter)
-            .sorted(by: sortMode.areInIncreasingOrder)
+        self.visibleItems = []
+        rebuildVisibleItems()
     }
 
     public var selectedItems: [ImageItem] {
@@ -50,7 +48,6 @@ public struct FolderSession: Equatable, Sendable {
         if let lastOpenedItemID, ids.contains(lastOpenedItemID) {
             self.lastOpenedItemID = nil
         }
-        trimSelectionToVisibleItems()
     }
 
     public mutating func replaceItems(_ newItems: [ImageItem]) {
@@ -58,7 +55,6 @@ public struct FolderSession: Equatable, Sendable {
         if let lastOpenedItemID, !items.contains(where: { $0.id == lastOpenedItemID }) {
             self.lastOpenedItemID = nil
         }
-        trimSelectionToVisibleItems()
     }
 
     private func matchesFilter(_ item: ImageItem) -> Bool {
@@ -78,7 +74,10 @@ public struct FolderSession: Equatable, Sendable {
         ) != nil
     }
 
-    private mutating func trimSelectionToVisibleItems() {
+    private mutating func rebuildVisibleItems() {
+        visibleItems = items
+            .filter(matchesFilter)
+            .sorted(by: sortMode.areInIncreasingOrder)
         let visibleIDs = Set(visibleItems.map(\.id))
         selectedItemIDs = selectedItemIDs.filter { visibleIDs.contains($0) }
     }

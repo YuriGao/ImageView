@@ -20,14 +20,19 @@ public final class DirectoryScanner: @unchecked Sendable {
         try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 do {
+                    let resourceKeys: Set<URLResourceKey> = [
+                        .isRegularFileKey,
+                        .contentModificationDateKey,
+                        .fileSizeKey
+                    ]
                     let urls = try self.fileManager.contentsOfDirectory(
                         at: directory,
-                        includingPropertiesForKeys: [.isRegularFileKey],
+                        includingPropertiesForKeys: Array(resourceKeys),
                         options: [.skipsHiddenFiles]
                     )
 
                     let items = urls.compactMap { url -> ImageItem? in
-                        guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey]),
+                        guard let values = try? url.resourceValues(forKeys: resourceKeys),
                               values.isRegularFile == true,
                               let format = SupportedImageFormat(fileExtension: url.pathExtension) else {
                             return nil
@@ -38,7 +43,12 @@ public final class DirectoryScanner: @unchecked Sendable {
                         } else {
                             url
                         }
-                        return ImageItem(url: itemURL, format: format)
+                        return ImageItem(
+                            url: itemURL,
+                            format: format,
+                            contentModificationDate: values.contentModificationDate ?? .distantPast,
+                            fileSize: Int64(values.fileSize ?? 0)
+                        )
                     }
                     .sorted { NaturalSort.compare($0.url.lastPathComponent, $1.url.lastPathComponent) }
 

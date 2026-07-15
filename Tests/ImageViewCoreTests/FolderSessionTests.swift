@@ -74,4 +74,26 @@ final class FolderSessionTests: XCTestCase {
         XCTAssertNil(removedSession.lastOpenedItemID)
         XCTAssertNil(replacedSession.lastOpenedItemID)
     }
+
+    func testDateAndSizeSortUseScannedMetadata() {
+        let folder = URL(fileURLWithPath: "/path/that/does/not/exist", isDirectory: true)
+        let olderLarge = ImageItem(
+            url: folder.appendingPathComponent("older-large.png"),
+            format: .png,
+            contentModificationDate: Date(timeIntervalSince1970: 10),
+            fileSize: 500
+        )
+        let newerSmall = ImageItem(
+            url: folder.appendingPathComponent("newer-small.png"),
+            format: .png,
+            contentModificationDate: Date(timeIntervalSince1970: 20),
+            fileSize: 100
+        )
+
+        let dateSession = FolderSession(folderURL: folder, items: [olderLarge, newerSmall], sortMode: .modifiedDateDescending)
+        let sizeSession = FolderSession(folderURL: folder, items: [olderLarge, newerSmall], sortMode: .fileSizeDescending)
+
+        XCTAssertEqual(dateSession.visibleItems.map(\.id), [newerSmall.id, olderLarge.id])
+        XCTAssertEqual(sizeSession.visibleItems.map(\.id), [olderLarge.id, newerSmall.id])
+    }
 }
