@@ -48,6 +48,22 @@ final class DirectoryScannerTests: XCTestCase {
         XCTAssertEqual(items.map(\.url.lastPathComponent), ["image-2.png", "image-10.jpg"])
     }
 
+    func testScanCapturesSortMetadataOnce() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("metadata.png")
+        try Data(repeating: 7, count: 321).write(to: url)
+        let modificationDate = Date(timeIntervalSince1970: 1_700_000_000)
+        try FileManager.default.setAttributes([.modificationDate: modificationDate], ofItemAtPath: url.path)
+
+        let items = try await DirectoryScanner().scan(folder: root)
+        let item = try XCTUnwrap(items.first)
+
+        XCTAssertEqual(item.fileSize, 321)
+        XCTAssertEqual(item.contentModificationDate.timeIntervalSince1970, modificationDate.timeIntervalSince1970, accuracy: 1)
+    }
+
     @MainActor
     func testDirectoryEnumerationRunsOffTheMainThread() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)

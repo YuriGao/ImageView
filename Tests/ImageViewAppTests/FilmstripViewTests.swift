@@ -113,6 +113,32 @@ final class FilmstripViewTests: XCTestCase {
         XCTAssertEqual(filmstrip.contentView.bounds.origin.x, 0, accuracy: 0.5)
     }
 
+    func testLargeDirectoryRetainsBoundedWindowAndSelectionUpdateDoesNotReloadThumbnails() {
+        let items = makeItems(count: 1_000)
+        let loadCount = FilmstripLockedCounter()
+        let provider = ThumbnailProvider(loader: { _, _, completion in
+            loadCount.increment()
+            completion(.success(NSImage(size: NSSize(width: 8, height: 8))))
+            return {}
+        })
+        let filmstrip = FilmstripView(thumbnailProvider: provider)
+
+        filmstrip.apply(items: items, current: items[500])
+        let originalButtons = filmstrip.debugButtons()
+        let originalIdentifiers = originalButtons.map(ObjectIdentifier.init)
+
+        XCTAssertEqual(originalButtons.count, FilmstripView.maximumRetainedItemCount)
+        XCTAssertEqual(loadCount.value, FilmstripView.maximumRetainedItemCount)
+
+        for index in 501...519 {
+            filmstrip.apply(items: items, current: items[index])
+            XCTAssertEqual(filmstrip.debugButtons().map(ObjectIdentifier.init), originalIdentifiers)
+            XCTAssertEqual(loadCount.value, FilmstripView.maximumRetainedItemCount)
+        }
+
+        XCTAssertTrue(filmstrip.debugButtons().contains { $0.isBordered && $0.title == "519" })
+    }
+
     private func makeItems(count: Int) -> [ImageItem] {
         (0..<count).map {
             ImageItem(url: URL(fileURLWithPath: "/tmp/\($0).png"), format: .png)
@@ -136,5 +162,16 @@ final class FilmstripViewTests: XCTestCase {
             file: file,
             line: line
         )
+    }
+}
+
+private final class FilmstripLockedCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage = 0
+
+    var value: Int { lock.withLock { storage } }
+
+    func increment() {
+        lock.withLock { storage += 1 }
     }
 }

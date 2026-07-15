@@ -48,7 +48,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         terminateApplication: @escaping () -> Void = { NSApp.terminate(nil) },
         noteRecentDocument: @escaping (URL) -> Void = { NSDocumentController.shared.noteNewRecentDocumentURL($0) },
         recentDocumentURLs: @escaping () -> [URL] = { NSDocumentController.shared.recentDocumentURLs },
-        clearRecentDocuments: @escaping () -> Void = { NSDocumentController.shared.clearRecentDocuments(nil) }
+        clearRecentDocuments: @escaping () -> Void = { NSDocumentController.shared.clearRecentDocuments(nil) },
+        initialURLs: [URL] = []
     ) {
         self.settings = settings
         self.defaultApplicationService = defaultApplicationService
@@ -62,6 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.noteRecentDocument = noteRecentDocument
         self.recentDocumentURLs = recentDocumentURLs
         self.clearRecentDocuments = clearRecentDocuments
+        self.pendingLaunchURLs = initialURLs
         super.init()
     }
 
@@ -147,10 +149,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for url in urls {
             let controller = imageWindowControllers.first(where: { !$0.hasAssignedOpenRequest }) ?? createImageWindow()
             activeImageWindowController = controller
-            openImageURL(controller, url)
+            if Self.isDirectory(url) {
+                openFolderURL(controller, url)
+            } else {
+                openImageURL(controller, url)
+            }
             showImageWindow(controller)
         }
         connectMenuTargets()
+    }
+
+    static func isDirectory(_ url: URL) -> Bool {
+        (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
     }
 
     func imageWindowDidBecomeKey(_ controller: MainWindowController) {

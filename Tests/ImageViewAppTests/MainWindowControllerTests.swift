@@ -1945,6 +1945,15 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertNil(viewModel.loadErrorMessage)
     }
 
+    func testWindowCloseRemovesLocalKeyMonitor() {
+        let controller = MainWindowController(settings: AppSettings(defaults: makeIsolatedDefaults()))
+        XCTAssertTrue(controller.hasKeyMonitorForTesting)
+
+        controller.windowWillClose(Notification(name: NSWindow.willCloseNotification, object: controller.window))
+
+        XCTAssertFalse(controller.hasKeyMonitorForTesting)
+    }
+
     func testControllerDeinitInvalidatesRetryWhenScannerIgnoresTaskCancellation() async {
         let folder = URL(fileURLWithPath: "/tmp/deinit-stale-retry", isDirectory: true)
         let lateItem = ImageItem(url: folder.appendingPathComponent("late.png"), format: .png)

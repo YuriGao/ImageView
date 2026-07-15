@@ -84,6 +84,29 @@ final class ImageCacheTests: XCTestCase {
         XCTAssertNil(evicted)
     }
 
+    func testConcurrentLoadsForSameVersionShareOneLoader() async throws {
+        let image = DecodedImage(cgImage: makeImage(), pixelSize: CGSize(width: 1, height: 1), isAnimated: false)
+        let cache = ImageCache(costLimit: image.decodedByteCost * 2)
+        let url = URL(fileURLWithPath: "/tmp/single-flight.png")
+        let requestVersion = version
+        let callCount = LockedCounter()
+        let loader: @Sendable () async throws -> DecodedImage = {
+            callCount.increment()
+            try await Task.sleep(nanoseconds: 50_000_000)
+            return image
+        }
+
+        async let first = cache.loadImage(for: url, matching: requestVersion, loader: loader)
+        async let second = cache.loadImage(for: url, matching: requestVersion, loader: loader)
+        _ = try await (first, second)
+        let inFlightCount = await cache.inFlightRequestCount()
+        let currentCost = await cache.currentCost()
+
+        XCTAssertEqual(callCount.value, 1)
+        XCTAssertEqual(inFlightCount, 0)
+        XCTAssertEqual(currentCost, image.decodedByteCost)
+    }
+
     private func makeVersion(inode: UInt64, changeNanoseconds: Int64) -> CurrentFileVersion {
         CurrentFileVersion(
             device: 1,
@@ -106,5 +129,16 @@ final class ImageCacheTests: XCTestCase {
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         )!
         return context.makeImage()!
+    }
+}
+
+private final class LockedCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage = 0
+
+    var value: Int { lock.withLock { storage } }
+
+    func increment() {
+        lock.withLock { storage += 1 }
     }
 }

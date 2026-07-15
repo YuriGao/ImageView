@@ -65,6 +65,16 @@ public final class ImageDecodeService: @unchecked Sendable {
         self.animationByteLimit = max(0, animationByteLimit)
     }
 
+    public static func requiresDownsampledPreview(url: URL, maxPixelSize: CGFloat) -> Bool {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.doubleValue,
+              let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.doubleValue else {
+            return true
+        }
+        return max(width, height) > Double(maxPixelSize)
+    }
+
     public func decode(url: URL, format: SupportedImageFormat, maxPixelSize: CGFloat? = nil) throws -> DecodedImage {
         if let source = CGImageSourceCreateWithURL(url as CFURL, nil),
            let decoded = decodeImageIO(source: source, maxPixelSize: maxPixelSize) {

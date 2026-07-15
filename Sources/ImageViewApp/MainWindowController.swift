@@ -3,6 +3,26 @@ import Combine
 import ImageViewCore
 import SwiftUI
 
+private final class LocalEventMonitor: @unchecked Sendable {
+    private var token: Any?
+
+    init(mask: NSEvent.EventTypeMask, handler: @escaping (NSEvent) -> NSEvent?) {
+        token = NSEvent.addLocalMonitorForEvents(matching: mask, handler: handler)
+    }
+
+    func invalidate() {
+        guard let token else { return }
+        NSEvent.removeMonitor(token)
+        self.token = nil
+    }
+
+    deinit {
+        if let token {
+            NSEvent.removeMonitor(token)
+        }
+    }
+}
+
 @MainActor
 final class MainWindowController: NSWindowController, NSGestureRecognizerDelegate {
     static let externalFileCheckInterval: TimeInterval = 2
@@ -158,7 +178,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
     private let usageHintView = UsageHintView()
     private var cancellables: Set<AnyCancellable> = []
     private var gestureCoordinator: GestureCoordinator?
-    private var keyMonitor: Any?
+    private var keyMonitor: LocalEventMonitor?
     private var displayedItemURL: URL?
     private var associatedViewerURL: URL?
     private var externalFileCheckTimer: Timer?
@@ -230,6 +250,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
     deinit {
         folderRetryTask?.cancel()
         continuousReadingTask?.cancel()
+        keyMonitor?.invalidate()
         let folderBrowserViewModel = folderBrowserViewModel
         folderBrowserViewModel.invalidateOpenFolderRequest()
         Task { @MainActor in
@@ -252,7 +273,10 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
     private func openImageUsingExistingPipeline(_ url: URL) {
         exitFolderBrowserMode()
         cancelCrop(nil)
-        Task { await viewModel.open(url: url) }
+        let viewModel = viewModel
+        Task { [weak viewModel] in
+            await viewModel?.open(url: url)
+        }
     }
 
     func openFolder(url: URL) {
@@ -667,7 +691,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
                         self.associatedViewerURL = newURL.standardizedFileURL
                     }
                 }
-                self.filmstripView.apply(items: state?.items ?? [], current: state?.currentItem)
+                self.syncFilmstripContent(navigationState: state)
                 let availability = Self.pageControlAvailability(
                     navigationState: state,
                     readingDirection: self.settings.readingDirection
@@ -863,6 +887,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
 
     @objc func toggleFilmstrip(_ sender: Any?) {
         settings.showsFilmstrip.toggle()
+        syncFilmstripContent(navigationState: viewModel.navigationState)
         if settings.showsFilmstrip {
             revealFilmstripOverlay()
         } else {
@@ -1332,12 +1357,19 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
     }
 
     private func installKeyMonitor() {
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        removeKeyMonitor()
+        keyMonitor = LocalEventMonitor(mask: .keyDown) { [weak self] event in
             guard let self, self.window?.isKeyWindow == true else {
                 return event
             }
             return self.handleKeyDown(event) ? nil : event
         }
+    }
+
+    private func removeKeyMonitor() {
+        guard let keyMonitor else { return }
+        keyMonitor.invalidate()
+        self.keyMonitor = nil
     }
 
     private func handleKeyDown(_ event: NSEvent) -> Bool {
@@ -1662,6 +1694,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
 
     private func applySettings() {
         canvas.backgroundColor = Self.canvasBackgroundColor()
+        syncFilmstripContent(navigationState: viewModel.navigationState)
         if !settings.showsFilmstrip {
             hideFilmstripOverlay(immediately: true)
         }
@@ -1675,6 +1708,17 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         updatePageStatus(navigationState: viewModel.navigationState)
         updateZoomStatus()
         updateContinuousReadingPresentation()
+    }
+
+    private func syncFilmstripContent(navigationState: NavigationState?) {
+        guard settings.showsFilmstrip else {
+            filmstripView.apply(items: [], current: nil)
+            return
+        }
+        filmstripView.apply(
+            items: navigationState?.items ?? [],
+            current: navigationState?.currentItem
+        )
     }
 
     private func updateContinuousReadingPresentation() {
@@ -2278,6 +2322,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
     }
     func revealFullScreenChromeForTesting() { revealFullScreenChromeIfNeeded() }
     var isFilmstripVisibleForTesting: Bool { !filmstripOverlayView.isHidden }
+    var hasKeyMonitorForTesting: Bool { keyMonitor != nil }
     var isPageControlsVisibleForTesting: Bool { !pageNavigationOverlayView.isHidden }
     var folderBrowserItemCountForTesting: Int { folderBrowserView.testingItemCount }
     var folderBrowserOperationStatusTextForTesting: String? { folderBrowserView.testingOperationStatusText }
@@ -2636,6 +2681,9 @@ extension MainWindowController: NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         cancelFolderRetry()
+        continuousReadingTask?.cancel()
+        continuousReadingTask = nil
+        removeKeyMonitor()
         externalFileCheckTimer?.invalidate()
         externalFileCheckTimer = nil
         onWindowDidClose?(self)
@@ -2664,7 +2712,10 @@ extension MainWindowController: NSWindowDelegate {
     }
 
     private func refreshCurrentFileForExternalChanges() {
-        Task { await viewModel.refreshCurrentFileIfNeeded() }
+        let viewModel = viewModel
+        Task { [weak viewModel] in
+            await viewModel?.refreshCurrentFileIfNeeded()
+        }
     }
 
     func windowDidExitFullScreen(_ notification: Notification) {

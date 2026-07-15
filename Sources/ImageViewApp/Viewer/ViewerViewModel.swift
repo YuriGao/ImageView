@@ -24,21 +24,7 @@ private enum ImageLoadEvent: Sendable {
 private func detachedDecode(
     _ operation: @escaping @Sendable () throws -> DecodedImage
 ) async throws -> DecodedImage {
-    let task = Task.detached(priority: .userInitiated) {
-        try Task.checkCancellation()
-        let image = try operation()
-        try Task.checkCancellation()
-        return image
-    }
-
-    return try await withTaskCancellationHandler {
-        try Task.checkCancellation()
-        let image = try await task.value
-        try Task.checkCancellation()
-        return image
-    } onCancel: {
-        task.cancel()
-    }
+    try await ImageDecodeExecutor.shared.decode(operation)
 }
 
 @MainActor
@@ -64,14 +50,17 @@ final class ViewerViewModel: ObservableObject {
     private let decodeImageAtURL: @Sendable (URL, SupportedImageFormat) throws -> DecodedImage
     private let loadImageAtURL: @Sendable (URL, SupportedImageFormat) async throws -> VersionedLoadedImage
     private let loadPreviewAtURL: @Sendable (URL, SupportedImageFormat) async throws -> DecodedImage
+    private let shouldLoadPreviewAtURL: @Sendable (URL) -> Bool
     private let moveToTrashAtURL: @Sendable (URL) throws -> Void
     private let currentFileVersionAtURL: @Sendable (URL) -> CurrentFileVersion?
     private let metadataService = ImageMetadataService()
     private let fileActions = FileActions()
     private let editingService = ImageEditingService()
-    private let cache = ImageCache(costLimit: ImageCache.defaultFullImageCostLimit)
+    private let cache: ImageCache
     private var displayRequestGeneration: UInt64 = 0
-    private var cancelActiveProgressiveLoad: (() -> Void)?
+    private var cancelActiveProgressiveLoad: (@Sendable () -> Void)?
+    private var displayTask: Task<Void, Never>?
+    private var preloadTask: Task<Void, Never>?
     private var pendingOperations: [EditOperation] = []
     private var redoOperations: [EditOperation] = []
     private var persistedCurrentImage: DecodedImage?
@@ -95,6 +84,7 @@ final class ViewerViewModel: ObservableObject {
         )
     }
     static let maximumEditHistoryCount = 20
+    var cacheIdentityForTesting: ObjectIdentifier { ObjectIdentifier(cache) }
 
     init(
         scanContainingDirectory: @escaping @Sendable (URL) async throws -> [ImageItem] = {
@@ -107,7 +97,9 @@ final class ViewerViewModel: ObservableObject {
         },
         currentFileVersionAtURL: @escaping @Sendable (URL) -> CurrentFileVersion? = CurrentFileVersion.read(at:),
         loadImageAtURL: (@Sendable (URL, SupportedImageFormat) async throws -> DecodedImage)? = nil,
-        loadPreviewAtURL: (@Sendable (URL, SupportedImageFormat) async throws -> DecodedImage)? = nil
+        loadPreviewAtURL: (@Sendable (URL, SupportedImageFormat) async throws -> DecodedImage)? = nil,
+        shouldLoadPreviewAtURL: (@Sendable (URL) -> Bool)? = nil,
+        cache: ImageCache = .shared
     ) {
         let resolvedDecodeImageAtURL: @Sendable (URL, SupportedImageFormat) throws -> DecodedImage =
             decodeImageAtURL ?? {
@@ -118,6 +110,10 @@ final class ViewerViewModel: ObservableObject {
         self.decodeImageAtURL = resolvedDecodeImageAtURL
         self.moveToTrashAtURL = moveToTrashAtURL
         self.currentFileVersionAtURL = currentFileVersionAtURL
+        self.cache = cache
+        self.shouldLoadPreviewAtURL = shouldLoadPreviewAtURL ?? { url in
+            loadPreviewAtURL != nil || ImageDecodeService.requiresDownsampledPreview(url: url, maxPixelSize: 2_048)
+        }
         if let loadPreviewAtURL {
             self.loadPreviewAtURL = loadPreviewAtURL
         } else {
@@ -140,37 +136,40 @@ final class ViewerViewModel: ObservableObject {
                 return VersionedLoadedImage(image: image, version: currentFileVersionAtURL(url))
             }
         } else {
-            let cache = self.cache
+            let cache = cache
             self.loadImageAtURL = { url, format in
-                guard let liveVersion = currentFileVersionAtURL(url) else {
-                    throw ImageDecodeError.cannotCreateSource
-                }
-                if let cached = await cache.image(for: url, matching: liveVersion) {
-                    return VersionedLoadedImage(image: cached, version: liveVersion)
-                }
-
                 for attempt in 0..<2 {
                     guard let beforeVersion = currentFileVersionAtURL(url) else {
                         throw ImageDecodeError.cannotCreateSource
                     }
-                    let decoded = try await detachedDecode {
-                        try resolvedDecodeImageAtURL(url, format)
+                    do {
+                        let decoded = try await cache.loadImage(for: url, matching: beforeVersion) {
+                            let decoded = try await detachedDecode {
+                                try resolvedDecodeImageAtURL(url, format)
+                            }
+                            guard currentFileVersionAtURL(url) == beforeVersion else {
+                                throw ImageDecodeError.cannotDecodeImage
+                            }
+                            return decoded
+                        }
+                        return VersionedLoadedImage(image: decoded, version: beforeVersion)
+                    } catch {
+                        if attempt == 0, currentFileVersionAtURL(url) != beforeVersion {
+                            continue
+                        }
+                        throw error
                     }
-                    guard let afterVersion = currentFileVersionAtURL(url) else {
-                        throw ImageDecodeError.cannotCreateSource
-                    }
-                    guard beforeVersion == afterVersion else {
-                        if attempt == 0 { continue }
-                        throw ImageDecodeError.cannotDecodeImage
-                    }
-
-                    await cache.insert(decoded, for: url, version: beforeVersion)
-                    return VersionedLoadedImage(image: decoded, version: beforeVersion)
                 }
 
                 throw ImageDecodeError.cannotDecodeImage
             }
         }
+    }
+
+    deinit {
+        displayTask?.cancel()
+        preloadTask?.cancel()
+        cancelActiveProgressiveLoad?()
     }
 
     func resetToEmptyState() {
@@ -216,14 +215,18 @@ final class ViewerViewModel: ObservableObject {
             let loadPreviewAtURL = self.loadPreviewAtURL
             let loadImageAtURL = self.loadImageAtURL
             let (events, continuation) = AsyncThrowingStream<ImageLoadEvent, Error>.makeStream()
-            let previewTask = Task {
-                do {
-                    let image = try await loadPreviewAtURL(url, format)
-                    try Task.checkCancellation()
-                    continuation.yield(.preview(image))
-                } catch {
-                    // Preview failures are non-fatal; the full image still decides the open result.
+            let previewTask: Task<Void, Never>? = if shouldLoadPreviewAtURL(url) {
+                Task {
+                    do {
+                        let image = try await loadPreviewAtURL(url, format)
+                        try Task.checkCancellation()
+                        continuation.yield(.preview(image))
+                    } catch {
+                        // Preview failures are non-fatal; the full image still decides the open result.
+                    }
                 }
+            } else {
+                nil
             }
             let fullTask = Task {
                 do {
@@ -235,8 +238,8 @@ final class ViewerViewModel: ObservableObject {
                     continuation.finish(throwing: error)
                 }
             }
-            let cancelProgressiveLoad = {
-                previewTask.cancel()
+            let cancelProgressiveLoad: @Sendable () -> Void = {
+                previewTask?.cancel()
                 fullTask.cancel()
                 continuation.finish()
             }
@@ -769,40 +772,38 @@ final class ViewerViewModel: ObservableObject {
         hasUnsavedEdits = false
         let generation = beginDisplayRequest()
         loadPhase = .loading
-        Task { await displayCurrentAndPreload(item: item, generation: generation) }
+        displayTask = Task { [weak self] in
+            await self?.displayCurrentAndPreload(item: item, generation: generation)
+        }
     }
 
     private func beginDisplayRequest() -> UInt64 {
         cancelActiveProgressiveLoad?()
         cancelActiveProgressiveLoad = nil
+        displayTask?.cancel()
+        displayTask = nil
+        preloadTask?.cancel()
+        preloadTask = nil
         displayRequestGeneration &+= 1
         return displayRequestGeneration
     }
 
     private func preloadNeighbors() {
         guard let state = navigationState, let current = state.currentItem else { return }
-        let currentURL = current.url
-        let currentIndex = state.items.firstIndex { $0.url == currentURL } ?? 0
-        let neighbors: [ImageItem] = state.items.enumerated().compactMap { entry -> ImageItem? in
-            let (index, item) = entry
-            guard abs(index - currentIndex) <= 2,
-                  Self.canPreloadInBackground(item.format) else {
-                return nil
-            }
-            return item
+        let currentIndex = state.currentIndex ?? 0
+        let lowerBound = max(0, currentIndex - 2)
+        let upperBound = min(state.items.count - 1, currentIndex + 2)
+        let neighbors = state.items[lowerBound...upperBound].filter {
+            $0.id != current.id && Self.canPreloadInBackground($0.format)
         }
 
         guard !neighbors.isEmpty else { return }
-        let decodeImageAtURL = self.decodeImageAtURL
-        let currentFileVersionAtURL = self.currentFileVersionAtURL
-        Task.detached { [cache] in
+        preloadTask?.cancel()
+        let loadImageAtURL = self.loadImageAtURL
+        preloadTask = Task.detached(priority: .utility) {
             for item in neighbors {
-                guard let beforeVersion = currentFileVersionAtURL(item.url) else { continue }
-                guard await cache.image(for: item.url, matching: beforeVersion) == nil else { continue }
-                guard let decoded = try? decodeImageAtURL(item.url, item.format),
-                      let afterVersion = currentFileVersionAtURL(item.url),
-                      beforeVersion == afterVersion else { continue }
-                await cache.insert(decoded, for: item.url, version: beforeVersion)
+                guard !Task.isCancelled else { return }
+                _ = try? await loadImageAtURL(item.url, item.format)
             }
         }
     }

@@ -727,7 +727,9 @@ final class FolderBrowserViewModel: ObservableObject {
 
                 return ImageItem(
                     url: destination,
-                    format: SupportedImageFormat(fileExtension: destination.pathExtension) ?? item.format
+                    format: SupportedImageFormat(fileExtension: destination.pathExtension) ?? item.format,
+                    contentModificationDate: item.contentModificationDate,
+                    fileSize: item.fileSize
                 )
             }
             session.replaceItems(updatedItems)

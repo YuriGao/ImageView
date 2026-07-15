@@ -8,6 +8,13 @@ import XCTest
 
 @MainActor
 final class ViewerViewModelTests: XCTestCase {
+    func testDefaultViewModelsShareProcessImageCache() {
+        let first = ViewerViewModel()
+        let second = ViewerViewModel()
+
+        XCTAssertEqual(first.cacheIdentityForTesting, second.cacheIdentityForTesting)
+    }
+
     func testContinuousReadingReturnsWholeDirectoryWithOnlyFiveDecodedNeighbors() async throws {
         let urls = (0..<12).map { URL(fileURLWithPath: "/tmp/continuous-\($0).png") }
         let items = urls.map { ImageItem(url: $0, format: .png) }

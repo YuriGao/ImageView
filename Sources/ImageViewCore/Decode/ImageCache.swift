@@ -3,6 +3,12 @@ import Foundation
 public actor ImageCache {
     public static let defaultFullImageCostLimit = 512 * 1024 * 1024
     public static let defaultThumbnailCostLimit = 128 * 1024 * 1024
+    public static let shared = ImageCache(costLimit: defaultFullImageCostLimit)
+
+    private struct RequestKey: Hashable {
+        let url: URL
+        let version: CurrentFileVersion
+    }
 
     private struct Entry {
         let image: DecodedImage
@@ -14,6 +20,7 @@ public actor ImageCache {
     private var entries: [URL: Entry] = [:]
     private var totalCost: Int = 0
     private var tick: UInt64 = 0
+    private var inFlight: [RequestKey: Task<DecodedImage, Error>] = [:]
     private let costLimit: Int
 
     public init(costLimit: Int = ImageCache.defaultFullImageCostLimit) {
@@ -21,37 +28,83 @@ public actor ImageCache {
     }
 
     public func image(for url: URL, matching version: CurrentFileVersion) -> DecodedImage? {
-        guard var entry = entries[url] else {
+        let key = url.standardizedFileURL
+        guard var entry = entries[key] else {
             return nil
         }
         guard entry.version == version else {
-            entries.removeValue(forKey: url)
+            entries.removeValue(forKey: key)
             totalCost -= entry.cost
             return nil
         }
 
         tick += 1
         entry.lastAccess = tick
-        entries[url] = entry
+        entries[key] = entry
         return entry.image
     }
 
     public func insert(_ image: DecodedImage, for url: URL, version: CurrentFileVersion) {
         let normalizedCost = max(1, image.decodedByteCost)
+        let key = url.standardizedFileURL
 
-        if let existing = entries[url] {
+        if let existing = entries[key] {
             totalCost -= existing.cost
         }
 
         tick += 1
-        entries[url] = Entry(image: image, version: version, cost: normalizedCost, lastAccess: tick)
+        entries[key] = Entry(image: image, version: version, cost: normalizedCost, lastAccess: tick)
         totalCost = DecodedImage.saturatedSum(totalCost, normalizedCost)
         evictIfNeeded()
     }
 
+    public func loadImage(
+        for url: URL,
+        matching version: CurrentFileVersion,
+        loader: @escaping @Sendable () async throws -> DecodedImage
+    ) async throws -> DecodedImage {
+        if let cached = image(for: url, matching: version) {
+            return cached
+        }
+
+        let key = RequestKey(url: url.standardizedFileURL, version: version)
+        if let task = inFlight[key] {
+            return try await task.value
+        }
+
+        let task = Task<DecodedImage, Error> {
+            try await loader()
+        }
+        inFlight[key] = task
+
+        do {
+            let decoded = try await task.value
+            inFlight.removeValue(forKey: key)
+            insert(decoded, for: url, version: version)
+            return decoded
+        } catch {
+            inFlight.removeValue(forKey: key)
+            throw error
+        }
+    }
+
     public func removeImage(for url: URL) {
-        guard let entry = entries.removeValue(forKey: url) else { return }
-        totalCost -= entry.cost
+        let standardizedURL = url.standardizedFileURL
+        if let entry = entries.removeValue(forKey: standardizedURL) {
+            totalCost -= entry.cost
+        }
+        let matchingKeys = inFlight.keys.filter { $0.url == standardizedURL }
+        for key in matchingKeys {
+            inFlight.removeValue(forKey: key)?.cancel()
+        }
+    }
+
+    public func currentCost() -> Int {
+        totalCost
+    }
+
+    public func inFlightRequestCount() -> Int {
+        inFlight.count
     }
 
     private func evictIfNeeded() {

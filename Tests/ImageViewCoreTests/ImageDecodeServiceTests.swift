@@ -21,6 +21,19 @@ final class ImageDecodeServiceTests: XCTestCase {
         XCTAssertFalse(decoded.isAnimated)
     }
 
+    func testProgressivePreviewIsSkippedWhenOriginalFitsPreviewLimit() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let smallURL = root.appendingPathComponent("small.png")
+        let largeURL = root.appendingPathComponent("large.png")
+        try makePNGData(width: 2_048, height: 2).write(to: smallURL)
+        try makePNGData(width: 2_049, height: 2).write(to: largeURL)
+
+        XCTAssertFalse(ImageDecodeService.requiresDownsampledPreview(url: smallURL, maxPixelSize: 2_048))
+        XCTAssertTrue(ImageDecodeService.requiresDownsampledPreview(url: largeURL, maxPixelSize: 2_048))
+    }
+
     func testDecodeAppliesExifOrientationForFullResolutionImages() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
