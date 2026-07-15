@@ -3,6 +3,59 @@ import XCTest
 @testable import ImageViewCore
 
 final class BatchFileOperationServiceTests: XCTestCase {
+    func testMovePlanCancellationLeavesUnstartedItemsUntouchedAndReportsMonotonicProgress() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sourceFolder = root.appendingPathComponent("source", isDirectory: true)
+        let destinationFolder = root.appendingPathComponent("destination", isDirectory: true)
+        try FileManager.default.createDirectory(at: sourceFolder, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: destinationFolder, withIntermediateDirectories: true)
+        let urls = try (1...3).map { try writeFile(named: "\($0).png", in: sourceFolder) }
+        let service = BatchFileOperationService()
+        let plan = service.planMoveToFolder(urls, destinationFolder: destinationFolder, conflictPolicy: .skip)
+        var shouldCancel = false
+        var progressValues: [Int] = []
+
+        let result = service.executeMovePlan(
+            plan,
+            shouldCancel: { shouldCancel },
+            progress: { processed, _ in
+                progressValues.append(processed)
+                if processed == 1 { shouldCancel = true }
+            }
+        )
+
+        XCTAssertEqual(result.succeeded, [urls[0]])
+        XCTAssertEqual(result.failures.map(\.reason), [.cancelled, .cancelled])
+        XCTAssertEqual(result.succeeded.count + result.failures.count, urls.count)
+        XCTAssertEqual(progressValues, progressValues.sorted())
+        XCTAssertFalse(FileManager.default.fileExists(atPath: urls[0].path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: urls[1].path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: urls[2].path))
+    }
+
+    func testRenameCancellationRollsBackStartedWorkAndLeavesEverySourceAtOriginalName() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = try writeFile(named: "a.png", in: root)
+        let second = try writeFile(named: "b.png", in: root)
+        let service = BatchFileOperationService()
+        let plan = service.planBatchRename(urls: [first, second], baseName: "Photo", startNumber: 1, padding: 2)
+        var shouldCancel = false
+
+        let result = service.executeRenamePlan(
+            plan,
+            shouldCancel: { shouldCancel },
+            progress: { processed, _ in if processed == 1 { shouldCancel = true } }
+        )
+
+        XCTAssertEqual(result.failures.map(\.reason), [.cancelled, .cancelled])
+        XCTAssertTrue(result.recoveryFailures.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: first.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: second.path))
+        try assertNoRenameTemporaryFiles(in: root)
+    }
+
     func testRenamePlanPreservesExtensionsAndRejectsExistingUnselectedConflict() throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

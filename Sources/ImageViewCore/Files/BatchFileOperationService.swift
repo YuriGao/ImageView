@@ -37,6 +37,7 @@ public enum BatchFileFailureReason: Equatable {
     case trashFailed(String)
     case moveFailed(String)
     case renameFailed(String)
+    case cancelled
 }
 
 public enum MoveConflictPolicy: Equatable {
@@ -137,11 +138,23 @@ public final class BatchFileOperationService {
         self.fileSystem = fileSystem
     }
 
-    public func moveToTrash(_ urls: [URL]) -> BatchOperationResult {
+    public func moveToTrash(
+        _ urls: [URL],
+        shouldCancel: () -> Bool = { false },
+        progress: (_ processed: Int, _ total: Int) -> Void = { _, _ in }
+    ) -> BatchOperationResult {
         var succeeded: [URL] = []
         var failures: [BatchFileFailure] = []
 
-        for url in urls {
+        progress(0, urls.count)
+        for (index, url) in urls.enumerated() {
+            if shouldCancel() {
+                failures.append(contentsOf: urls[index...].map {
+                    BatchFileFailure(url: $0, reason: .cancelled)
+                })
+                break
+            }
+            defer { progress(index + 1, urls.count) }
             do {
                 guard fileSystem.fileExists(at: url) else {
                     failures.append(BatchFileFailure(url: url, reason: .sourceMissing))
@@ -160,13 +173,15 @@ public final class BatchFileOperationService {
     public func moveToFolder(
         _ urls: [URL],
         destinationFolder: URL,
-        conflictPolicy: MoveConflictPolicy
+        conflictPolicy: MoveConflictPolicy,
+        shouldCancel: () -> Bool = { false },
+        progress: (_ processed: Int, _ total: Int) -> Void = { _, _ in }
     ) -> BatchOperationResult {
         executeMovePlan(planMoveToFolder(
             urls,
             destinationFolder: destinationFolder,
             conflictPolicy: conflictPolicy
-        ))
+        ), shouldCancel: shouldCancel, progress: progress)
     }
 
     public func planMoveToFolder(
@@ -203,12 +218,29 @@ public final class BatchFileOperationService {
         return BatchMovePlan(proposals: proposals, failures: failures)
     }
 
-    public func executeMovePlan(_ plan: BatchMovePlan) -> BatchOperationResult {
+    public func executeMovePlan(
+        _ plan: BatchMovePlan,
+        shouldCancel: () -> Bool = { false },
+        progress: (_ processed: Int, _ total: Int) -> Void = { _, _ in }
+    ) -> BatchOperationResult {
         var succeeded: [URL] = []
         var failures = plan.failures
         var destinationPaths: Set<String> = []
+        let total = plan.failures.count + plan.proposals.count
+        var processed = plan.failures.count
+        progress(processed, total)
 
-        for proposal in plan.proposals {
+        for (index, proposal) in plan.proposals.enumerated() {
+            if shouldCancel() {
+                failures.append(contentsOf: plan.proposals[index...].map {
+                    BatchFileFailure(url: $0.source, reason: .cancelled)
+                })
+                break
+            }
+            defer {
+                processed += 1
+                progress(processed, total)
+            }
             guard fileSystem.fileExists(at: proposal.source) else {
                 failures.append(BatchFileFailure(url: proposal.source, reason: .sourceMissing))
                 continue
@@ -288,7 +320,11 @@ public final class BatchFileOperationService {
         return BatchRenamePlan(proposals: proposals, failures: failures)
     }
 
-    public func executeRenamePlan(_ plan: BatchRenamePlan) -> BatchOperationResult {
+    public func executeRenamePlan(
+        _ plan: BatchRenamePlan,
+        shouldCancel: () -> Bool = { false },
+        progress: (_ processed: Int, _ total: Int) -> Void = { _, _ in }
+    ) -> BatchOperationResult {
         guard plan.failures.isEmpty else {
             return BatchOperationResult(failures: plan.failures)
         }
@@ -305,6 +341,8 @@ public final class BatchFileOperationService {
         let activeProposals = plan.proposals.filter {
             normalizedPath($0.source) != normalizedPath($0.destination)
         }
+        let progressTotal = activeProposals.count * 2
+        progress(0, progressTotal)
         let sourcePaths = Set(activeProposals.map { normalizedPath($0.source) })
         var destinationPaths: Set<String> = []
         var failures: [BatchFileFailure] = []
@@ -332,7 +370,10 @@ public final class BatchFileOperationService {
         }
 
         var journal: [RenameJournalEntry] = []
-        for proposal in activeProposals {
+        for (index, proposal) in activeProposals.enumerated() {
+            if shouldCancel() {
+                return cancelledRenameResult(plan: plan, journal: &journal)
+            }
             let temporaryURL = temporaryURL(nextTo: proposal.source)
             do {
                 try fileSystem.moveItem(at: proposal.source, to: temporaryURL)
@@ -341,6 +382,7 @@ public final class BatchFileOperationService {
                     temporaryURL: temporaryURL,
                     location: .temporary
                 ))
+                progress(index + 1, progressTotal)
             } catch {
                 let recoveryFailures = restoreOriginals(from: &journal)
                 return BatchOperationResult(
@@ -353,12 +395,16 @@ public final class BatchFileOperationService {
         }
 
         for index in journal.indices {
+            if shouldCancel() {
+                return cancelledRenameResult(plan: plan, journal: &journal)
+            }
             do {
                 try fileSystem.moveItem(
                     at: journal[index].temporaryURL,
                     to: journal[index].proposal.destination
                 )
                 journal[index].location = .destination
+                progress(activeProposals.count + index + 1, progressTotal)
             } catch {
                 failures.append(BatchFileFailure(
                     url: journal[index].proposal.source,
@@ -374,6 +420,18 @@ public final class BatchFileOperationService {
         }
 
         return BatchOperationResult(succeeded: plan.proposals.map(\.source))
+    }
+
+    private func cancelledRenameResult(
+        plan: BatchRenamePlan,
+        journal: inout [RenameJournalEntry]
+    ) -> BatchOperationResult {
+        var recoveryFailures = reverseCommittedDestinations(in: &journal)
+        recoveryFailures.append(contentsOf: restoreOriginals(from: &journal))
+        return BatchOperationResult(
+            failures: plan.proposals.map { BatchFileFailure(url: $0.source, reason: .cancelled) },
+            recoveryFailures: recoveryFailures
+        )
     }
 
     private func renameDestination(for url: URL, baseName: String, number: Int, padding: Int) -> URL {

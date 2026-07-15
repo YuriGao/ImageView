@@ -7,6 +7,8 @@ final class FolderBrowserCellView: NSCollectionViewItem {
     private let thumbnailView = NSImageView()
     private let filenameField = NSTextField(labelWithString: "")
     private var thumbnailRequest: ThumbnailRequest?
+    private var accessibilityPosition: Int?
+    private var accessibilityTotal: Int?
     private(set) var testingAppearanceRefreshCount = 0
 
     var testingFilename: String {
@@ -69,11 +71,19 @@ final class FolderBrowserCellView: NSCollectionViewItem {
         updateSelectionAppearance()
     }
 
-    func configure(with item: ImageItem, thumbnailProvider: ThumbnailProvider) {
+    func configure(
+        with item: ImageItem,
+        thumbnailProvider: ThumbnailProvider,
+        position: Int? = nil,
+        total: Int? = nil
+    ) {
         thumbnailRequest?.cancel()
         representedObject = item
+        accessibilityPosition = position
+        accessibilityTotal = total
         filenameField.stringValue = item.url.deletingPathExtension().lastPathComponent
         thumbnailView.image = nil
+        updateAccessibility()
 
         thumbnailRequest = thumbnailProvider.loadThumbnail(for: item) { [weak self, itemID = item.id] result in
             DispatchQueue.main.async { [weak self] in
@@ -95,6 +105,8 @@ final class FolderBrowserCellView: NSCollectionViewItem {
         thumbnailRequest?.cancel()
         thumbnailRequest = nil
         representedObject = nil
+        accessibilityPosition = nil
+        accessibilityTotal = nil
         filenameField.stringValue = ""
         thumbnailView.image = nil
     }
@@ -110,6 +122,24 @@ final class FolderBrowserCellView: NSCollectionViewItem {
         }
         view.layer?.borderWidth = isSelected ? 1 : 0
         filenameField.font = .systemFont(ofSize: 12, weight: isSelected ? .semibold : .regular)
+        updateAccessibility()
+    }
+
+    private func updateAccessibility() {
+        guard let item = representedObject as? ImageItem else { return }
+        var parts = [item.url.lastPathComponent, item.format.rawValue.uppercased()]
+        if let accessibilityPosition, let accessibilityTotal {
+            parts.append(String(
+                format: AppStrings.text("folderBrowser.item.position"),
+                accessibilityPosition,
+                accessibilityTotal
+            ))
+        }
+        parts.append(AppStrings.text(isSelected ? "folderBrowser.item.selected" : "folderBrowser.item.notSelected"))
+        view.setAccessibilityElement(true)
+        view.setAccessibilityRole(.button)
+        view.setAccessibilityLabel(parts.joined(separator: ", "))
+        view.setAccessibilitySelected(isSelected)
     }
 }
 

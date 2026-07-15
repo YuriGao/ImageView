@@ -11,6 +11,8 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertFalse(settings.showsInspector)
         XCTAssertTrue(settings.confirmsDelete)
         XCTAssertTrue(settings.animatesNavigationTransitions)
+        XCTAssertEqual(settings.readingDirection, .leftToRight)
+        XCTAssertFalse(settings.usesContinuousReading)
     }
 
     func testSettingsPersistAcrossInstances() {
@@ -20,12 +22,16 @@ final class AppSettingsTests: XCTestCase {
         first.showsInspector = true
         first.confirmsDelete = false
         first.animatesNavigationTransitions = false
+        first.readingDirection = .rightToLeft
+        first.usesContinuousReading = true
 
         let second = AppSettings(defaults: defaults)
         XCTAssertTrue(second.showsFilmstrip)
         XCTAssertTrue(second.showsInspector)
         XCTAssertFalse(second.confirmsDelete)
         XCTAssertFalse(second.animatesNavigationTransitions)
+        XCTAssertEqual(second.readingDirection, .rightToLeft)
+        XCTAssertTrue(second.usesContinuousReading)
     }
 
     func testAppearanceDefaultsToSystem() {

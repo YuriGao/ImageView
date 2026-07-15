@@ -460,6 +460,46 @@ final class FolderBrowserViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.visibleItems, [conflicted])
         XCTAssertEqual(viewModel.selectedItems, [conflicted])
         XCTAssertEqual(viewModel.operationFailures, [executionFailure])
+        XCTAssertFalse(viewModel.canUndoLastBatchOperation)
+    }
+
+    func testSuccessfulPlannedMoveCanBeUndoneOnce() async {
+        let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
+        let destination = URL(fileURLWithPath: "/tmp/archive", isDirectory: true)
+        let item = ImageItem(url: folder.appendingPathComponent("one.png"), format: .png)
+        let movedURL = destination.appendingPathComponent("one.png")
+        let plan = BatchMovePlan(
+            proposals: [BatchMoveProposal(source: item.url, destination: movedURL)],
+            failures: []
+        )
+        let executedPlans = LockedValue<[BatchMovePlan]>([])
+        let viewModel = FolderBrowserViewModel(
+            scanFolder: { _ in [item] },
+            executeMovePlan: { executedPlan in
+                executedPlans.withValue { $0.append(executedPlan) }
+                return BatchOperationResult(succeeded: executedPlan.proposals.map(\.source))
+            }
+        )
+        await viewModel.openFolder(folder)
+
+        await viewModel.executeMovePlan(plan)?.value
+
+        XCTAssertTrue(viewModel.canUndoLastBatchOperation)
+        XCTAssertTrue(viewModel.visibleItems.isEmpty)
+
+        await viewModel.undoLastBatchOperation()?.value
+
+        XCTAssertFalse(viewModel.canUndoLastBatchOperation)
+        XCTAssertEqual(viewModel.visibleItems, [item])
+        XCTAssertEqual(viewModel.selectedItems, [item])
+        XCTAssertEqual(executedPlans.value, [
+            plan,
+            BatchMovePlan(
+                proposals: [BatchMoveProposal(source: movedURL, destination: item.url)],
+                failures: []
+            )
+        ])
+        XCTAssertNil(viewModel.undoLastBatchOperation(), "a finite undo must only be available once")
     }
 
     func testRenameSelectedFailureTrustsRescanAndKeepsExistingFailedItemSelected() async {

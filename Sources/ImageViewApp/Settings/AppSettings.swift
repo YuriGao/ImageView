@@ -7,6 +7,11 @@ enum AppAppearance: String, CaseIterable {
     case dark
 }
 
+enum ReadingDirection: String, CaseIterable {
+    case leftToRight
+    case rightToLeft
+}
+
 @MainActor
 final class AppSettings: ObservableObject {
     static let shared = AppSettings()
@@ -29,8 +34,20 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(animatesNavigationTransitions, forKey: Self.animatesNavigationTransitionsKey) }
     }
 
+    @Published var usesContinuousReading: Bool {
+        didSet { defaults.set(usesContinuousReading, forKey: Self.usesContinuousReadingKey) }
+    }
+
     @Published var appearance: AppAppearance {
         didSet { defaults.set(appearance.rawValue, forKey: Self.appearanceKey) }
+    }
+
+    @Published var readingDirection: ReadingDirection {
+        didSet { defaults.set(readingDirection.rawValue, forKey: Self.readingDirectionKey) }
+    }
+
+    @Published var hasShownUsageHint: Bool {
+        didSet { defaults.set(hasShownUsageHint, forKey: Self.hasShownUsageHintKey) }
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -39,7 +56,12 @@ final class AppSettings: ObservableObject {
         showsInspector = defaults.bool(forKey: Self.showsInspectorKey)
         confirmsDelete = defaults.object(forKey: Self.confirmsDeleteKey) as? Bool ?? true
         animatesNavigationTransitions = defaults.object(forKey: Self.animatesNavigationTransitionsKey) as? Bool ?? true
+        usesContinuousReading = defaults.bool(forKey: Self.usesContinuousReadingKey)
         appearance = AppAppearance(rawValue: defaults.string(forKey: Self.appearanceKey) ?? "") ?? .system
+        readingDirection = ReadingDirection(
+            rawValue: defaults.string(forKey: Self.readingDirectionKey) ?? ""
+        ) ?? .leftToRight
+        hasShownUsageHint = defaults.bool(forKey: Self.hasShownUsageHintKey)
     }
 }
 
@@ -48,5 +70,8 @@ private extension AppSettings {
     static let showsInspectorKey = "showsInspector"
     static let confirmsDeleteKey = "confirmsDelete"
     static let animatesNavigationTransitionsKey = "animatesNavigationTransitions"
+    static let usesContinuousReadingKey = "usesContinuousReading"
     static let appearanceKey = "appearance"
+    static let readingDirectionKey = "readingDirection"
+    static let hasShownUsageHintKey = "hasShownUsageHint"
 }

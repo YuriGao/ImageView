@@ -53,6 +53,13 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertEqual(MainWindowController.pageText(navigationState: state), "2 / 2")
         XCTAssertEqual(MainWindowController.pageText(navigationState: nil), "0 / 0")
         XCTAssertEqual(MainWindowController.zoomText(zoomScale: 1.25), "125%")
+        XCTAssertEqual(
+            MainWindowController.zoomText(displayMode: .manual, pixelScale: 1.25),
+            "125%"
+        )
+        XCTAssertFalse(
+            MainWindowController.zoomText(displayMode: .fit, pixelScale: 0.82).hasPrefix("100%")
+        )
     }
 
     func testCustomTitleBarHidesNativeWindowTitle() {
@@ -367,6 +374,26 @@ final class MainWindowControllerTests: XCTestCase {
         }
     }
 
+    func testFullImageLoadProducesOneConciseAccessibilityAnnouncement() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let imageURL = root.appendingPathComponent("announced.png")
+        try writeTestPNG(to: imageURL)
+        let controller = MainWindowController(settings: AppSettings(defaults: makeIsolatedDefaults()))
+        var announcements: [String] = []
+        controller.accessibilityAnnouncementHandlerForTesting = { announcements.append($0) }
+
+        controller.open(url: imageURL)
+        for _ in 0..<100 where announcements.isEmpty {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        XCTAssertEqual(announcements, [
+            String(format: AppStrings.text("viewer.announcement.loaded"), imageURL.lastPathComponent)
+        ])
+    }
+
     func testCanvasBackgroundAlwaysUsesSystemAppearance() {
         XCTAssertEqual(MainWindowController.canvasBackgroundColor(), .windowBackgroundColor)
     }
@@ -642,6 +669,13 @@ final class MainWindowControllerTests: XCTestCase {
             MainWindowController.pageControlAvailability(navigationState: secondState),
             .init(previous: true, next: false)
         )
+        XCTAssertEqual(
+            MainWindowController.pageControlAvailability(
+                navigationState: firstState,
+                readingDirection: .rightToLeft
+            ),
+            .init(previous: true, next: false)
+        )
     }
 
     func testPageControlsStayVisibleWhileHovered() {
@@ -652,6 +686,19 @@ final class MainWindowControllerTests: XCTestCase {
     func testFilmstripAndPageControlsShareDisappearanceTiming() {
         XCTAssertEqual(MainWindowController.overlayAutoHideDelay, 1.8)
         XCTAssertEqual(MainWindowController.overlayFadeOutDuration, 0.18)
+    }
+
+    func testFullScreenChromeStartsHiddenAndReappearsForInteraction() {
+        let controller = MainWindowController(settings: AppSettings(defaults: makeIsolatedDefaults()))
+
+        controller.windowDidEnterFullScreen(Notification(name: NSWindow.didEnterFullScreenNotification))
+        XCTAssertFalse(controller.isFullScreenChromeVisibleForTesting)
+
+        controller.revealFullScreenChromeForTesting()
+        XCTAssertTrue(controller.isFullScreenChromeVisibleForTesting)
+
+        controller.windowDidExitFullScreen(Notification(name: NSWindow.didExitFullScreenNotification))
+        XCTAssertTrue(controller.isFullScreenChromeVisibleForTesting)
     }
 
     func testInspectorMenuValidationReflectsSettingState() {
@@ -1133,12 +1180,12 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertEqual(fixture.scanCount.value, 1)
     }
 
-    func testTitleBarOnlyShowsFolderGridNavigationButton() async throws {
+    func testTitleBarShowsFolderGridNavigationAndMoreButtons() async throws {
         let fixture = try makeFolderNavigationFixture()
         defer { try? FileManager.default.removeItem(at: fixture.folder) }
         let controller = fixture.controller
 
-        XCTAssertEqual(controller.titleBarControlsStackForTesting.arrangedSubviews.count, 1)
+        XCTAssertEqual(controller.titleBarControlsStackForTesting.arrangedSubviews.count, 2)
         XCTAssertEqual(
             controller.titleBarControlsStackForTesting.arrangedSubviews.first,
             controller.titleBarGridButtonForTesting

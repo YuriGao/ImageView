@@ -3,6 +3,14 @@ import ImageViewCore
 
 final class ImageCanvasView: NSView {
     static let trackpadNavigationThreshold: CGFloat = 80
+    static let minimumManualPixelScale: CGFloat = 0.1
+    static let maximumManualPixelScale: CGFloat = 12
+
+    enum DisplayMode: Equatable {
+        case fit
+        case fitWidth
+        case manual
+    }
 
     private enum TrackpadScrollAxis {
         case horizontal
@@ -16,6 +24,10 @@ final class ImageCanvasView: NSView {
     private var trackpadScrollAxis: TrackpadScrollAxis?
     private var accumulatedTrackpadDeltaX: CGFloat = 0
     private var didNavigateDuringTrackpadScroll = false
+    private var isApplyingDisplayMode = false
+    private var lastManualPixelScale: CGFloat?
+
+    private(set) var displayMode: DisplayMode = .fit
 
     var backgroundColor: NSColor = .black {
         didSet { needsDisplay = true }
@@ -25,7 +37,9 @@ final class ImageCanvasView: NSView {
         didSet {
             currentAnimationFrameIndex = 0
             configureAnimation()
+            if displayMode == .fitWidth { zoomToFitWidth() }
             needsDisplay = true
+            onTransformChanged?(scale)
         }
     }
 
@@ -35,6 +49,10 @@ final class ImageCanvasView: NSView {
 
     var scale: CGFloat = 1.0 {
         didSet {
+            if !isApplyingDisplayMode {
+                displayMode = .manual
+                lastManualPixelScale = pixelScale
+            }
             needsDisplay = true
             onTransformChanged?(scale)
         }
@@ -47,6 +65,20 @@ final class ImageCanvasView: NSView {
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
 
+    /// The rendered size of one image pixel in screen logical points.
+    var pixelScale: CGFloat? {
+        guard let fittedScale else { return nil }
+        return fittedScale * scale
+    }
+
+    private var fittedScale: CGFloat? {
+        guard let image, bounds.width > 0, bounds.height > 0 else { return nil }
+        return min(
+            bounds.width / CGFloat(image.cgImage.width),
+            bounds.height / CGFloat(image.cgImage.height)
+        )
+    }
+
     var imageDrawRect: CGRect? {
         guard let image,
               bounds.width > 0,
@@ -55,7 +87,7 @@ final class ImageCanvasView: NSView {
         }
 
         let imageSize = CGSize(width: image.cgImage.width, height: image.cgImage.height)
-        let fittedScale = min(bounds.width / imageSize.width, bounds.height / imageSize.height)
+        guard let fittedScale else { return nil }
         let drawSize = CGSize(width: imageSize.width * fittedScale * scale, height: imageSize.height * fittedScale * scale)
         return CGRect(
             x: (bounds.width - drawSize.width) / 2 + offset.x,
@@ -90,21 +122,86 @@ final class ImageCanvasView: NSView {
     }
 
     func resetViewTransform() {
+        isApplyingDisplayMode = true
+        displayMode = .fit
         scale = 1.0
+        isApplyingDisplayMode = false
         offset = .zero
     }
 
     func zoomToActualSize() {
-        guard let image, bounds.width > 0, bounds.height > 0 else { return }
-        let fittedScale = min(bounds.width / CGFloat(image.cgImage.width), bounds.height / CGFloat(image.cgImage.height))
-        scale = min(max(1 / fittedScale, 0.1), 12)
-        offset = .zero
+        setManualPixelScale(1)
+    }
+
+    func zoomToFitWidth() {
+        guard let image, let fittedScale, fittedScale > 0, bounds.width > 0 else { return }
+        let widthPixelScale = bounds.width / CGFloat(image.cgImage.width)
+        isApplyingDisplayMode = true
+        displayMode = .fitWidth
+        scale = widthPixelScale / fittedScale
+        isApplyingDisplayMode = false
+        offset = clampedOffset(for: .zero)
+    }
+
+    func setManualPixelScale(_ requestedPixelScale: CGFloat, around point: CGPoint? = nil) {
+        guard let fittedScale, fittedScale > 0 else { return }
+        let previousScale = scale
+        let clampedPixelScale = min(
+            max(requestedPixelScale, Self.minimumManualPixelScale),
+            Self.maximumManualPixelScale
+        )
+        let targetScale = clampedPixelScale / fittedScale
+        isApplyingDisplayMode = true
+        displayMode = .manual
+        lastManualPixelScale = fittedScale * targetScale
+        scale = targetScale
+        isApplyingDisplayMode = false
+
+        if let point, previousScale > 0 {
+            let ratio = targetScale / previousScale
+            let center = CGPoint(x: bounds.midX, y: bounds.midY)
+            let anchor = CGPoint(x: point.x - center.x, y: point.y - center.y)
+            offset = clampedOffset(for: CGPoint(
+                x: anchor.x - (anchor.x - offset.x) * ratio,
+                y: anchor.y - (anchor.y - offset.y) * ratio
+            ))
+        } else {
+            offset = .zero
+        }
+    }
+
+    func setManualPercentage(_ percentage: CGFloat, around point: CGPoint? = nil) {
+        setManualPixelScale(percentage / 100, around: point)
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        let previousMode = displayMode
+        let preservedPixelScale = displayMode == .manual ? (lastManualPixelScale ?? pixelScale) : nil
+        super.setFrameSize(newSize)
+        if previousMode == .fitWidth {
+            zoomToFitWidth()
+            return
+        }
+        guard let preservedPixelScale, let fittedScale, fittedScale > 0 else { return }
+        isApplyingDisplayMode = true
+        scale = preservedPixelScale / fittedScale
+        isApplyingDisplayMode = false
+        offset = clampedOffset(for: offset)
     }
 
     func zoom(by delta: CGFloat, around point: CGPoint) {
+        if let pixelScale {
+            setManualPixelScale(pixelScale * delta, around: point)
+            return
+        }
+
+        // Keep the transform helpers useful before an image is assigned. Once an
+        // image exists, zoom limits are expressed in real image-pixel scale above.
         let previousScale = scale
-        scale = min(max(scale * delta, 0.1), 12.0)
-        let ratio = scale / previousScale
+        let targetScale = min(max(previousScale * delta, 0.1), 12)
+        scale = targetScale
+        guard previousScale > 0 else { return }
+        let ratio = targetScale / previousScale
         let center = CGPoint(x: bounds.midX, y: bounds.midY)
         let anchor = CGPoint(x: point.x - center.x, y: point.y - center.y)
         offset = clampedOffset(for: CGPoint(
@@ -122,7 +219,7 @@ final class ImageCanvasView: NSView {
               bounds.width > 0,
               bounds.height > 0 else { return proposedOffset }
         let imageSize = CGSize(width: image.cgImage.width, height: image.cgImage.height)
-        let fittedScale = min(bounds.width / imageSize.width, bounds.height / imageSize.height)
+        guard let fittedScale else { return proposedOffset }
         let drawSize = CGSize(width: imageSize.width * fittedScale * scale, height: imageSize.height * fittedScale * scale)
         let horizontalLimit = max(0, (drawSize.width - bounds.width) / 2)
         let verticalLimit = max(0, (drawSize.height - bounds.height) / 2)
@@ -211,8 +308,8 @@ final class ImageCanvasView: NSView {
     }
 
     func toggleFitOrActualSize() {
-        if abs(scale - 1.0) < 0.01 {
-            scale = 2.0
+        if displayMode == .fit || displayMode == .fitWidth {
+            setManualPixelScale(lastManualPixelScale ?? 1)
         } else {
             resetViewTransform()
         }

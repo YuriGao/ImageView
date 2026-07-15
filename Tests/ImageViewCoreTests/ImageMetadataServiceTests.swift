@@ -43,6 +43,10 @@ final class ImageMetadataServiceTests: XCTestCase {
         XCTAssertEqual(metadata.cameraMake, "ImageView")
         XCTAssertEqual(metadata.cameraModel, "Test Camera")
         XCTAssertEqual(metadata.capturedAt, DateFormatter.exif.date(from: "2026:07:10 12:34:56"))
+        XCTAssertEqual(metadata.exposureTime, 1.0 / 125.0)
+        XCTAssertEqual(metadata.aperture, 2.8)
+        XCTAssertEqual(metadata.isoSpeed, 400)
+        XCTAssertEqual(metadata.focalLength, 50)
     }
 
     private func writeJPEGWithExif(to url: URL) throws {
@@ -60,7 +64,11 @@ final class ImageMetadataServiceTests: XCTestCase {
                 kCGImagePropertyTIFFModel: "Test Camera"
             ],
             kCGImagePropertyExifDictionary: [
-                kCGImagePropertyExifDateTimeOriginal: "2026:07:10 12:34:56"
+                kCGImagePropertyExifDateTimeOriginal: "2026:07:10 12:34:56",
+                kCGImagePropertyExifExposureTime: 1.0 / 125.0,
+                kCGImagePropertyExifFNumber: 2.8,
+                kCGImagePropertyExifISOSpeedRatings: [400],
+                kCGImagePropertyExifFocalLength: 50.0
             ]
         ]
         CGImageDestinationAddImage(destination, image, properties as CFDictionary)

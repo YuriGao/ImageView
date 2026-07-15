@@ -56,6 +56,46 @@ final class PerformanceGuardTests: XCTestCase {
         XCTAssertLessThan(elapsed, .milliseconds(100))
     }
 
+    func testStandardImageSetMeetsColdDecodeP50AndP95Budgets() throws {
+        let sizes = (0..<20).map { index in
+            (width: 1_200 + (index % 5) * 160, height: 900 + (index % 4) * 120)
+        }
+        let urls = try sizes.map { try makePNG(width: $0.width, height: $0.height) }
+        defer { urls.forEach { try? FileManager.default.removeItem(at: $0.deletingLastPathComponent()) } }
+
+        let milliseconds = try urls.map { url -> Double in
+            let started = ContinuousClock.now
+            _ = try ImageDecodeService().decode(url: url, format: .png)
+            return Self.milliseconds(started.duration(to: .now))
+        }
+
+        XCTAssertLessThanOrEqual(Self.percentile(milliseconds, 0.50), 300)
+        XCTAssertLessThanOrEqual(Self.percentile(milliseconds, 0.95), 800)
+    }
+
+    func testPreloadedCacheHitP95MeetsNavigationBudget() async {
+        let cache = ImageCache(costLimit: 10_000)
+        let decoded = DecodedImage(
+            cgImage: makeImage(width: 4, height: 3),
+            pixelSize: CGSize(width: 4, height: 3),
+            isAnimated: false
+        )
+        let url = URL(fileURLWithPath: "/tmp/preloaded-p95.png")
+        let version = CurrentFileVersion(
+            device: 1, inode: 2, fileSize: 1,
+            modificationNanoseconds: 1, changeNanoseconds: 1
+        )
+        await cache.insert(decoded, for: url, version: version)
+        var milliseconds: [Double] = []
+        for _ in 0..<100 {
+            let started = ContinuousClock.now
+            _ = await cache.image(for: url, matching: version)
+            milliseconds.append(Self.milliseconds(started.duration(to: .now)))
+        }
+
+        XCTAssertLessThanOrEqual(Self.percentile(milliseconds, 0.95), 100)
+    }
+
     private func makePNG(width: Int, height: Int) throws -> URL {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -83,5 +123,17 @@ final class PerformanceGuardTests: XCTestCase {
 
     private enum TestError: Error {
         case cannotCreateDestination
+    }
+
+    private static func milliseconds(_ duration: Duration) -> Double {
+        let components = duration.components
+        return Double(components.seconds) * 1_000
+            + Double(components.attoseconds) / 1_000_000_000_000_000
+    }
+
+    private static func percentile(_ values: [Double], _ percentile: Double) -> Double {
+        let sorted = values.sorted()
+        let index = min(sorted.count - 1, max(0, Int(ceil(Double(sorted.count) * percentile)) - 1))
+        return sorted[index]
     }
 }

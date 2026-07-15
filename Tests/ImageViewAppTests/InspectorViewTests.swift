@@ -14,4 +14,9 @@ final class InspectorViewTests: XCTestCase {
         XCTAssertTrue(text.contains("1"))
         XCTAssertTrue(text.contains("KB"))
     }
+
+    func testExposureFormattingUsesPhotographyNotation() {
+        XCTAssertEqual(InspectorView.exposureTimeText(1.0 / 125.0), "1/125 s")
+        XCTAssertEqual(InspectorView.exposureTimeText(2), "2.00 s")
+    }
 }

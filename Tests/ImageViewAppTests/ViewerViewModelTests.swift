@@ -8,6 +8,46 @@ import XCTest
 
 @MainActor
 final class ViewerViewModelTests: XCTestCase {
+    func testContinuousReadingReturnsWholeDirectoryWithOnlyFiveDecodedNeighbors() async throws {
+        let urls = (0..<12).map { URL(fileURLWithPath: "/tmp/continuous-\($0).png") }
+        let items = urls.map { ImageItem(url: $0, format: .png) }
+        let image = try makeDecodedImage(width: 4, height: 3)
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: { _ in items },
+            loadImageAtURL: { _, _ in image },
+            loadPreviewAtURL: { _, _ in image }
+        )
+        await viewModel.open(url: urls[5])
+
+        let pages = await viewModel.continuousReadingPages(centeredAt: items[8].id)
+
+        XCTAssertEqual(pages.map(\.item.url), urls)
+        XCTAssertEqual(pages.compactMap(\.image).count, 5)
+        XCTAssertEqual(
+            pages.enumerated().compactMap { $0.element.image == nil ? nil : $0.offset },
+            [6, 7, 8, 9, 10]
+        )
+    }
+
+    func testUndoAndRedoMenuTitlesNameThePendingOperation() async throws {
+        let url = URL(fileURLWithPath: "/tmp/history-title.png")
+        let image = try makeDecodedImage(width: 4, height: 3)
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: { _ in [ImageItem(url: url, format: .png)] },
+            loadImageAtURL: { _, _ in image },
+            loadPreviewAtURL: { _, _ in image }
+        )
+        await viewModel.open(url: url)
+
+        viewModel.applyEdit(.crop(CGRect(x: 0, y: 0, width: 2, height: 2)))
+        XCTAssertEqual(viewModel.undoMenuTitle, AppStrings.text("menu.edit.undoNamed")
+            .replacingOccurrences(of: "%@", with: AppStrings.text("editing.operation.crop")))
+
+        XCTAssertTrue(viewModel.undoEdit())
+        XCTAssertEqual(viewModel.redoMenuTitle, AppStrings.text("menu.edit.redoNamed")
+            .replacingOccurrences(of: "%@", with: AppStrings.text("editing.operation.crop")))
+    }
+
     func testRemovingEditedCurrentItemClearsPendingEditsAsSecondLineProtection() async throws {
         let firstURL = URL(fileURLWithPath: "/tmp/remove-edited-a.png")
         let secondURL = URL(fileURLWithPath: "/tmp/remove-edited-b.png")
@@ -886,6 +926,46 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.hasUnsavedEdits)
         XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 4, height: 6))
         XCTAssertNil(viewModel.errorMessage)
+    }
+
+    func testUndoAndRedoRebuildFromOriginalWithoutBitmapSnapshots() async throws {
+        let imageURL = try makeTemporaryPNG(width: 6, height: 4, name: "undo-source")
+        defer { try? FileManager.default.removeItem(at: imageURL.deletingLastPathComponent()) }
+        let viewModel = ViewerViewModel()
+        await viewModel.open(url: imageURL)
+        viewModel.applyEdit(.rotateClockwise)
+        viewModel.applyEdit(.mirrorHorizontal)
+
+        XCTAssertTrue(viewModel.canUndo)
+        XCTAssertFalse(viewModel.canRedo)
+        XCTAssertEqual(viewModel.pendingOperationCountForTesting, 2)
+        XCTAssertTrue(viewModel.undoEdit())
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 4, height: 6))
+        XCTAssertEqual(viewModel.pendingOperationCountForTesting, 1)
+        XCTAssertEqual(viewModel.redoOperationCountForTesting, 1)
+
+        XCTAssertTrue(viewModel.undoEdit())
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 6, height: 4))
+        XCTAssertFalse(viewModel.hasUnsavedEdits)
+        XCTAssertTrue(viewModel.canRedo)
+
+        XCTAssertTrue(viewModel.redoEdit())
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 4, height: 6))
+        XCTAssertTrue(viewModel.hasUnsavedEdits)
+    }
+
+    func testNewEditClearsRedoHistory() async throws {
+        let imageURL = try makeTemporaryPNG(width: 6, height: 4, name: "redo-source")
+        defer { try? FileManager.default.removeItem(at: imageURL.deletingLastPathComponent()) }
+        let viewModel = ViewerViewModel()
+        await viewModel.open(url: imageURL)
+        viewModel.applyEdit(.rotateClockwise)
+        XCTAssertTrue(viewModel.undoEdit())
+
+        viewModel.applyEdit(.mirrorVertical)
+
+        XCTAssertFalse(viewModel.canRedo)
+        XCTAssertEqual(viewModel.pendingOperationCountForTesting, 1)
     }
 
     func testCropMarksEditsAndDiscardRestoresOriginalSize() async throws {

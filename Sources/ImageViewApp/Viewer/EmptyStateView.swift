@@ -3,12 +3,16 @@ import AppKit
 final class EmptyStateView: NSView {
     var onOpenRequested: (() -> Void)?
     var onBrowseFolderRequested: (() -> Void)?
+    var onOpenRecentRequested: ((URL) -> Void)?
+    var onClearRecentRequested: (() -> Void)?
 
     private let iconView = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let messageLabel = NSTextField(labelWithString: "")
     private let openButton = NSButton()
     private let browseFolderButton = NSButton()
+    private let recentStack = NSStackView()
+    private var recentURLs: [URL] = []
 
     init(preferredLanguages: [String] = Locale.preferredLanguages) {
         super.init(frame: .zero)
@@ -55,7 +59,10 @@ final class EmptyStateView: NSView {
         buttonStack.alignment = .centerY
         buttonStack.spacing = 8
 
-        let stack = NSStackView(views: [iconView, titleLabel, messageLabel, buttonStack])
+        recentStack.orientation = .vertical
+        recentStack.alignment = .centerX
+        recentStack.spacing = 4
+        let stack = NSStackView(views: [iconView, titleLabel, messageLabel, buttonStack, recentStack])
         stack.orientation = .vertical
         stack.alignment = .centerX
         stack.spacing = 8
@@ -72,6 +79,33 @@ final class EmptyStateView: NSView {
         ])
     }
 
+    func applyRecentItems(_ urls: [URL]) {
+        recentStack.arrangedSubviews.forEach {
+            recentStack.removeArrangedSubview($0)
+            $0.removeFromSuperview()
+        }
+        let visible = Array(urls.prefix(5))
+        recentURLs = visible
+        recentStack.isHidden = visible.isEmpty
+        guard !visible.isEmpty else { return }
+        let heading = NSTextField(labelWithString: AppStrings.text("emptyState.recent"))
+        heading.font = .systemFont(ofSize: 11, weight: .semibold)
+        heading.textColor = .secondaryLabelColor
+        recentStack.addArrangedSubview(heading)
+        for (index, url) in visible.enumerated() {
+            let button = NSButton(title: url.lastPathComponent, target: self, action: #selector(openRecent(_:)))
+            button.bezelStyle = .inline
+            button.toolTip = url.path
+            button.setAccessibilityLabel(url.lastPathComponent)
+            button.tag = index
+            recentStack.addArrangedSubview(button)
+        }
+        let clear = NSButton(title: AppStrings.text("emptyState.clearRecent"), target: self, action: #selector(clearRecent(_:)))
+        clear.bezelStyle = .inline
+        clear.contentTintColor = .secondaryLabelColor
+        recentStack.addArrangedSubview(clear)
+    }
+
     @objc private func requestOpen(_ sender: Any?) {
         onOpenRequested?()
     }
@@ -79,6 +113,13 @@ final class EmptyStateView: NSView {
     @objc private func requestBrowseFolder(_ sender: Any?) {
         onBrowseFolderRequested?()
     }
+
+    @objc private func openRecent(_ sender: NSButton) {
+        guard recentURLs.indices.contains(sender.tag) else { return }
+        onOpenRecentRequested?(recentURLs[sender.tag])
+    }
+
+    @objc private func clearRecent(_ sender: Any?) { onClearRecentRequested?() }
 
     var titleTextForTesting: String { titleLabel.stringValue }
     var messageTextForTesting: String { messageLabel.stringValue }

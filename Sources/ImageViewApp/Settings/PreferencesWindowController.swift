@@ -13,6 +13,9 @@ final class PreferencesWindowController: NSWindowController {
     private let showsInspectorButton = NSButton()
     private let confirmsDeleteButton = NSButton()
     private let navigationTransitionsButton = NSButton()
+    private let continuousReadingButton = NSButton()
+    private let readingDirectionPopUpButton = NSPopUpButton()
+    private let resetUsageHintButton = NSButton()
     private let rowsStack = NSStackView()
     private let selectCommonButton = NSButton()
     private let showAllButton = NSButton()
@@ -75,9 +78,23 @@ final class PreferencesWindowController: NSWindowController {
         configureGeneralButton(showsInspectorButton, key: "settings.general.showsInspector", identifier: "settings.showsInspector")
         configureGeneralButton(confirmsDeleteButton, key: "settings.general.confirmsDelete", identifier: "settings.confirmsDelete")
         configureGeneralButton(navigationTransitionsButton, key: "settings.general.navigationTransitions", identifier: "settings.navigationTransitions")
+        configureGeneralButton(continuousReadingButton, key: "settings.general.continuousReading", identifier: "settings.continuousReading")
+        let readingDirectionLabel = NSTextField(labelWithString: text("settings.general.readingDirection"))
+        readingDirectionPopUpButton.addItem(withTitle: text("settings.general.readingDirection.leftToRight"))
+        readingDirectionPopUpButton.lastItem?.representedObject = ReadingDirection.leftToRight.rawValue
+        readingDirectionPopUpButton.addItem(withTitle: text("settings.general.readingDirection.rightToLeft"))
+        readingDirectionPopUpButton.lastItem?.representedObject = ReadingDirection.rightToLeft.rawValue
+        readingDirectionPopUpButton.identifier = NSUserInterfaceItemIdentifier("settings.readingDirection")
+        readingDirectionPopUpButton.target = self
+        readingDirectionPopUpButton.action = #selector(changeReadingDirection(_:))
+        let readingDirectionRow = NSStackView(views: [readingDirectionLabel, readingDirectionPopUpButton])
+        readingDirectionRow.orientation = .horizontal
+        readingDirectionRow.alignment = .centerY
+        readingDirectionRow.spacing = 8
         let generalStack = NSStackView(views: [
             showsFilmstripButton, showsInspectorButton,
-            confirmsDeleteButton, navigationTransitionsButton
+            confirmsDeleteButton, navigationTransitionsButton, continuousReadingButton,
+            readingDirectionRow, resetUsageHintButton
         ])
         generalStack.orientation = .vertical
         generalStack.alignment = .leading
@@ -153,6 +170,13 @@ final class PreferencesWindowController: NSWindowController {
         confirmsDeleteButton.action = #selector(toggleConfirmsDelete(_:))
         navigationTransitionsButton.target = self
         navigationTransitionsButton.action = #selector(toggleNavigationTransitions(_:))
+        continuousReadingButton.target = self
+        continuousReadingButton.action = #selector(toggleContinuousReading(_:))
+        resetUsageHintButton.title = text("settings.general.resetUsageHint")
+        resetUsageHintButton.bezelStyle = .rounded
+        resetUsageHintButton.target = self
+        resetUsageHintButton.action = #selector(resetUsageHint(_:))
+        resetUsageHintButton.setAccessibilityLabel(resetUsageHintButton.title)
 
         settings.objectWillChange
             .sink { [weak self] _ in
@@ -292,6 +316,12 @@ final class PreferencesWindowController: NSWindowController {
         showsInspectorButton.state = settings.showsInspector ? .on : .off
         confirmsDeleteButton.state = settings.confirmsDelete ? .on : .off
         navigationTransitionsButton.state = settings.animatesNavigationTransitions ? .on : .off
+        continuousReadingButton.state = settings.usesContinuousReading ? .on : .off
+        readingDirectionPopUpButton.selectItem(withTitle: text(
+            settings.readingDirection == .leftToRight
+                ? "settings.general.readingDirection.leftToRight"
+                : "settings.general.readingDirection.rightToLeft"
+        ))
     }
 
     @objc private func toggleFormat(_ sender: NSButton) {
@@ -324,4 +354,14 @@ final class PreferencesWindowController: NSWindowController {
     @objc private func toggleShowsInspector(_ sender: NSButton) { settings.showsInspector = sender.state == .on }
     @objc private func toggleConfirmsDelete(_ sender: NSButton) { settings.confirmsDelete = sender.state == .on }
     @objc private func toggleNavigationTransitions(_ sender: NSButton) { settings.animatesNavigationTransitions = sender.state == .on }
+    @objc private func toggleContinuousReading(_ sender: NSButton) { settings.usesContinuousReading = sender.state == .on }
+    @objc private func changeReadingDirection(_ sender: NSPopUpButton) {
+        guard let rawValue = sender.selectedItem?.representedObject as? String,
+              let direction = ReadingDirection(rawValue: rawValue) else { return }
+        settings.readingDirection = direction
+    }
+    @objc private func resetUsageHint(_ sender: NSButton) {
+        settings.hasShownUsageHint = false
+        resetUsageHintButton.title = text("settings.general.usageHintReset")
+    }
 }

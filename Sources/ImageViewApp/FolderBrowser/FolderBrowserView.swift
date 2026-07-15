@@ -13,6 +13,10 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
     var onClearFilters: (() -> Void)?
     var onRetryFolder: (() -> Void)?
     var onChooseAnotherFolder: (() -> Void)?
+    var onCancelOperation: (() -> Void)?
+    var onUndoLastOperation: (() -> Void)?
+    var onShowOperationDetails: ((String) -> Void)?
+    var onAccessibilityAnnouncementForTesting: ((String) -> Void)?
 
     private let thumbnailProvider: ThumbnailProvider
     private var items: [ImageItem] = []
@@ -24,7 +28,17 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
     private let trashButton = NSButton(title: AppStrings.text("folderBrowser.button.trash"), target: nil, action: nil)
     private let moveButton = NSButton(title: AppStrings.text("folderBrowser.button.move"), target: nil, action: nil)
     private let renameButton = NSButton(title: AppStrings.text("folderBrowser.button.rename"), target: nil, action: nil)
+    private let batchMoreButton = NSButton()
+    private let toolbar = NSStackView()
+    private let countLabel = NSTextField(labelWithString: "")
     private let operationStatusLabel = NSTextField(labelWithString: "")
+    private let undoOperationButton = NSButton()
+    private let operationDetailsButton = NSButton()
+    private let operationActionsStack = NSStackView()
+    private let operationProgressIndicator = NSProgressIndicator()
+    private let operationProgressLabel = NSTextField(labelWithString: "")
+    private let cancelOperationButton = NSButton()
+    private let operationProgressStack = NSStackView()
     private let collectionView = ReturnOpeningCollectionView()
     private let collectionScrollView = NSScrollView()
     private let stateProgressIndicator = NSProgressIndicator()
@@ -37,6 +51,9 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
     private var secondaryRecoveryAction: RecoveryAction?
     private var currentPresentation: FolderBrowserPresentation = .content
     private var currentIsOperating = false
+    private var isCompactToolbar = false
+    private var lastAnnouncedVisibleCount: Int?
+    private var operationDetailsText: String?
 
     var testingSearchPlaceholder: String? { searchField.placeholderString }
     var testingSearchText: String { searchField.stringValue }
@@ -53,6 +70,16 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
     var testingOperationStatusText: String? {
         operationStatusLabel.isHidden ? nil : operationStatusLabel.stringValue
     }
+    var testingUndoOperationVisible: Bool { !undoOperationButton.isHidden }
+    var testingOperationDetailsVisible: Bool { !operationDetailsButton.isHidden }
+    var testingCountText: String { countLabel.stringValue }
+    var testingSearchWidthRange: ClosedRange<CGFloat> { 220...420 }
+    var testingProgressText: String? {
+        operationProgressStack.isHidden ? nil : operationProgressLabel.stringValue
+    }
+    var testingCancelVisible: Bool { !operationProgressStack.isHidden && !cancelOperationButton.isHidden }
+    var testingIsCompactToolbar: Bool { isCompactToolbar }
+    var testingHasBatchMoreButton: Bool { batchMoreButton.superview != nil && !batchMoreButton.isHidden }
     var testingBatchActionButtonsDisabled: Bool {
         !trashButton.isEnabled && !moveButton.isEnabled && !renameButton.isEnabled
     }
@@ -114,6 +141,11 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
         fatalError("init(coder:) has not been implemented")
     }
 
+    override func layout() {
+        super.layout()
+        updateResponsiveToolbar()
+    }
+
     func apply(items: [ImageItem], selectedIDs: Set<ImageItem.ID>) {
         applyItems(items)
         applySelection(selectedIDs)
@@ -139,6 +171,22 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
         }
         collectionView.selectionIndexPaths = indexPaths
         updateBatchActionAvailability()
+    }
+
+    func applyCounts(total: Int, visible: Int, selected: Int) {
+        var parts = [String(format: AppStrings.text("folderBrowser.count.total"), total)]
+        if visible != total {
+            parts.append(String(format: AppStrings.text("folderBrowser.count.filtered"), visible))
+        }
+        if selected > 0 {
+            parts.append(String(format: AppStrings.text("folderBrowser.count.selected"), selected))
+        }
+        countLabel.stringValue = parts.joined(separator: " · ")
+        countLabel.setAccessibilityValue(countLabel.stringValue)
+        if let previous = lastAnnouncedVisibleCount, previous != visible {
+            announce(String(format: AppStrings.text("folderBrowser.announcement.filtered"), visible))
+        }
+        lastAnnouncedVisibleCount = visible
     }
 
     func applyFilter(_ filter: FolderFilter) {
@@ -220,7 +268,12 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
         recoveryFailures: [BatchRecoveryFailure] = [],
         isOperating: Bool
     ) {
+        let wasOperating = currentIsOperating
         currentIsOperating = isOperating
+        undoOperationButton.isEnabled = !isOperating && !undoOperationButton.isHidden
+        operationDetailsText = detailsText(for: failures, recoveryFailures: recoveryFailures)
+        operationDetailsButton.isHidden = operationDetailsText == nil
+        operationDetailsButton.isEnabled = !isOperating
         let failureText = failureSummary(for: failures)
         let recoveryText = recoverySummary(for: recoveryFailures)
         let statusText: String?
@@ -249,7 +302,32 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
 
         operationStatusLabel.stringValue = completeStatusText
         operationStatusLabel.isHidden = completeStatusText.isEmpty
+        if wasOperating && !isOperating && !completeStatusText.isEmpty {
+            announce(String(format: AppStrings.text("folderBrowser.announcement.completed"), completeStatusText))
+        }
         updateBatchActionAvailability()
+    }
+
+    func applyProgress(_ progress: FolderBatchProgress?) {
+        guard let progress else {
+            operationProgressStack.isHidden = true
+            return
+        }
+        operationProgressStack.isHidden = false
+        operationProgressIndicator.minValue = 0
+        operationProgressIndicator.maxValue = Double(max(progress.total, 1))
+        operationProgressIndicator.doubleValue = Double(progress.processed)
+        operationProgressLabel.stringValue = "\(progress.phase) · \(progress.processed) / \(progress.total)"
+        operationProgressLabel.setAccessibilityValue(operationProgressLabel.stringValue)
+        cancelOperationButton.title = AppStrings.text(
+            progress.isCancelling ? "folderBrowser.progress.cancelling" : "folderBrowser.progress.cancel"
+        )
+        cancelOperationButton.isEnabled = !progress.isCancelling
+    }
+
+    func applyUndoAvailability(_ isAvailable: Bool) {
+        undoOperationButton.isHidden = !isAvailable
+        undoOperationButton.isEnabled = isAvailable && !currentIsOperating
     }
 
     func testingSelectItems(with ids: Set<ImageItem.ID>) {
@@ -262,6 +340,10 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
 
     func testingPerformOpenAction() {
         collectionView.openSelectedItem?()
+    }
+
+    func testingPerformOperationDetailsAction() {
+        showOperationDetailsClicked(operationDetailsButton)
     }
 
     func testingPerformKeyDown(
@@ -319,6 +401,10 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
         renameButton.performClick(nil)
     }
 
+    func testingTriggerCancelOperation() {
+        cancelOperationButton.performClick(nil)
+    }
+
     func testingTriggerPrimaryRecovery() {
         primaryRecoveryButton.performClick(nil)
     }
@@ -347,7 +433,12 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
             return item
         }
 
-        cell.configure(with: items[indexPath.item], thumbnailProvider: thumbnailProvider)
+        cell.configure(
+            with: items[indexPath.item],
+            thumbnailProvider: thumbnailProvider,
+            position: indexPath.item + 1,
+            total: items.count
+        )
         return cell
     }
 
@@ -390,26 +481,87 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
         moveButton.action = #selector(moveClicked(_:))
         renameButton.target = self
         renameButton.action = #selector(renameClicked(_:))
+        for button in [moveButton, renameButton, trashButton] {
+            button.toolTip = button.title
+            button.setAccessibilityLabel(button.title)
+        }
+        trashButton.contentTintColor = .systemRed
+        batchMoreButton.image = NSImage(
+            systemSymbolName: "ellipsis.circle",
+            accessibilityDescription: AppStrings.text("folderBrowser.button.more")
+        )
+        batchMoreButton.bezelStyle = .toolbar
+        batchMoreButton.isBordered = false
+        batchMoreButton.toolTip = AppStrings.text("folderBrowser.button.more")
+        batchMoreButton.setAccessibilityLabel(AppStrings.text("folderBrowser.button.more"))
+        batchMoreButton.target = self
+        batchMoreButton.action = #selector(showBatchMoreMenu(_:))
+        countLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        countLabel.textColor = .secondaryLabelColor
+        countLabel.lineBreakMode = .byTruncatingTail
         operationStatusLabel.font = .systemFont(ofSize: 11, weight: .medium)
         operationStatusLabel.textColor = .secondaryLabelColor
         operationStatusLabel.lineBreakMode = .byWordWrapping
         operationStatusLabel.maximumNumberOfLines = 0
         operationStatusLabel.isHidden = true
+        undoOperationButton.title = AppStrings.text("folderBrowser.operation.undo")
+        undoOperationButton.translatesAutoresizingMaskIntoConstraints = false
+        undoOperationButton.bezelStyle = .rounded
+        undoOperationButton.controlSize = .small
+        undoOperationButton.target = self
+        undoOperationButton.action = #selector(undoOperationClicked(_:))
+        undoOperationButton.setAccessibilityLabel(undoOperationButton.title)
+        undoOperationButton.isHidden = true
+        operationDetailsButton.title = AppStrings.text("folderBrowser.operation.viewDetails")
+        operationDetailsButton.bezelStyle = .rounded
+        operationDetailsButton.controlSize = .small
+        operationDetailsButton.target = self
+        operationDetailsButton.action = #selector(showOperationDetailsClicked(_:))
+        operationDetailsButton.setAccessibilityLabel(operationDetailsButton.title)
+        operationDetailsButton.isHidden = true
+        operationActionsStack.setViews([operationDetailsButton, undoOperationButton], in: .leading)
+        operationActionsStack.orientation = .horizontal
+        operationActionsStack.alignment = .centerY
+        operationActionsStack.spacing = 6
+        operationActionsStack.translatesAutoresizingMaskIntoConstraints = false
+        operationProgressIndicator.style = .bar
+        operationProgressIndicator.controlSize = .small
+        operationProgressLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        operationProgressLabel.textColor = .secondaryLabelColor
+        cancelOperationButton.title = AppStrings.text("folderBrowser.progress.cancel")
+        cancelOperationButton.bezelStyle = .rounded
+        cancelOperationButton.controlSize = .small
+        cancelOperationButton.target = self
+        cancelOperationButton.action = #selector(cancelOperationClicked(_:))
+        operationProgressStack.setViews(
+            [operationProgressLabel, operationProgressIndicator, cancelOperationButton],
+            in: .leading
+        )
+        operationProgressStack.orientation = .horizontal
+        operationProgressStack.alignment = .centerY
+        operationProgressStack.spacing = 8
+        operationProgressStack.translatesAutoresizingMaskIntoConstraints = false
+        operationProgressStack.isHidden = true
+        operationProgressIndicator.widthAnchor.constraint(equalToConstant: 140).isActive = true
 
-        let toolbar = NSStackView(views: [
+        toolbar.setViews([
             searchField,
             sortPopUpButton,
             typeFilterPopUpButton,
-            trashButton,
             moveButton,
-            renameButton
-        ])
+            renameButton,
+            trashButton,
+            batchMoreButton
+        ], in: .leading)
         toolbar.translatesAutoresizingMaskIntoConstraints = false
         toolbar.orientation = .horizontal
         toolbar.alignment = .centerY
         toolbar.spacing = 8
-        searchField.widthAnchor.constraint(greaterThanOrEqualToConstant: 180).isActive = true
+        batchMoreButton.isHidden = true
+        searchField.widthAnchor.constraint(greaterThanOrEqualToConstant: 220).isActive = true
+        searchField.widthAnchor.constraint(lessThanOrEqualToConstant: 420).isActive = true
         operationStatusLabel.translatesAutoresizingMaskIntoConstraints = false
+        countLabel.translatesAutoresizingMaskIntoConstraints = false
 
         let layout = NSCollectionViewFlowLayout()
         layout.itemSize = NSSize(width: 148, height: 168)
@@ -476,7 +628,10 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
         secondaryRecoveryButton.isHidden = true
 
         addSubview(toolbar)
+        addSubview(countLabel)
         addSubview(operationStatusLabel)
+        addSubview(operationActionsStack)
+        addSubview(operationProgressStack)
         addSubview(collectionScrollView)
         addSubview(stateStack)
 
@@ -485,11 +640,21 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
             toolbar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             toolbar.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
 
-            operationStatusLabel.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: 6),
-            operationStatusLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            operationStatusLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
+            countLabel.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: 6),
+            countLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            countLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
 
-            collectionScrollView.topAnchor.constraint(equalTo: operationStatusLabel.bottomAnchor, constant: 8),
+            operationStatusLabel.topAnchor.constraint(equalTo: countLabel.bottomAnchor, constant: 4),
+            operationStatusLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            operationStatusLabel.trailingAnchor.constraint(lessThanOrEqualTo: operationActionsStack.leadingAnchor, constant: -8),
+            operationActionsStack.centerYAnchor.constraint(equalTo: operationStatusLabel.centerYAnchor),
+            operationActionsStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+
+            operationProgressStack.topAnchor.constraint(equalTo: operationStatusLabel.bottomAnchor, constant: 4),
+            operationProgressStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            operationProgressStack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
+
+            collectionScrollView.topAnchor.constraint(equalTo: operationProgressStack.bottomAnchor, constant: 8),
             collectionScrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             collectionScrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
             collectionScrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -519,16 +684,76 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
         onTypeFilterChanged?([SupportedImageFormat.allCases[tag]])
     }
 
-    @objc private func trashClicked(_ sender: NSButton) {
+    @objc private func trashClicked(_ sender: Any?) {
         onMoveToTrash?()
     }
 
-    @objc private func moveClicked(_ sender: NSButton) {
+    @objc private func moveClicked(_ sender: Any?) {
         onMoveToFolder?()
     }
 
-    @objc private func renameClicked(_ sender: NSButton) {
+    @objc private func renameClicked(_ sender: Any?) {
         onBatchRename?()
+    }
+
+    @objc private func cancelOperationClicked(_ sender: NSButton) {
+        onCancelOperation?()
+    }
+
+    @objc private func undoOperationClicked(_ sender: NSButton) {
+        onUndoLastOperation?()
+    }
+
+    @objc private func showOperationDetailsClicked(_ sender: NSButton) {
+        guard let operationDetailsText else { return }
+        onShowOperationDetails?(operationDetailsText)
+    }
+
+    @objc private func showBatchMoreMenu(_ sender: NSButton) {
+        let menu = NSMenu()
+        let rename = NSMenuItem(
+            title: renameButton.title,
+            action: #selector(renameClicked(_:)),
+            keyEquivalent: ""
+        )
+        rename.target = self
+        rename.isEnabled = renameButton.isEnabled
+        menu.addItem(rename)
+        menu.addItem(.separator())
+        let trash = NSMenuItem(
+            title: trashButton.title,
+            action: #selector(trashClicked(_:)),
+            keyEquivalent: ""
+        )
+        trash.target = self
+        trash.isEnabled = trashButton.isEnabled
+        menu.addItem(trash)
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.maxY + 4), in: sender)
+    }
+
+    private func updateResponsiveToolbar() {
+        let compact = bounds.width > 0 && bounds.width < 900
+        guard compact != isCompactToolbar else { return }
+        isCompactToolbar = compact
+        renameButton.isHidden = compact
+        trashButton.isHidden = compact
+        batchMoreButton.isHidden = !compact
+    }
+
+    private func announce(_ message: String) {
+        if let onAccessibilityAnnouncementForTesting {
+            onAccessibilityAnnouncementForTesting(message)
+            return
+        }
+        NSAccessibility.post(
+            element: NSApp!,
+            notification: .announcementRequested,
+            userInfo:
+            [
+                .announcement: message,
+                .priority: NSAccessibilityPriorityLevel.medium.rawValue
+            ]
+        )
     }
 
     @objc private func primaryRecoveryClicked(_ sender: NSButton) {
@@ -604,6 +829,19 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
         return "\(countText) · \(firstFailure.url.lastPathComponent): \(failureReasonText(firstFailure.reason))"
     }
 
+    private func detailsText(
+        for failures: [BatchFileFailure],
+        recoveryFailures: [BatchRecoveryFailure]
+    ) -> String? {
+        let failureLines = failures.map {
+            "\($0.url.lastPathComponent): \(failureReasonText($0.reason))"
+        }
+        let recoveryText = recoverySummary(for: recoveryFailures)
+        let sections = [failureLines.isEmpty ? nil : failureLines.joined(separator: "\n"), recoveryText]
+            .compactMap { $0 }
+        return sections.isEmpty ? nil : sections.joined(separator: "\n\n")
+    }
+
     private func recoverySummary(for failures: [BatchRecoveryFailure]) -> String? {
         guard !failures.isEmpty else { return nil }
         let heading = AppStrings.text("folderBrowser.recovery.heading")
@@ -662,6 +900,7 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
         for button in [trashButton, moveButton, renameButton] {
             button.isEnabled = enabled
         }
+        batchMoreButton.isEnabled = enabled
     }
 
     private func failureReasonText(_ reason: BatchFileFailureReason) -> String {
@@ -682,6 +921,8 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
             return String(format: AppStrings.text("folderBrowser.failure.moveFailed"), detail)
         case .renameFailed(let detail):
             return String(format: AppStrings.text("folderBrowser.failure.renameFailed"), detail)
+        case .cancelled:
+            return AppStrings.text("folderBrowser.failure.cancelled")
         }
     }
 }

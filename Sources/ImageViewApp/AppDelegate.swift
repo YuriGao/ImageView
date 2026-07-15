@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var imageWindowControllers: [MainWindowController] = []
     private weak var activeImageWindowController: MainWindowController?
     private var preferencesWindowController: PreferencesWindowController?
+    private var helpWindowController: HelpWindowController?
     private var pendingLaunchURLs: [URL] = []
     private var didFinishLaunching = false
     private var didRequestTermination = false
@@ -22,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let terminateApplication: () -> Void
     private let noteRecentDocument: (URL) -> Void
     private let recentDocumentURLs: () -> [URL]
+    private let clearRecentDocuments: () -> Void
     private weak var installedMainMenu: NSMenu?
     private var openRecentMenu: NSMenu?
     private var appearanceMenuItems: [AppAppearance: NSMenuItem] = [:]
@@ -45,7 +47,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         openFolderURL: @escaping (MainWindowController, URL) -> Void = { $0.openFolder(url: $1) },
         terminateApplication: @escaping () -> Void = { NSApp.terminate(nil) },
         noteRecentDocument: @escaping (URL) -> Void = { NSDocumentController.shared.noteNewRecentDocumentURL($0) },
-        recentDocumentURLs: @escaping () -> [URL] = { NSDocumentController.shared.recentDocumentURLs }
+        recentDocumentURLs: @escaping () -> [URL] = { NSDocumentController.shared.recentDocumentURLs },
+        clearRecentDocuments: @escaping () -> Void = { NSDocumentController.shared.clearRecentDocuments(nil) }
     ) {
         self.settings = settings
         self.defaultApplicationService = defaultApplicationService
@@ -58,6 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.terminateApplication = terminateApplication
         self.noteRecentDocument = noteRecentDocument
         self.recentDocumentURLs = recentDocumentURLs
+        self.clearRecentDocuments = clearRecentDocuments
         super.init()
     }
 
@@ -121,6 +125,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.onBrowseFolderRequested = { [weak self, weak controller] in
             self?.requestOpenFolder(requesting: controller)
         }
+        controller.onOpenRecentRequested = { [weak self] url in self?.openURLs([url]) }
+        controller.onClearRecentRequested = { [weak self] in
+            self?.clearRecentDocuments()
+            self?.rebuildOpenRecentMenu()
+        }
         controller.onWindowDidBecomeKey = { [weak self] controller in
             self?.imageWindowDidBecomeKey(controller)
         }
@@ -128,6 +137,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.imageWindowDidClose(controller)
         }
         imageWindowControllers.append(controller)
+        controller.updateRecentItems(validRecentDocumentURLs())
         activeImageWindowController = controller
         return controller
     }
@@ -250,11 +260,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         viewMenu.addItem(.separator())
         viewMenu.addItem(NSMenuItem(title: text("menu.view.actualSize"), action: #selector(MainWindowController.actualSize(_:)), keyEquivalent: "0"))
         viewMenu.addItem(NSMenuItem(title: text("menu.view.zoomToFit"), action: #selector(MainWindowController.zoomToFit(_:)), keyEquivalent: "9"))
+        viewMenu.addItem(NSMenuItem(title: text("menu.view.zoomToFitWidth"), action: #selector(MainWindowController.zoomToFitWidth(_:)), keyEquivalent: "8"))
         viewMenu.addItem(.separator())
 
         let toggleFilmstripMenuItem = NSMenuItem(title: text("menu.view.showFilmstrip"), action: #selector(MainWindowController.toggleFilmstrip(_:)), keyEquivalent: "f")
         toggleFilmstripMenuItem.keyEquivalentModifierMask = [.command, .option]
         viewMenu.addItem(toggleFilmstripMenuItem)
+
+        let continuousReadingMenuItem = NSMenuItem(title: text("menu.view.continuousReading"), action: #selector(MainWindowController.toggleContinuousReading(_:)), keyEquivalent: "r")
+        continuousReadingMenuItem.keyEquivalentModifierMask = [.command, .option]
+        viewMenu.addItem(continuousReadingMenuItem)
 
         let toggleInspectorMenuItem = NSMenuItem(title: text("menu.view.showInfo"), action: #selector(MainWindowController.toggleInspector(_:)), keyEquivalent: "i")
         toggleInspectorMenuItem.keyEquivalentModifierMask = [.command, .option]
@@ -286,6 +301,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(editMenuItem)
         let editMenu = NSMenu(title: text("menu.image"))
         editMenuItem.submenu = editMenu
+
+        let undoItem = NSMenuItem(title: text("menu.edit.undo"), action: #selector(MainWindowController.undoEdit(_:)), keyEquivalent: "z")
+        editMenu.addItem(undoItem)
+        let redoItem = NSMenuItem(title: text("menu.edit.redo"), action: #selector(MainWindowController.redoEdit(_:)), keyEquivalent: "Z")
+        redoItem.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(redoItem)
+        editMenu.addItem(.separator())
 
         let rotateClockwiseMenuItem = NSMenuItem(title: text("menu.image.rotateClockwise"), action: #selector(MainWindowController.rotateClockwise(_:)), keyEquivalent: "]")
         editMenu.addItem(rotateClockwiseMenuItem)
@@ -363,11 +385,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showHelp(_ sender: Any?) {
-        let alert = NSAlert()
-        alert.messageText = AppStrings.text("menu.help.imageView")
-        alert.informativeText = AppStrings.text("help.message")
-        alert.addButton(withTitle: AppStrings.text("common.ok"))
-        alert.runModal()
+        if helpWindowController == nil {
+            helpWindowController = HelpWindowController()
+        }
+        helpWindowController?.showWindow(sender)
+        helpWindowController?.window?.center()
+        helpWindowController?.window?.makeKeyAndOrderFront(sender)
     }
 
     static func appearanceName(for appearance: AppAppearance) -> NSAppearance.Name? {
@@ -427,6 +450,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func rebuildOpenRecentMenu() {
         guard let openRecentMenu else { return }
         rebuildOpenRecentMenu(openRecentMenu)
+        let urls = validRecentDocumentURLs()
+        imageWindowControllers.forEach { $0.updateRecentItems(urls) }
+    }
+
+    private func validRecentDocumentURLs() -> [URL] {
+        recentDocumentURLs().filter { FileManager.default.fileExists(atPath: $0.path) }
     }
 
     private func rebuildOpenRecentMenu(_ openRecentMenu: NSMenu) {

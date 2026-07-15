@@ -298,6 +298,8 @@ final class BatchRenameSheetController: NSWindowController, NSTextFieldDelegate 
             return String(format: AppStrings.text("folderBrowser.failure.moveFailed"), detail)
         case .renameFailed(let detail):
             return String(format: AppStrings.text("folderBrowser.failure.renameFailed"), detail)
+        case .cancelled:
+            return AppStrings.text("folderBrowser.failure.cancelled")
         }
     }
 

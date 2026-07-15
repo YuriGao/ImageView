@@ -32,7 +32,15 @@ public struct ImageMetadataService {
             modifiedAt: modifiedAt,
             capturedAt: capturedAt,
             cameraMake: tiff?[kCGImagePropertyTIFFMake] as? String,
-            cameraModel: tiff?[kCGImagePropertyTIFFModel] as? String
+            cameraModel: tiff?[kCGImagePropertyTIFFModel] as? String,
+            colorSpace: imageProperties?[kCGImagePropertyColorModel] as? String,
+            colorProfile: imageProperties?[kCGImagePropertyProfileName] as? String,
+            bitDepth: imageProperties?[kCGImagePropertyDepth] as? Int,
+            orientation: imageProperties?[kCGImagePropertyOrientation] as? Int,
+            exposureTime: (exif?[kCGImagePropertyExifExposureTime] as? NSNumber)?.doubleValue,
+            aperture: (exif?[kCGImagePropertyExifFNumber] as? NSNumber)?.doubleValue,
+            isoSpeed: (exif?[kCGImagePropertyExifISOSpeedRatings] as? [NSNumber])?.first?.intValue,
+            focalLength: (exif?[kCGImagePropertyExifFocalLength] as? NSNumber)?.doubleValue
         )
     }
 

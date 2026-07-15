@@ -42,14 +42,73 @@ final class ImageCanvasViewTests: XCTestCase {
     }
 
     func testToggleFitOrActualSizeSwitchesBetweenZoomedAndFit() {
-        let canvas = ImageCanvasView()
+        let canvas = ImageCanvasView(frame: CGRect(x: 0, y: 0, width: 400, height: 300))
+        canvas.image = makeDecodedImage(width: 800, height: 600)
 
         canvas.toggleFitOrActualSize()
         XCTAssertEqual(canvas.scale, 2.0, accuracy: 0.001)
+        XCTAssertEqual(canvas.pixelScale!, 1.0, accuracy: 0.001)
+        XCTAssertEqual(canvas.displayMode, .manual)
 
         canvas.toggleFitOrActualSize()
         XCTAssertEqual(canvas.scale, 1.0, accuracy: 0.001)
         XCTAssertEqual(canvas.offset, .zero)
+        XCTAssertEqual(canvas.displayMode, .fit)
+    }
+
+    func testToggleRestoresLastManualPixelScale() {
+        let canvas = ImageCanvasView(frame: CGRect(x: 0, y: 0, width: 400, height: 300))
+        canvas.image = makeDecodedImage(width: 800, height: 600)
+        canvas.setManualPercentage(200)
+        canvas.resetViewTransform()
+
+        canvas.toggleFitOrActualSize()
+
+        XCTAssertEqual(canvas.pixelScale!, 2.0, accuracy: 0.001)
+        XCTAssertEqual(canvas.displayMode, .manual)
+    }
+
+    func testManualPixelScaleSurvivesCanvasResize() {
+        let canvas = ImageCanvasView(frame: CGRect(x: 0, y: 0, width: 400, height: 300))
+        canvas.image = makeDecodedImage(width: 800, height: 600)
+        canvas.zoomToActualSize()
+
+        canvas.setFrameSize(CGSize(width: 800, height: 600))
+
+        XCTAssertEqual(canvas.pixelScale!, 1.0, accuracy: 0.001)
+        XCTAssertEqual(canvas.scale, 1.0, accuracy: 0.001)
+        XCTAssertEqual(canvas.displayMode, .manual)
+    }
+
+    func testActualSizeRemainsOnePixelPerPointForVeryLargeImage() {
+        let canvas = ImageCanvasView(frame: CGRect(x: 0, y: 0, width: 400, height: 300))
+        canvas.image = makeDecodedImage(width: 40_000, height: 30_000)
+
+        canvas.zoomToActualSize()
+
+        XCTAssertEqual(canvas.pixelScale!, 1.0, accuracy: 0.001)
+        XCTAssertEqual(canvas.scale, 100.0, accuracy: 0.001)
+    }
+
+    func testManualPercentageClampsInActualPixelScaleNotFitRelativeScale() {
+        let canvas = ImageCanvasView(frame: CGRect(x: 0, y: 0, width: 400, height: 300))
+        canvas.image = makeDecodedImage(width: 40_000, height: 30_000)
+
+        canvas.setManualPercentage(5_000)
+
+        XCTAssertEqual(canvas.pixelScale!, 12.0, accuracy: 0.001)
+    }
+
+    func testFitWidthMakesLongImageScrollableAtCanvasWidth() {
+        let canvas = ImageCanvasView(frame: CGRect(x: 0, y: 0, width: 400, height: 300))
+        canvas.image = makeDecodedImage(width: 1_000, height: 5_000)
+
+        canvas.zoomToFitWidth()
+
+        XCTAssertEqual(canvas.displayMode, .fitWidth)
+        XCTAssertEqual(canvas.imageDrawRect?.width ?? 0, 400, accuracy: 0.001)
+        canvas.handleScroll(deltaX: 0, deltaY: 80, at: .zero)
+        XCTAssertLessThan(canvas.offset.y, 0)
     }
 
     func testScrollPansWhenZoomed() {

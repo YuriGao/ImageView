@@ -83,6 +83,69 @@ final class FolderBrowserViewTests: XCTestCase {
         XCTAssertEqual(view.testingRenameButtonTitle, AppStrings.text("folderBrowser.button.rename"))
     }
 
+    func testToolbarCollectsLowFrequencyActionsAtNarrowWidths() {
+        let view = FolderBrowserView(thumbnailProvider: .stub)
+        view.frame = NSRect(x: 0, y: 0, width: 700, height: 600)
+        view.layoutSubtreeIfNeeded()
+        XCTAssertTrue(view.testingIsCompactToolbar)
+        XCTAssertTrue(view.testingHasBatchMoreButton)
+
+        view.frame.size.width = 900
+        view.layoutSubtreeIfNeeded()
+        XCTAssertFalse(view.testingIsCompactToolbar)
+        XCTAssertFalse(view.testingHasBatchMoreButton)
+
+        view.frame.size.width = 1_200
+        view.layoutSubtreeIfNeeded()
+        XCTAssertFalse(view.testingIsCompactToolbar)
+    }
+
+    func testFilterAndBatchCompletionProduceConciseAccessibilityAnnouncements() {
+        let view = FolderBrowserView(thumbnailProvider: .stub)
+        var announcements: [String] = []
+        view.onAccessibilityAnnouncementForTesting = { announcements.append($0) }
+        view.applyCounts(total: 10, visible: 10, selected: 0)
+        view.applyCounts(total: 10, visible: 4, selected: 0)
+        view.applyOperationStatus(message: nil, failures: [], isOperating: true)
+        view.applyOperationStatus(message: "4 succeeded", failures: [], isOperating: false)
+
+        XCTAssertEqual(announcements.count, 2)
+        XCTAssertTrue(announcements[0].contains("4"))
+        XCTAssertTrue(announcements[1].contains("4 succeeded"))
+    }
+
+    func testUndoButtonOnlyAppearsForReliablyReversibleBatchOperation() {
+        let view = FolderBrowserView()
+
+        view.applyUndoAvailability(true)
+        XCTAssertTrue(view.testingUndoOperationVisible)
+
+        view.applyUndoAvailability(false)
+        XCTAssertFalse(view.testingUndoOperationVisible)
+    }
+
+    func testBatchFailuresExposeEveryItemThroughViewDetails() {
+        let view = FolderBrowserView()
+        let first = URL(fileURLWithPath: "/tmp/one.png")
+        let second = URL(fileURLWithPath: "/tmp/two.png")
+        var presentedDetails: String?
+        view.onShowOperationDetails = { presentedDetails = $0 }
+
+        view.applyOperationStatus(
+            message: "0 succeeded, 2 failed",
+            failures: [
+                BatchFileFailure(url: first, reason: .sourceMissing),
+                BatchFileFailure(url: second, reason: .destinationExists)
+            ],
+            isOperating: false
+        )
+
+        XCTAssertTrue(view.testingOperationDetailsVisible)
+        view.testingPerformOperationDetailsAction()
+        XCTAssertTrue(presentedDetails?.contains("one.png") == true)
+        XCTAssertTrue(presentedDetails?.contains("two.png") == true)
+    }
+
     func testApplyUpdatesItemCountAndSelectedIDs() {
         let first = ImageItem(url: URL(fileURLWithPath: "/tmp/first.png"), format: .png)
         let second = ImageItem(url: URL(fileURLWithPath: "/tmp/second.jpg"), format: .jpeg)
@@ -329,6 +392,26 @@ final class FolderBrowserViewTests: XCTestCase {
             "blocked.png: \(AppStrings.text("folderBrowser.failure.destinationExists"))"
         )
         XCTAssertTrue(view.testingBatchActionButtonsDisabled)
+    }
+
+    func testProgressDisplaysProcessedTotalAndCancelCallback() {
+        let view = FolderBrowserView(thumbnailProvider: .stub)
+        var cancelled = false
+        view.onCancelOperation = { cancelled = true }
+
+        view.applyProgress(FolderBatchProgress(
+            processed: 3,
+            total: 10,
+            phase: "Moving",
+            isCancelling: false
+        ))
+
+        XCTAssertEqual(view.testingProgressText, "Moving · 3 / 10")
+        XCTAssertTrue(view.testingCancelVisible)
+        view.testingTriggerCancelOperation()
+        XCTAssertTrue(cancelled)
+        view.applyProgress(nil)
+        XCTAssertNil(view.testingProgressText)
     }
 }
 

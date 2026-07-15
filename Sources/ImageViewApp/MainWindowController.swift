@@ -22,6 +22,8 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
     }
     var onOpenRequested: (() -> Void)?
     var onBrowseFolderRequested: (() -> Void)?
+    var onOpenRecentRequested: ((URL) -> Void)?
+    var onClearRecentRequested: (() -> Void)?
     private(set) var hasAssignedOpenRequest = false
     var onWindowDidBecomeKey: ((MainWindowController) -> Void)?
     var onWindowDidClose: ((MainWindowController) -> Void)?
@@ -34,6 +36,8 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         case saveEdits
         case saveEditsAs
         case discardEdits
+        case undoEdit
+        case redoEdit
     }
 
     enum KeyAction: Equatable {
@@ -124,12 +128,14 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
     private let titleBarDivider = NSBox()
     private let titleLabel = NSTextField(labelWithString: "ImageView")
     private let titleBarGridButton = HoverToolbarButton()
+    private let titleBarMoreButton = HoverToolbarButton()
     private let titleBarControlsStack = NSStackView()
     private lazy var titleBarDoubleClickRecognizer = NSClickGestureRecognizer(
         target: self,
         action: #selector(toggleWindowZoom(_:))
     )
     private let canvas = ImageCanvasView()
+    private let continuousReadingView = ContinuousReadingView()
     private let folderBrowserView = FolderBrowserView()
     private let emptyStateView = EmptyStateView()
     private let errorStateView = ErrorStateView()
@@ -141,10 +147,15 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
     private let bottomDimensionLabel = NSTextField(labelWithString: "— × — px")
     private let bottomPageLabel = NSTextField(labelWithString: "0 / 0")
     private let bottomZoomLabel = NSTextField(labelWithString: "100%")
+    private lazy var bottomZoomClickRecognizer = NSClickGestureRecognizer(
+        target: self,
+        action: #selector(showZoomMenu(_:))
+    )
     private let bottomInfoButton = NSButton()
     private let filmstripOverlayView = FilmstripOverlayView()
     private let filmstripView = FilmstripView()
     private let pageNavigationOverlayView = PageNavigationOverlayView()
+    private let usageHintView = UsageHintView()
     private var cancellables: Set<AnyCancellable> = []
     private var gestureCoordinator: GestureCoordinator?
     private var keyMonitor: Any?
@@ -156,8 +167,18 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
     private var isPointerOverFilmstrip = false
     private var pageControlsHideTimer: Timer?
     private var pageControlsVisibilityGeneration = 0
+    private var usageHintTimer: Timer?
+    private var canvasTrailingConstraint: NSLayoutConstraint!
+    private var titleBarHeightConstraint: NSLayoutConstraint!
+    private var bottomBarHeightConstraint: NSLayoutConstraint!
+    private var isInspectorDocked = false
     private var isPointerOverPageControls = false
     private var folderRetryTask: Task<Void, Never>?
+    private var continuousReadingTask: Task<Void, Never>?
+    private var continuousReadingFocusID: ImageItem.ID?
+    private var isInFullScreen = false
+    private var fullScreenChromeHideTimer: Timer?
+    private var lastAnnouncedLoadedURL: URL?
     private var folderRetryGeneration: UInt64 = 0
     private var isFolderBrowserMode = false
     private var currentFolderBrowserItems: [ImageItem] = []
@@ -173,6 +194,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
     private var activeBatchRenameSheet: BatchRenameSheetController?
     var batchActionDialogProviderForTesting: BatchActionDialogProvider?
     var recoveryAlertPresenterForTesting: ((RecoveryAlertPresentation) -> Void)?
+    var accessibilityAnnouncementHandlerForTesting: ((String) -> Void)?
     private var unsavedChangesChoiceForTesting: UnsavedChangesChoice?
 
     convenience init(
@@ -207,6 +229,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
 
     deinit {
         folderRetryTask?.cancel()
+        continuousReadingTask?.cancel()
         let folderBrowserViewModel = folderBrowserViewModel
         folderBrowserViewModel.invalidateOpenFolderRequest()
         Task { @MainActor in
@@ -262,11 +285,20 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         emptyStateView.onBrowseFolderRequested = { [weak self] in
             self?.onBrowseFolderRequested?()
         }
+        emptyStateView.onOpenRecentRequested = { [weak self] url in
+            self?.onOpenRecentRequested?(url)
+        }
+        emptyStateView.onClearRecentRequested = { [weak self] in
+            self?.onClearRecentRequested?()
+        }
         errorStateView.onRetryRequested = { [weak self] in
             self?.onOpenRequested?()
         }
         rootView.onPointerMoved = { [weak self] in
-            guard let self, !self.isFolderBrowserMode else { return }
+            guard let self else { return }
+            self.hideUsageHint()
+            self.revealFullScreenChromeIfNeeded()
+            guard !self.isFolderBrowserMode else { return }
             self.revealFilmstripOverlay()
             self.revealPageControls()
         }
@@ -297,6 +329,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         canvas.translatesAutoresizingMaskIntoConstraints = false
         window?.contentView = rootView
         rootView.addSubview(canvas)
+        rootView.addSubview(continuousReadingView)
         rootView.addSubview(folderBrowserView)
         rootView.addSubview(emptyStateView)
         rootView.addSubview(errorStateView)
@@ -307,6 +340,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         rootView.addSubview(filmstripOverlayView)
         rootView.addSubview(pageNavigationOverlayView)
         rootView.addSubview(inspectorView)
+        rootView.addSubview(usageHintView)
         bottomBarView.addSubview(bottomDimensionLabel)
         bottomBarView.addSubview(bottomPageLabel)
         bottomBarView.addSubview(bottomZoomLabel)
@@ -315,9 +349,14 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         rootView.addSubview(cropOverlay)
         rootView.addSubview(cropControlsView)
         folderBrowserView.translatesAutoresizingMaskIntoConstraints = false
+        continuousReadingView.translatesAutoresizingMaskIntoConstraints = false
+        continuousReadingView.isHidden = true
         emptyStateView.translatesAutoresizingMaskIntoConstraints = false
         errorStateView.translatesAutoresizingMaskIntoConstraints = false
         inspectorView.translatesAutoresizingMaskIntoConstraints = false
+        usageHintView.translatesAutoresizingMaskIntoConstraints = false
+        usageHintView.isHidden = true
+        usageHintView.onDismiss = { [weak self] in self?.hideUsageHint() }
         titleBarDivider.translatesAutoresizingMaskIntoConstraints = false
         bottomBarDivider.translatesAutoresizingMaskIntoConstraints = false
         for label in [bottomDimensionLabel, bottomPageLabel, bottomZoomLabel] {
@@ -331,11 +370,14 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         cropControlsView.translatesAutoresizingMaskIntoConstraints = false
         cropOverlay.isHidden = true
         cropControlsView.isHidden = true
+        canvasTrailingConstraint = canvas.trailingAnchor.constraint(equalTo: rootView.trailingAnchor)
+        titleBarHeightConstraint = titleBarView.heightAnchor.constraint(equalToConstant: Self.titleBarHeight)
+        bottomBarHeightConstraint = bottomBarView.heightAnchor.constraint(equalToConstant: Self.bottomBarHeight)
         NSLayoutConstraint.activate([
             titleBarView.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
             titleBarView.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
             titleBarView.topAnchor.constraint(equalTo: rootView.topAnchor),
-            titleBarView.heightAnchor.constraint(equalToConstant: Self.titleBarHeight),
+            titleBarHeightConstraint,
             titleBarDivider.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
             titleBarDivider.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
             titleBarDivider.bottomAnchor.constraint(equalTo: titleBarView.bottomAnchor),
@@ -349,15 +391,19 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
             bottomBarView.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
             bottomBarView.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
             bottomBarView.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
-            bottomBarView.heightAnchor.constraint(equalToConstant: Self.bottomBarHeight),
+            bottomBarHeightConstraint,
             bottomBarDivider.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
             bottomBarDivider.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
             bottomBarDivider.topAnchor.constraint(equalTo: bottomBarView.topAnchor),
             bottomBarDivider.heightAnchor.constraint(equalToConstant: 1),
             canvas.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
-            canvas.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
+            canvasTrailingConstraint,
             canvas.topAnchor.constraint(equalTo: titleBarView.bottomAnchor),
             canvas.bottomAnchor.constraint(equalTo: bottomBarView.topAnchor),
+            continuousReadingView.leadingAnchor.constraint(equalTo: canvas.leadingAnchor),
+            continuousReadingView.trailingAnchor.constraint(equalTo: canvas.trailingAnchor),
+            continuousReadingView.topAnchor.constraint(equalTo: canvas.topAnchor),
+            continuousReadingView.bottomAnchor.constraint(equalTo: canvas.bottomAnchor),
             folderBrowserView.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
             folderBrowserView.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
             folderBrowserView.topAnchor.constraint(equalTo: titleBarView.bottomAnchor),
@@ -373,6 +419,10 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
             inspectorView.trailingAnchor.constraint(equalTo: rootView.trailingAnchor, constant: -16),
             inspectorView.topAnchor.constraint(equalTo: canvas.topAnchor, constant: 16),
             inspectorView.bottomAnchor.constraint(lessThanOrEqualTo: canvas.bottomAnchor, constant: -16),
+            usageHintView.centerXAnchor.constraint(equalTo: canvas.centerXAnchor),
+            usageHintView.topAnchor.constraint(equalTo: canvas.topAnchor, constant: 18),
+            usageHintView.leadingAnchor.constraint(greaterThanOrEqualTo: canvas.leadingAnchor, constant: 20),
+            usageHintView.trailingAnchor.constraint(lessThanOrEqualTo: canvas.trailingAnchor, constant: -20),
             bottomDimensionLabel.leadingAnchor.constraint(equalTo: bottomBarView.leadingAnchor, constant: 12),
             bottomDimensionLabel.trailingAnchor.constraint(lessThanOrEqualTo: bottomPageLabel.leadingAnchor, constant: -12),
             bottomDimensionLabel.centerYAnchor.constraint(equalTo: bottomBarView.centerYAnchor),
@@ -409,9 +459,14 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
 
         canvas.onNext = { [weak self] in self?.navigateToNextImage() }
         canvas.onPrevious = { [weak self] in self?.navigateToPreviousImage() }
+        continuousReadingView.onFocusedItemChanged = { [weak self] itemID in
+            guard let self else { return }
+            self.continuousReadingFocusID = itemID
+            self.refreshContinuousReadingWindow()
+        }
         canvas.onTransformChanged = { [weak self] scale in
             guard let self else { return }
-            self.updateZoomStatus(zoomScale: scale)
+            self.updateZoomStatus()
             if scale > 1.01 {
                 self.hideFilmstripOverlay(immediately: true)
             }
@@ -453,6 +508,15 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         folderBrowserView.onBatchRename = { [weak self] in
             self?.renameSelectedFolderBrowserItems()
         }
+        folderBrowserView.onCancelOperation = { [weak self] in
+            self?.folderBrowserViewModel.cancelCurrentOperation()
+        }
+        folderBrowserView.onUndoLastOperation = { [weak self] in
+            self?.folderBrowserViewModel.undoLastBatchOperation()
+        }
+        folderBrowserView.onShowOperationDetails = { [weak self] details in
+            self?.presentBatchOperationDetails(details)
+        }
         folderBrowserViewModel.onItemURLMutation = { [weak self] mutation in
             self?.applyFolderItemURLMutation(mutation)
         }
@@ -464,10 +528,12 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
             .sink { [weak self] image in
                 guard let self else { return }
                 self.canvas.image = image
+                self.updateContinuousReadingPresentation()
                 if image == nil {
                     self.hideFilmstripOverlay(immediately: true)
                 }
                 guard self.settings.animatesNavigationTransitions,
+                      !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
                       image != nil else { return }
                 self.canvas.alphaValue = 0
                 NSAnimationContext.runAnimationGroup { context in
@@ -490,6 +556,11 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
                     self.folderBrowserView.applyItems(items)
                 }
                 self.folderBrowserView.applyFilter(session?.filter ?? FolderFilter())
+                self.folderBrowserView.applyCounts(
+                    total: session?.items.count ?? 0,
+                    visible: session?.visibleItems.count ?? 0,
+                    selected: self.folderBrowserViewModel.selectedItemIDs.count
+                )
                 self.folderBrowserView.applyPresentation(Self.folderBrowserPresentation(
                     session: session,
                     isLoading: isLoading,
@@ -498,13 +569,20 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
                 self.updateTitleBarControlAvailability(
                     folderState: FolderRouteState(session: session, isLoading: isLoading)
                 )
+                self.updateWindowTitle(viewerTitle: self.viewModel.displayTitle)
             }
             .store(in: &cancellables)
 
         folderBrowserViewModel.$selectedItemIDs
             .removeDuplicates()
             .sink { [weak self] selectedItemIDs in
-                self?.folderBrowserView.applySelection(Set(selectedItemIDs))
+                guard let self else { return }
+                self.folderBrowserView.applySelection(Set(selectedItemIDs))
+                self.folderBrowserView.applyCounts(
+                    total: self.folderBrowserViewModel.session?.items.count ?? 0,
+                    visible: self.folderBrowserViewModel.session?.visibleItems.count ?? 0,
+                    selected: selectedItemIDs.count
+                )
             }
             .store(in: &cancellables)
 
@@ -524,10 +602,21 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
             }
             .store(in: &cancellables)
 
+        folderBrowserViewModel.$operationProgress
+            .sink { [weak self] progress in
+                self?.folderBrowserView.applyProgress(progress)
+            }
+            .store(in: &cancellables)
+
+        folderBrowserViewModel.$canUndoLastBatchOperation
+            .sink { [weak self] isAvailable in
+                self?.folderBrowserView.applyUndoAvailability(isAvailable)
+            }
+            .store(in: &cancellables)
+
         viewModel.$displayTitle
             .sink { [weak self] title in
-                self?.window?.title = title
-                self?.titleLabel.stringValue = title
+                self?.updateWindowTitle(viewerTitle: title)
             }
             .store(in: &cancellables)
 
@@ -543,24 +632,28 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
             viewModel.$errorMessage
         )
             .sink { [weak self] image, loadPhase, errorMessage in
-                self?.updateEmptyStatePresentation(
+                guard let self else { return }
+                self.updateEmptyStatePresentation(
                     hasCurrentImage: image != nil,
                     loadPhase: loadPhase,
                     hasError: errorMessage != nil
                 )
+                self.announceLoadedImageIfNeeded(hasImage: image != nil, loadPhase: loadPhase)
             }
             .store(in: &cancellables)
 
         viewModel.$currentMetadata
             .sink { [weak self] metadata in
-                self?.inspectorView.rootView = InspectorView(metadata: metadata)
-                self?.updateDimensionStatus(metadata: metadata)
+                guard let self else { return }
+                self.updateInspector(metadata: metadata)
+                self.updateDimensionStatus(metadata: metadata)
             }
             .store(in: &cancellables)
 
         viewModel.$navigationState
             .sink { [weak self] state in
                 guard let self else { return }
+                self.continuousReadingFocusID = state?.currentItem?.id
                 let newURL = state?.currentItem?.url
                 let didNavigate = self.displayedItemURL != nil
                     && Self.shouldResetCanvasTransform(from: self.displayedItemURL, to: newURL)
@@ -575,7 +668,10 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
                     }
                 }
                 self.filmstripView.apply(items: state?.items ?? [], current: state?.currentItem)
-                let availability = Self.pageControlAvailability(navigationState: state)
+                let availability = Self.pageControlAvailability(
+                    navigationState: state,
+                    readingDirection: self.settings.readingDirection
+                )
                 self.pageNavigationOverlayView.update(
                     previousEnabled: availability.previous,
                     nextEnabled: availability.next
@@ -592,6 +688,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
                 }
                 self.updatePageStatus(navigationState: state)
                 self.updateTitleBarControlAvailability()
+                self.updateContinuousReadingPresentation()
             }
             .store(in: &cancellables)
 
@@ -607,6 +704,14 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         applySettings()
         updateDimensionStatus(metadata: viewModel.currentMetadata)
         updatePageStatus(navigationState: viewModel.navigationState)
+        let availability = Self.pageControlAvailability(
+            navigationState: viewModel.navigationState,
+            readingDirection: settings.readingDirection
+        )
+        pageNavigationOverlayView.update(
+            previousEnabled: availability.previous,
+            nextEnabled: availability.next
+        )
         updateZoomStatus()
     }
 
@@ -748,6 +853,14 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         _ = viewModel.discardCurrentEdits()
     }
 
+    @objc func undoEdit(_ sender: Any?) {
+        if !viewModel.undoEdit() { NSSound.beep() }
+    }
+
+    @objc func redoEdit(_ sender: Any?) {
+        if !viewModel.redoEdit() { NSSound.beep() }
+    }
+
     @objc func toggleFilmstrip(_ sender: Any?) {
         settings.showsFilmstrip.toggle()
         if settings.showsFilmstrip {
@@ -759,6 +872,10 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
 
     @objc func toggleInspector(_ sender: Any?) {
         settings.showsInspector.toggle()
+    }
+
+    @objc func toggleContinuousReading(_ sender: Any?) {
+        settings.usesContinuousReading.toggle()
     }
 
     @objc func showPreviousImage(_ sender: Any?) {
@@ -775,6 +892,83 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
 
     @objc func zoomToFit(_ sender: Any?) {
         canvas.resetViewTransform()
+    }
+
+    @objc func zoomToFitWidth(_ sender: Any?) {
+        canvas.zoomToFitWidth()
+    }
+
+    @objc private func setZoomPercentage(_ sender: NSMenuItem) {
+        canvas.setManualPercentage(CGFloat(sender.tag))
+    }
+
+    @objc private func setCustomZoomPercentage(_ sender: NSMenuItem) {
+        let alert = NSAlert()
+        alert.messageText = AppStrings.text("viewer.zoom.custom.title")
+        alert.informativeText = AppStrings.text("viewer.zoom.custom.message")
+        let currentPercentage = Int(((canvas.pixelScale ?? 1) * 100).rounded())
+        let field = NSTextField(string: "\(currentPercentage)")
+        field.frame = NSRect(x: 0, y: 0, width: 180, height: 24)
+        field.setAccessibilityLabel(AppStrings.text("viewer.zoom.custom.field"))
+        alert.accessoryView = field
+        alert.addButton(withTitle: AppStrings.text("viewer.zoom.custom.apply"))
+        alert.addButton(withTitle: AppStrings.text("viewer.zoom.custom.cancel"))
+        guard alert.runModal() == .alertFirstButtonReturn,
+              let percentage = Double(field.stringValue),
+              percentage.isFinite,
+              percentage >= 10,
+              percentage <= 1_200 else {
+            return
+        }
+        canvas.setManualPercentage(CGFloat(percentage))
+    }
+
+    @objc private func showZoomMenu(_ sender: Any?) {
+        let menu = NSMenu()
+        let fitItem = NSMenuItem(
+            title: AppStrings.text("menu.view.zoomToFit"),
+            action: #selector(zoomToFit(_:)),
+            keyEquivalent: ""
+        )
+        fitItem.target = self
+        fitItem.state = canvas.displayMode == .fit ? .on : .off
+        menu.addItem(fitItem)
+        let fitWidthItem = NSMenuItem(
+            title: AppStrings.text("menu.view.zoomToFitWidth"),
+            action: #selector(zoomToFitWidth(_:)),
+            keyEquivalent: ""
+        )
+        fitWidthItem.target = self
+        fitWidthItem.state = canvas.displayMode == .fitWidth ? .on : .off
+        menu.addItem(fitWidthItem)
+        menu.addItem(.separator())
+
+        for percentage in [50, 100, 200] {
+            let item = NSMenuItem(
+                title: "\(percentage)%",
+                action: #selector(setZoomPercentage(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.tag = percentage
+            if canvas.displayMode == .manual,
+               let pixelScale = canvas.pixelScale,
+               abs(pixelScale * 100 - CGFloat(percentage)) < 0.5 {
+                item.state = .on
+            }
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
+        let customItem = NSMenuItem(
+            title: AppStrings.text("viewer.zoom.custom.menu"),
+            action: #selector(setCustomZoomPercentage(_:)),
+            keyEquivalent: ""
+        )
+        customItem.target = self
+        menu.addItem(customItem)
+
+        let location = NSPoint(x: bottomZoomLabel.bounds.minX, y: bottomZoomLabel.bounds.maxY + 4)
+        menu.popUp(positioning: nil, at: location, in: bottomZoomLabel)
     }
 
     @objc func browseCurrentImageFolder(_ sender: Any?) {
@@ -930,6 +1124,30 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         scrollView.documentView = textView
         alert.accessoryView = scrollView
 
+        if let window {
+            alert.beginSheetModal(for: window)
+        } else {
+            alert.runModal()
+        }
+    }
+
+    private func presentBatchOperationDetails(_ details: String) {
+        let alert = NSAlert()
+        alert.messageText = AppStrings.text("folderBrowser.operation.detailsTitle")
+        alert.addButton(withTitle: AppStrings.text("common.ok"))
+        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 520, height: 180))
+        scrollView.hasVerticalScroller = true
+        scrollView.borderType = .bezelBorder
+        let textView = NSTextView(frame: scrollView.bounds)
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.drawsBackground = false
+        textView.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        textView.string = details
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.widthTracksTextView = true
+        scrollView.documentView = textView
+        alert.accessoryView = scrollView
         if let window {
             alert.beginSheetModal(for: window)
         } else {
@@ -1123,6 +1341,8 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
     }
 
     private func handleKeyDown(_ event: NSEvent) -> Bool {
+        hideUsageHint()
+        revealFullScreenChromeIfNeeded()
         switch Self.keyAction(
             for: event.keyCode,
             shouldEndEditing: shouldEndEditing(for: event),
@@ -1257,7 +1477,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
             return .fileOperationRequiringCurrentItem
         case #selector(showPreviousImage(_:)), #selector(showNextImage(_:)):
             return .navigation
-        case #selector(actualSize(_:)), #selector(zoomToFit(_:)):
+        case #selector(actualSize(_:)), #selector(zoomToFit(_:)), #selector(zoomToFitWidth(_:)):
             return .canvasSizing
         case #selector(startCropping(_:)):
             return .startCropping
@@ -1275,6 +1495,10 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
             return .saveEditsAs
         case #selector(discardEdits(_:)):
             return .discardEdits
+        case #selector(undoEdit(_:)):
+            return .undoEdit
+        case #selector(redoEdit(_:)):
+            return .redoEdit
         default:
             return nil
         }
@@ -1307,6 +1531,10 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
             return canEditCurrentImage && hasUnsavedEdits
         case .discardEdits:
             return hasCurrentImage && hasUnsavedEdits
+        case .undoEdit:
+            return hasCurrentImage && hasUnsavedEdits
+        case .redoEdit:
+            return hasCurrentImage
         }
     }
 
@@ -1321,8 +1549,12 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         bottomPageLabel.stringValue = Self.pageText(navigationState: navigationState)
     }
 
-    private func updateZoomStatus(zoomScale: CGFloat? = nil) {
-        bottomZoomLabel.stringValue = Self.zoomText(zoomScale: zoomScale ?? canvas.scale)
+    private func updateZoomStatus() {
+        bottomZoomLabel.stringValue = Self.zoomText(
+            displayMode: canvas.displayMode,
+            pixelScale: canvas.pixelScale
+        )
+        bottomZoomLabel.setAccessibilityValue(bottomZoomLabel.stringValue)
     }
 
     private func updateCropControls() {
@@ -1437,10 +1669,66 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
             isEnabled: settings.showsInspector,
             hasCurrentImage: viewModel.currentImage != nil
         )
+        updateInspectorLayout()
         bottomInfoButton.state = settings.showsInspector ? .on : .off
         updateDimensionStatus(metadata: viewModel.currentMetadata)
         updatePageStatus(navigationState: viewModel.navigationState)
         updateZoomStatus()
+        updateContinuousReadingPresentation()
+    }
+
+    private func updateContinuousReadingPresentation() {
+        let shouldShow = settings.usesContinuousReading
+            && viewModel.currentImage != nil
+            && !isFolderBrowserMode
+        continuousReadingView.isHidden = !shouldShow
+        canvas.isHidden = shouldShow || isFolderBrowserMode
+        if shouldShow {
+            refreshContinuousReadingWindow()
+        } else {
+            continuousReadingTask?.cancel()
+            continuousReadingTask = nil
+        }
+        bottomZoomLabel.isHidden = shouldShow || isFolderBrowserMode || viewModel.currentImage == nil
+    }
+
+    private func refreshContinuousReadingWindow() {
+        continuousReadingTask?.cancel()
+        let viewModel = viewModel
+        let focusedItemID = continuousReadingFocusID ?? viewModel.navigationState?.currentItem?.id
+        continuousReadingTask = Task { [weak self, viewModel] in
+            let pages = await viewModel.continuousReadingPages(centeredAt: focusedItemID)
+            guard !Task.isCancelled, let self, self.settings.usesContinuousReading else { return }
+            self.continuousReadingView.apply(
+                pages: pages,
+                currentItemID: focusedItemID
+            )
+        }
+    }
+
+    private func updateInspector(metadata: ImageMetadata?) {
+        inspectorView.rootView = InspectorView(
+            metadata: metadata,
+            isDocked: isInspectorDocked,
+            onToggleDock: { [weak self] in self?.toggleInspectorDock() },
+            onClose: { [weak self] in self?.settings.showsInspector = false }
+        )
+    }
+
+    private func toggleInspectorDock() {
+        isInspectorDocked.toggle()
+        updateInspector(metadata: viewModel.currentMetadata)
+        updateInspectorLayout()
+    }
+
+    private func updateInspectorLayout() {
+        let shouldReserveSidebar = isInspectorDocked
+            && settings.showsInspector
+            && viewModel.currentImage != nil
+            && !isFolderBrowserMode
+        canvasTrailingConstraint?.constant = shouldReserveSidebar ? -252 : 0
+        inspectorView.layer?.cornerRadius = shouldReserveSidebar ? 0 : 8
+        rootView.layoutSubtreeIfNeeded()
     }
 
     private func revealFilmstripOverlay() {
@@ -1610,6 +1898,14 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         titleBarControlsStack.spacing = 2
         titleBarControlsStack.translatesAutoresizingMaskIntoConstraints = false
         titleBarControlsStack.addArrangedSubview(titleBarGridButton)
+        let moreText = AppStrings.text("titleBar.more")
+        configureTitleBarButton(
+            titleBarMoreButton,
+            symbolName: "ellipsis.circle",
+            accessibilityDescription: moreText,
+            action: #selector(showMoreMenu(_:))
+        )
+        titleBarControlsStack.addArrangedSubview(titleBarMoreButton)
         titleBarView.addSubview(titleBarControlsStack)
         updateTitleBarControlAvailability()
         titleBarDoubleClickRecognizer.numberOfClicksRequired = 2
@@ -1625,6 +1921,10 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         bottomDimensionLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         bottomPageLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         bottomZoomLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        bottomZoomLabel.toolTip = AppStrings.text("viewer.zoom.menu.tooltip")
+        bottomZoomLabel.setAccessibilityRole(.button)
+        bottomZoomLabel.setAccessibilityLabel(AppStrings.text("viewer.zoom.menu.accessibilityLabel"))
+        bottomZoomLabel.addGestureRecognizer(bottomZoomClickRecognizer)
         let showInfoText = AppStrings.text("menu.view.showInfo")
         bottomInfoButton.image = NSImage(systemSymbolName: Self.bottomBarInfoSymbolName, accessibilityDescription: showInfoText)
         bottomInfoButton.bezelStyle = .toolbar
@@ -1667,6 +1967,79 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         titleBarGridButton.toolTip = gridText
         titleBarGridButton.setAccessibilityLabel(gridText)
         titleBarGridButton.image?.accessibilityDescription = gridText
+    }
+
+    private func updateWindowTitle(viewerTitle: String) {
+        let title: String
+        let toolTip: String?
+        if case .folder(let folderURL) = currentRoute {
+            title = folderURL.lastPathComponent
+            toolTip = folderURL.path
+        } else {
+            title = viewerTitle
+            toolTip = nil
+        }
+        window?.title = title
+        titleLabel.stringValue = title
+        titleLabel.toolTip = toolTip
+        titleLabel.setAccessibilityLabel(title)
+        titleLabel.setAccessibilityHelp(toolTip)
+    }
+
+    @objc private func showMoreMenu(_ sender: NSButton) {
+        let menu = NSMenu()
+        let commands: [(String, Selector)] = [
+            ("menu.image.rotateClockwise", #selector(rotateClockwise(_:))),
+            ("menu.image.crop", #selector(startCropping(_:))),
+            ("menu.view.showFilmstrip", #selector(toggleFilmstrip(_:))),
+            ("menu.view.continuousReading", #selector(toggleContinuousReading(_:))),
+            ("menu.view.showInfo", #selector(toggleInspector(_:))),
+            ("menu.image.saveAs", #selector(saveEditsAs(_:))),
+            ("menu.file.reveal", #selector(revealCurrentImageInFinder(_:))),
+            ("menu.file.moveToTrash", #selector(moveCurrentImageToTrash(_:)))
+        ]
+        for (index, command) in commands.enumerated() {
+            if index == 2 || index == 6 || index == 7 { menu.addItem(.separator()) }
+            let item = NSMenuItem(
+                title: AppStrings.text(command.0),
+                action: command.1,
+                keyEquivalent: ""
+            )
+            if let sourceItem = Self.menuItem(in: NSApp.mainMenu, matching: command.1) {
+                item.keyEquivalent = sourceItem.keyEquivalent
+                item.keyEquivalentModifierMask = sourceItem.keyEquivalentModifierMask
+            }
+            item.image = Self.moreMenuSymbol(for: command.1).flatMap {
+                NSImage(systemSymbolName: $0, accessibilityDescription: item.title)
+            }
+            item.target = self
+            item.isEnabled = validateMenuItem(item)
+            menu.addItem(item)
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.maxY + 4), in: sender)
+    }
+
+    private static func menuItem(in menu: NSMenu?, matching action: Selector) -> NSMenuItem? {
+        guard let menu else { return nil }
+        for item in menu.items {
+            if item.action == action { return item }
+            if let match = menuItem(in: item.submenu, matching: action) { return match }
+        }
+        return nil
+    }
+
+    private static func moreMenuSymbol(for action: Selector) -> String? {
+        switch action {
+        case #selector(rotateClockwise(_:)): return "rotate.right"
+        case #selector(startCropping(_:)): return "crop"
+        case #selector(toggleFilmstrip(_:)): return "rectangle.stack"
+        case #selector(toggleContinuousReading(_:)): return "book.pages"
+        case #selector(toggleInspector(_:)): return "info.circle"
+        case #selector(saveEditsAs(_:)): return "square.and.arrow.down"
+        case #selector(revealCurrentImageInFinder(_:)): return "folder"
+        case #selector(moveCurrentImageToTrash(_:)): return "trash"
+        default: return nil
+        }
     }
 
     private func canToggleTitleBarGrid(folderState: FolderRouteState?) -> Bool {
@@ -1763,11 +2136,84 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
             isEnabled: settings.showsInspector,
             hasCurrentImage: hasCurrentImage
         ) || isFolderBrowserMode
+        if hasCurrentImage && loadPhase == .full && !isFolderBrowserMode {
+            showUsageHintIfNeeded()
+        } else if !hasCurrentImage || isFolderBrowserMode {
+            hideUsageHint()
+        }
+    }
+
+    private func showUsageHintIfNeeded() {
+        guard !settings.hasShownUsageHint, usageHintView.isHidden else { return }
+        settings.hasShownUsageHint = true
+        usageHintView.alphaValue = 1
+        usageHintView.isHidden = false
+        NSAccessibility.post(element: usageHintView, notification: .announcementRequested)
+        usageHintTimer?.invalidate()
+        usageHintTimer = Timer.scheduledTimer(withTimeInterval: 6, repeats: false) { [weak self] _ in
+            Task { @MainActor in self?.hideUsageHint() }
+        }
+    }
+
+    private func hideUsageHint() {
+        usageHintTimer?.invalidate()
+        usageHintTimer = nil
+        usageHintView.isHidden = true
+    }
+
+    private func revealFullScreenChromeIfNeeded() {
+        guard isInFullScreen else { return }
+        setFullScreenChromeVisible(true)
+        fullScreenChromeHideTimer?.invalidate()
+        fullScreenChromeHideTimer = Timer.scheduledTimer(
+            withTimeInterval: Self.overlayAutoHideDelay,
+            repeats: false
+        ) { [weak self] _ in
+            Task { @MainActor in self?.setFullScreenChromeVisible(false) }
+        }
+    }
+
+    private func setFullScreenChromeVisible(_ visible: Bool) {
+        titleBarHeightConstraint.constant = visible ? Self.titleBarHeight : 0
+        bottomBarHeightConstraint.constant = visible ? Self.bottomBarHeight : 0
+        titleBarView.isHidden = !visible
+        titleBarDivider.isHidden = !visible
+        bottomBarView.isHidden = !visible
+        bottomBarDivider.isHidden = !visible
+        rootView.needsLayout = true
+    }
+
+    private func announceLoadedImageIfNeeded(hasImage: Bool, loadPhase: ImageLoadPhase) {
+        guard hasImage, loadPhase == .full,
+              let url = viewModel.navigationState?.currentItem?.url.standardizedFileURL else {
+            if !hasImage { lastAnnouncedLoadedURL = nil }
+            return
+        }
+        guard lastAnnouncedLoadedURL != url else { return }
+        lastAnnouncedLoadedURL = url
+        let message = String(
+            format: AppStrings.text("viewer.announcement.loaded"),
+            url.lastPathComponent
+        )
+        if let accessibilityAnnouncementHandlerForTesting {
+            accessibilityAnnouncementHandlerForTesting(message)
+            return
+        }
+        NSAccessibility.post(
+            element: canvas,
+            notification: .announcementRequested,
+            userInfo: [
+                .announcement: message,
+                .priority: NSAccessibilityPriorityLevel.medium.rawValue
+            ]
+        )
     }
 
     private func enterFolderBrowserMode() {
         isFolderBrowserMode = true
         canvas.isHidden = true
+        continuousReadingView.isHidden = true
+        continuousReadingTask?.cancel()
         folderBrowserView.isHidden = false
         emptyStateView.isHidden = true
         errorStateView.isHidden = true
@@ -1776,14 +2222,16 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         cropOverlay.isHidden = true
         cropControlsView.isHidden = true
         updateEmptyStatePresentation()
+        updateInspectorLayout()
     }
 
     private func exitFolderBrowserMode() {
         guard isFolderBrowserMode || !folderBrowserView.isHidden || canvas.isHidden else { return }
         isFolderBrowserMode = false
         folderBrowserView.isHidden = true
-        canvas.isHidden = false
+        updateContinuousReadingPresentation()
         updateEmptyStatePresentation()
+        updateInspectorLayout()
     }
 
     static func shouldDisplayEmptyState(
@@ -1825,6 +2273,10 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
     var isFolderBrowserVisibleForTesting: Bool { !folderBrowserView.isHidden }
     var folderBrowserIsOperatingForTesting: Bool { folderBrowserViewModel.isOperating }
     var isCanvasVisibleForTesting: Bool { !canvas.isHidden }
+    var isFullScreenChromeVisibleForTesting: Bool {
+        !titleBarView.isHidden && !bottomBarView.isHidden
+    }
+    func revealFullScreenChromeForTesting() { revealFullScreenChromeIfNeeded() }
     var isFilmstripVisibleForTesting: Bool { !filmstripOverlayView.isHidden }
     var isPageControlsVisibleForTesting: Bool { !pageNavigationOverlayView.isHidden }
     var folderBrowserItemCountForTesting: Int { folderBrowserView.testingItemCount }
@@ -1975,6 +2427,10 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         updateEmptyStatePresentation()
     }
 
+    func updateRecentItems(_ urls: [URL]) {
+        emptyStateView.applyRecentItems(urls)
+    }
+
     static func shouldDisplayFilmstripOverlay(
         isEnabled: Bool,
         hasLoadedImage: Bool,
@@ -1992,15 +2448,20 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         itemCount > 1 && !isCropping
     }
 
-    static func pageControlAvailability(navigationState: NavigationState?) -> PageControlAvailability {
+    static func pageControlAvailability(
+        navigationState: NavigationState?,
+        readingDirection: ReadingDirection = .leftToRight
+    ) -> PageControlAvailability {
         guard let navigationState,
               let currentIndex = navigationState.currentIndex else {
             return PageControlAvailability(previous: false, next: false)
         }
-        return PageControlAvailability(
+        let leftToRight = PageControlAvailability(
             previous: currentIndex > 0,
             next: currentIndex < navigationState.items.count - 1
         )
+        guard readingDirection == .rightToLeft else { return leftToRight }
+        return PageControlAvailability(previous: leftToRight.next, next: leftToRight.previous)
     }
 
     static func shouldAutoHidePageControls(pointerIsOverControls: Bool) -> Bool {
@@ -2022,17 +2483,45 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         "\(Int((zoomScale * 100).rounded()))%"
     }
 
+    static func zoomText(displayMode: ImageCanvasView.DisplayMode, pixelScale: CGFloat?) -> String {
+        guard let pixelScale else {
+            switch displayMode {
+            case .fit: return AppStrings.text("viewer.zoom.fit")
+            case .fitWidth: return AppStrings.text("viewer.zoom.fitWidth")
+            case .manual: return "—%"
+            }
+        }
+        let percentage = zoomText(zoomScale: pixelScale)
+        if displayMode == .fit {
+            return String(format: AppStrings.text("viewer.zoom.fitWithPercentage"), percentage)
+        }
+        if displayMode == .fitWidth {
+            return String(format: AppStrings.text("viewer.zoom.fitWidthWithPercentage"), percentage)
+        }
+        return percentage
+    }
+
     private func navigateToNextImage() {
         cancelCrop(nil)
         confirmUnsavedEditsIfNeeded(for: .navigating) { [weak self] in
-            self?.viewModel.showNext()
+            guard let self else { return }
+            if self.settings.readingDirection == .leftToRight {
+                self.viewModel.showNext()
+            } else {
+                self.viewModel.showPrevious()
+            }
         }
     }
 
     private func navigateToPreviousImage() {
         cancelCrop(nil)
         confirmUnsavedEditsIfNeeded(for: .navigating) { [weak self] in
-            self?.viewModel.showPrevious()
+            guard let self else { return }
+            if self.settings.readingDirection == .leftToRight {
+                self.viewModel.showPrevious()
+            } else {
+                self.viewModel.showNext()
+            }
         }
     }
 
@@ -2098,6 +2587,14 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
 
 extension MainWindowController: NSMenuItemValidation {
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(undoEdit(_:)) {
+            menuItem.title = viewModel.undoMenuTitle
+            return !isFolderBrowserMode && viewModel.canUndo
+        }
+        if menuItem.action == #selector(redoEdit(_:)) {
+            menuItem.title = viewModel.redoMenuTitle
+            return !isFolderBrowserMode && viewModel.canRedo
+        }
         if menuItem.action == #selector(toggleFilmstrip(_:)) {
             guard !isFolderBrowserMode else { return false }
             menuItem.state = settings.showsFilmstrip ? .on : .off
@@ -2106,6 +2603,11 @@ extension MainWindowController: NSMenuItemValidation {
         if menuItem.action == #selector(toggleInspector(_:)) {
             guard !isFolderBrowserMode else { return false }
             menuItem.state = settings.showsInspector ? .on : .off
+            return true
+        }
+        if menuItem.action == #selector(toggleContinuousReading(_:)) {
+            guard !isFolderBrowserMode, viewModel.currentImage != nil else { return false }
+            menuItem.state = settings.usesContinuousReading ? .on : .off
             return true
         }
 
@@ -2145,6 +2647,10 @@ extension MainWindowController: NSWindowDelegate {
     }
 
     func windowDidEnterFullScreen(_ notification: Notification) {
+        isInFullScreen = true
+        fullScreenChromeHideTimer?.invalidate()
+        fullScreenChromeHideTimer = nil
+        setFullScreenChromeVisible(false)
         applySettings()
     }
 
@@ -2162,6 +2668,10 @@ extension MainWindowController: NSWindowDelegate {
     }
 
     func windowDidExitFullScreen(_ notification: Notification) {
+        isInFullScreen = false
+        fullScreenChromeHideTimer?.invalidate()
+        fullScreenChromeHideTimer = nil
+        setFullScreenChromeVisible(true)
         applySettings()
     }
 

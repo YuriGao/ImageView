@@ -73,9 +73,28 @@ final class ViewerViewModel: ObservableObject {
     private var displayRequestGeneration: UInt64 = 0
     private var cancelActiveProgressiveLoad: (() -> Void)?
     private var pendingOperations: [EditOperation] = []
+    private var redoOperations: [EditOperation] = []
     private var persistedCurrentImage: DecodedImage?
     private var displayedFileVersion: CurrentFileVersion?
     var pendingOperationCountForTesting: Int { pendingOperations.count }
+    var redoOperationCountForTesting: Int { redoOperations.count }
+    var canUndo: Bool { !pendingOperations.isEmpty }
+    var canRedo: Bool { !redoOperations.isEmpty }
+    var undoMenuTitle: String {
+        guard let operation = pendingOperations.last else { return AppStrings.text("menu.edit.undo") }
+        return String(
+            format: AppStrings.text("menu.edit.undoNamed"),
+            Self.localizedName(for: operation)
+        )
+    }
+    var redoMenuTitle: String {
+        guard let operation = redoOperations.last else { return AppStrings.text("menu.edit.redo") }
+        return String(
+            format: AppStrings.text("menu.edit.redoNamed"),
+            Self.localizedName(for: operation)
+        )
+    }
+    static let maximumEditHistoryCount = 20
 
     init(
         scanContainingDirectory: @escaping @Sendable (URL) async throws -> [ImageItem] = {
@@ -156,7 +175,7 @@ final class ViewerViewModel: ObservableObject {
 
     func resetToEmptyState() {
         _ = beginDisplayRequest()
-        pendingOperations.removeAll()
+        clearEditHistory()
         navigationState = nil
         currentImage = nil
         currentMetadata = nil
@@ -170,7 +189,7 @@ final class ViewerViewModel: ObservableObject {
 
     func open(url: URL) async {
         let generation = beginDisplayRequest()
-        pendingOperations.removeAll()
+        clearEditHistory()
         persistedCurrentImage = nil
         displayedFileVersion = nil
         currentMetadata = nil
@@ -395,7 +414,7 @@ final class ViewerViewModel: ObservableObject {
         guard replacementURL != previousCurrentURL else { return replacementURL }
 
         _ = beginDisplayRequest()
-        pendingOperations.removeAll()
+        clearEditHistory()
         hasUnsavedEdits = false
 
         guard navigationState?.currentItem != nil else {
@@ -422,6 +441,10 @@ final class ViewerViewModel: ObservableObject {
 
     func applyEdit(_ operation: EditOperation) {
         guard canEditCurrentImage, let image = currentImage else { return }
+        guard pendingOperations.count < Self.maximumEditHistoryCount else {
+            errorMessage = AppStrings.text("editing.history.limitReached")
+            return
+        }
 
         do {
             let output = try editingService.apply([operation], to: image.cgImage)
@@ -434,12 +457,27 @@ final class ViewerViewModel: ObservableObject {
                 updateMetadata(url: item.url, format: item.format, image: currentImage)
             }
             pendingOperations.append(operation)
+            redoOperations.removeAll()
             hasUnsavedEdits = true
             errorMessage = nil
             updateDisplayTitle()
         } catch {
             errorMessage = "无法应用编辑"
         }
+    }
+
+    @discardableResult
+    func undoEdit() -> Bool {
+        guard let operation = pendingOperations.popLast() else { return false }
+        redoOperations.append(operation)
+        return rebuildEditedImageFromHistory()
+    }
+
+    @discardableResult
+    func redoEdit() -> Bool {
+        guard let operation = redoOperations.popLast() else { return false }
+        pendingOperations.append(operation)
+        return rebuildEditedImageFromHistory()
     }
 
     @discardableResult
@@ -471,7 +509,7 @@ final class ViewerViewModel: ObservableObject {
             persistedCurrentImage = decoded
             displayedFileVersion = writtenVersion
             updateMetadata(url: item.url, format: item.format, image: decoded)
-            pendingOperations.removeAll()
+            clearEditHistory()
             hasUnsavedEdits = false
             errorMessage = nil
             updateDisplayTitle()
@@ -508,7 +546,7 @@ final class ViewerViewModel: ObservableObject {
             persistedCurrentImage = decoded
             displayedFileVersion = writtenVersion
             updateMetadata(url: targetURL, format: format, image: decoded)
-            pendingOperations.removeAll()
+            clearEditHistory()
             hasUnsavedEdits = false
             errorMessage = nil
             updateDisplayTitle()
@@ -533,7 +571,7 @@ final class ViewerViewModel: ObservableObject {
             if let item = navigationState?.currentItem {
                 updateMetadata(url: item.url, format: item.format, image: restoredImage)
             }
-            pendingOperations.removeAll()
+            clearEditHistory()
             hasUnsavedEdits = false
             errorMessage = nil
             updateDisplayTitle()
@@ -553,6 +591,50 @@ final class ViewerViewModel: ObservableObject {
         guard let url = navigationState?.currentItem?.url else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(fileActions.absolutePath(for: url), forType: .string)
+    }
+
+    func continuousReadingPages(
+        centeredAt focusedItemID: ImageItem.ID? = nil,
+        radius: Int = ContinuousReadingView.preloadRadius
+    ) async -> [ContinuousReadingPage] {
+        guard let state = navigationState,
+              let current = state.currentItem,
+              let currentIndex = state.currentIndex else { return [] }
+        let focusedIndex = focusedItemID.flatMap { id in
+            state.items.firstIndex { $0.id == id }
+        } ?? currentIndex
+        let boundedRadius = min(max(0, radius), ContinuousReadingView.preloadRadius)
+        let lowerBound = max(0, focusedIndex - boundedRadius)
+        let upperBound = min(state.items.count - 1, focusedIndex + boundedRadius)
+        var decodedByID: [ImageItem.ID: DecodedImage] = [:]
+        var decodedByteCost = 0
+        let decodeOrder = Array(lowerBound...upperBound).sorted {
+            let leftDistance = abs($0 - focusedIndex)
+            let rightDistance = abs($1 - focusedIndex)
+            return leftDistance == rightDistance ? $0 < $1 : leftDistance < rightDistance
+        }
+
+        for index in decodeOrder {
+            let item = state.items[index]
+            guard navigationState?.currentItem?.id == current.id else { return [] }
+            let image: DecodedImage?
+            if item.id == current.id, let currentImage {
+                image = currentImage
+            } else {
+                image = try? await display(url: item.url, format: item.format).image
+            }
+            guard navigationState?.currentItem?.id == current.id else { return [] }
+            guard let image else { continue }
+            let (nextCost, overflow) = decodedByteCost.addingReportingOverflow(image.decodedByteCost)
+            let fitsBudget = !overflow && nextCost <= ContinuousReadingView.maximumDecodedByteCost
+            if fitsBudget || decodedByID.isEmpty {
+                decodedByID[item.id] = image
+                decodedByteCost = overflow ? Int.max : nextCost
+            }
+        }
+        return state.items.map {
+            ContinuousReadingPage(item: $0, image: decodedByID[$0.id])
+        }
     }
 
     func refreshCurrentFileIfNeeded() async {
@@ -603,6 +685,46 @@ final class ViewerViewModel: ObservableObject {
         preloadNeighbors()
     }
 
+    private func clearEditHistory() {
+        pendingOperations.removeAll()
+        redoOperations.removeAll()
+    }
+
+    private static func localizedName(for operation: EditOperation) -> String {
+        let key: String
+        switch operation {
+        case .rotateClockwise: key = "editing.operation.rotateClockwise"
+        case .rotateCounterClockwise: key = "editing.operation.rotateCounterClockwise"
+        case .mirrorHorizontal: key = "editing.operation.mirrorHorizontal"
+        case .mirrorVertical: key = "editing.operation.mirrorVertical"
+        case .crop: key = "editing.operation.crop"
+        }
+        return AppStrings.text(key)
+    }
+
+    private func rebuildEditedImageFromHistory() -> Bool {
+        guard let baseline = persistedCurrentImage else { return false }
+        do {
+            let output = try editingService.apply(pendingOperations, to: baseline.cgImage)
+            let rebuilt = DecodedImage(
+                cgImage: output,
+                pixelSize: CGSize(width: output.width, height: output.height),
+                isAnimated: false
+            )
+            currentImage = rebuilt
+            if let item = navigationState?.currentItem {
+                updateMetadata(url: item.url, format: item.format, image: rebuilt)
+            }
+            hasUnsavedEdits = !pendingOperations.isEmpty
+            errorMessage = nil
+            updateDisplayTitle()
+            return true
+        } catch {
+            errorMessage = AppStrings.text("editing.history.rebuildFailed")
+            return false
+        }
+    }
+
     private func display(url: URL, format: SupportedImageFormat) async throws -> VersionedLoadedImage {
         try await loadImageAtURL(url, format)
     }
@@ -629,6 +751,8 @@ final class ViewerViewModel: ObservableObject {
 
     private func startDisplayCurrentAndPreload() {
         guard let item = navigationState?.currentItem else { return }
+        clearEditHistory()
+        hasUnsavedEdits = false
         let generation = beginDisplayRequest()
         loadPhase = .loading
         Task { await displayCurrentAndPreload(item: item, generation: generation) }

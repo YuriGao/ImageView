@@ -36,6 +36,7 @@ final class FilmstripView: NSScrollView {
 
     init() {
         super.init(frame: .zero)
+        thumbnailCache.totalCostLimit = ImageCache.defaultThumbnailCostLimit
         hasHorizontalScroller = false
         hasVerticalScroller = false
         autohidesScrollers = true
@@ -188,7 +189,7 @@ final class FilmstripView: NSScrollView {
             let button,
             button.item.url == item.url else { return }
             let thumbnail = NSImage(cgImage: decoded.cgImage, size: .zero)
-            self.thumbnailCache.setObject(thumbnail, forKey: key)
+            self.thumbnailCache.setObject(thumbnail, forKey: key, cost: decoded.decodedByteCost)
             button.image = thumbnail
         }
     }

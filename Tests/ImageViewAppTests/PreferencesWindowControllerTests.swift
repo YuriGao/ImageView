@@ -37,6 +37,10 @@ final class PreferencesWindowControllerTests: XCTestCase {
             controller.window?.contentView?.viewWithIdentifier("settings.\($0)") as? NSButton
         }
         XCTAssertEqual(generalButtons.map(\.title), ["显示胶片预览", "显示信息面板", "移到废纸篓前确认", "使用图像切换动画"])
+        let direction = try XCTUnwrap(
+            controller.window?.contentView?.viewWithIdentifier("settings.readingDirection") as? NSPopUpButton
+        )
+        XCTAssertEqual(direction.itemTitles, ["从左到右", "从右到左"])
     }
 
     func testShowAllRevealsExactlyTenFormats() throws {
