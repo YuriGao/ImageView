@@ -678,6 +678,33 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.currentFilename, "first.png")
     }
 
+    func testNavigationDecodeFailurePublishesRecoverableErrorInsteadOfStayingLoading() async throws {
+        let firstURL = URL(fileURLWithPath: "/tmp/navigation-1-good.png")
+        let brokenURL = URL(fileURLWithPath: "/tmp/navigation-2-broken.png")
+        let image = try makeDecodedImage(width: 4, height: 3)
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: { _ in [
+                ImageItem(url: firstURL, format: .png),
+                ImageItem(url: brokenURL, format: .png)
+            ] },
+            decodeImageAtURL: { url, _ in
+                guard url == firstURL else { throw ImageDecodeError.cannotDecodeImage }
+                return image
+            },
+            loadPreviewAtURL: { _, _ in image }
+        )
+        await viewModel.open(url: firstURL)
+
+        viewModel.showNext()
+        await waitUntil { viewModel.loadPhase != .loading }
+
+        XCTAssertEqual(viewModel.navigationState?.currentItem?.url, brokenURL)
+        XCTAssertEqual(viewModel.loadPhase, .failed)
+        XCTAssertNil(viewModel.currentImage)
+        XCTAssertNil(viewModel.currentMetadata)
+        XCTAssertEqual(viewModel.errorMessage, "图片损坏或无法解码：navigation-2-broken.png")
+    }
+
     func testMoveCurrentToTrashClearsDisplayedImageWhenLastItemIsRemoved() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
