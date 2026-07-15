@@ -672,17 +672,31 @@ final class ViewerViewModel: ObservableObject {
     }
 
     private func displayCurrentAndPreload(item: ImageItem, generation: UInt64) async {
-        guard let loaded = try? await display(url: item.url, format: item.format),
-              generation == displayRequestGeneration,
-              navigationState?.currentItem?.url == item.url else {
-            return
+        do {
+            let loaded = try await display(url: item.url, format: item.format)
+            guard generation == displayRequestGeneration,
+                  navigationState?.currentItem?.url == item.url else {
+                return
+            }
+            currentImage = loaded.image
+            persistedCurrentImage = loaded.image
+            displayedFileVersion = loaded.version
+            updateMetadata(url: item.url, format: item.format, image: loaded.image)
+            loadPhase = .full
+            preloadNeighbors()
+        } catch {
+            guard generation == displayRequestGeneration,
+                  navigationState?.currentItem?.url == item.url else {
+                return
+            }
+            currentImage = nil
+            currentMetadata = nil
+            persistedCurrentImage = nil
+            displayedFileVersion = nil
+            loadPhase = .failed
+            errorMessage = "图片损坏或无法解码：\(item.url.lastPathComponent)"
+            updateDisplayTitle()
         }
-        currentImage = loaded.image
-        persistedCurrentImage = loaded.image
-        displayedFileVersion = loaded.version
-        updateMetadata(url: item.url, format: item.format, image: loaded.image)
-        loadPhase = .full
-        preloadNeighbors()
     }
 
     private func clearEditHistory() {

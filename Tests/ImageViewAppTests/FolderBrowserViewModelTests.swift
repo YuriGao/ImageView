@@ -269,6 +269,25 @@ final class FolderBrowserViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.visibleItems, [apple])
     }
 
+    func testFilteringOutSelectedItemPermanentlyTrimsSelection() async {
+        let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
+        let apple = ImageItem(url: folder.appendingPathComponent("apple.png"), format: .png)
+        let banana = ImageItem(url: folder.appendingPathComponent("banana.jpg"), format: .jpeg)
+        let viewModel = FolderBrowserViewModel(scanFolder: { _ in [apple, banana] })
+        await viewModel.openFolder(folder)
+        viewModel.setSelection([apple.id, banana.id])
+
+        viewModel.searchText = "app"
+
+        XCTAssertEqual(viewModel.selectedItemIDs, [apple.id])
+        XCTAssertEqual(viewModel.selectedItems, [apple])
+
+        viewModel.clearFilters()
+
+        XCTAssertEqual(viewModel.selectedItemIDs, [apple.id])
+        XCTAssertEqual(viewModel.selectedItems, [apple])
+    }
+
     func testSetSelectionCanonicalizesIDsToVisibleItemOrder() async {
         let folder = URL(fileURLWithPath: "/tmp/photos", isDirectory: true)
         let first = ImageItem(url: folder.appendingPathComponent("a.png"), format: .png)

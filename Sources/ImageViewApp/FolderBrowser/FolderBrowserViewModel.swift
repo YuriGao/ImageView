@@ -594,7 +594,8 @@ final class FolderBrowserViewModel: ObservableObject {
     }
 
     private func reconcileSelection() {
-        setSelection(selectedItemIDs)
+        let visibleIDs = Set(visibleItems.map(\.id))
+        setSelection(selectedItemIDs.filter { visibleIDs.contains($0) })
     }
 
     private func message(for result: BatchOperationResult) -> String? {
