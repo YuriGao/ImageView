@@ -422,7 +422,9 @@ final class ViewerViewModelTests: XCTestCase {
                 .init(image: initialFirst),
                 .init(image: staleFirst, pauseID: "stale-open")
             ],
-            secondURL: [.init(image: second)]
+            // The initial open may preload this neighbor before showNext() displays it.
+            // Keep one identical result available for each request ordering.
+            secondURL: [.init(image: second), .init(image: second)]
         ])
         let previewLoader = ControlledImageLoader(images: [
             firstURL: initialFirst,

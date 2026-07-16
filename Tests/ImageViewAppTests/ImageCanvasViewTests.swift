@@ -115,22 +115,48 @@ final class ImageCanvasViewTests: XCTestCase {
         let canvas = ImageCanvasView()
         canvas.scale = 2.0
 
-        canvas.handleScroll(deltaX: 8, deltaY: -12, at: CGPoint(x: 10, y: 10))
+        canvas.handleScroll(
+            deltaX: 8,
+            deltaY: -12,
+            at: CGPoint(x: 10, y: 10),
+            isDirectionInvertedFromDevice: true
+        )
 
         XCTAssertEqual(canvas.offset.x, -8, accuracy: 0.001)
         XCTAssertEqual(canvas.offset.y, 12, accuracy: 0.001)
     }
 
-    func testScrollZoomsWhenUsingZoomModifier() {
+    func testPhysicalScrollUpZoomsInWithNaturalScrollingDisabled() {
         let canvas = ImageCanvasView()
-        canvas.scale = 2.0
+        canvas.scale = 2
 
-        canvas.handleScroll(deltaX: 0, deltaY: -10, at: CGPoint(x: 40, y: 30), modifierFlags: [.option])
+        canvas.handleScroll(
+            deltaX: 0,
+            deltaY: 10,
+            at: CGPoint(x: 40, y: 30),
+            modifierFlags: [.option],
+            isDirectionInvertedFromDevice: false
+        )
 
-        XCTAssertGreaterThan(canvas.scale, 2.0)
+        XCTAssertGreaterThan(canvas.scale, 2)
     }
 
-    func testHorizontalTrackpadScrollUsesNaturalNavigationDirectionOnceAfterThreshold() {
+    func testPhysicalScrollUpZoomsInWithNaturalScrollingEnabled() {
+        let canvas = ImageCanvasView()
+        canvas.scale = 2
+
+        canvas.handleScroll(
+            deltaX: 0,
+            deltaY: -10,
+            at: CGPoint(x: 40, y: 30),
+            modifierFlags: [.option],
+            isDirectionInvertedFromDevice: true
+        )
+
+        XCTAssertGreaterThan(canvas.scale, 2)
+    }
+
+    func testPhysicalSwipeLeftNavigatesNextWithNaturalScrollingDisabled() {
         let canvas = ImageCanvasView()
         var nextCount = 0
         var previousCount = 0
@@ -143,12 +169,50 @@ final class ImageCanvasViewTests: XCTestCase {
         XCTAssertEqual(previousCount, 0)
 
         canvas.handleScroll(deltaX: 35, deltaY: 2, at: .zero)
-        XCTAssertEqual(nextCount, 0)
-        XCTAssertEqual(previousCount, 1)
+        XCTAssertEqual(nextCount, 1)
+        XCTAssertEqual(previousCount, 0)
 
         canvas.handleScroll(deltaX: 40, deltaY: 2, at: .zero)
-        XCTAssertEqual(nextCount, 0)
-        XCTAssertEqual(previousCount, 1)
+        XCTAssertEqual(nextCount, 1)
+        XCTAssertEqual(previousCount, 0)
+    }
+
+    func testPhysicalSwipeLeftNavigatesNextWithNaturalScrollingEnabled() {
+        let canvas = ImageCanvasView()
+        var nextCount = 0
+        var previousCount = 0
+        canvas.onNext = { nextCount += 1 }
+        canvas.onPrevious = { previousCount += 1 }
+
+        canvas.handleScroll(
+            deltaX: -80,
+            deltaY: -2,
+            at: .zero,
+            isDirectionInvertedFromDevice: true
+        )
+
+        XCTAssertEqual(nextCount, 1)
+        XCTAssertEqual(previousCount, 0)
+    }
+
+    func testPhysicalSwipeRightNavigatesPreviousRegardlessOfNaturalScrolling() {
+        for (deltaX, isInverted) in [(-80.0, false), (80.0, true)] {
+            let canvas = ImageCanvasView()
+            var nextCount = 0
+            var previousCount = 0
+            canvas.onNext = { nextCount += 1 }
+            canvas.onPrevious = { previousCount += 1 }
+
+            canvas.handleScroll(
+                deltaX: deltaX,
+                deltaY: 0,
+                at: .zero,
+                isDirectionInvertedFromDevice: isInverted
+            )
+
+            XCTAssertEqual(nextCount, 0)
+            XCTAssertEqual(previousCount, 1)
+        }
     }
 
     func testTrackpadSwipeResetsAfterGestureEnds() {
@@ -160,21 +224,39 @@ final class ImageCanvasViewTests: XCTestCase {
 
         canvas.handleScroll(deltaX: 40, deltaY: 0, at: .zero, phase: .began)
         canvas.handleScroll(deltaX: 40, deltaY: 0, at: .zero, phase: .ended)
-        XCTAssertEqual(previousCount, 1)
+        XCTAssertEqual(nextCount, 1)
 
         canvas.handleScroll(deltaX: -80, deltaY: 0, at: .zero, phase: .ended)
-        XCTAssertEqual(nextCount, 1)
+        XCTAssertEqual(previousCount, 1)
     }
 
     func testTrackpadMomentumDoesNotTriggerSecondNavigation() {
         let canvas = ImageCanvasView()
-        var previousCount = 0
-        canvas.onPrevious = { previousCount += 1 }
+        var nextCount = 0
+        canvas.onNext = { nextCount += 1 }
 
         canvas.handleScroll(deltaX: 80, deltaY: 0, at: .zero, phase: .ended)
         canvas.handleScroll(deltaX: 80, deltaY: 0, at: .zero, momentumPhase: .began)
 
-        XCTAssertEqual(previousCount, 1)
+        XCTAssertEqual(nextCount, 1)
+    }
+
+    func testNonPreciseHorizontalWheelDoesNotNavigate() {
+        let canvas = ImageCanvasView()
+        var nextCount = 0
+        var previousCount = 0
+        canvas.onNext = { nextCount += 1 }
+        canvas.onPrevious = { previousCount += 1 }
+
+        canvas.handleScroll(
+            deltaX: 160,
+            deltaY: 0,
+            at: .zero,
+            hasPreciseScrollingDeltas: false
+        )
+
+        XCTAssertEqual(nextCount, 0)
+        XCTAssertEqual(previousCount, 0)
     }
 
     func testHorizontalTrackpadScrollPansAtZoomedHorizontalEdgeWithoutNavigating() {
