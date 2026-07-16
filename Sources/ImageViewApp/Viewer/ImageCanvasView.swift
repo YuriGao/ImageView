@@ -237,19 +237,15 @@ final class ImageCanvasView: NSView {
         phase: NSEvent.Phase = [],
         momentumPhase: NSEvent.Phase = [],
         hasPreciseScrollingDeltas: Bool = true,
-        isDirectionInvertedFromDevice: Bool = false
+        isDirectionInvertedFromDevice _: Bool = false
     ) {
-        // AppKit has already applied the user's natural-scrolling preference to
-        // deltaX/Y. Undo it only for gestures whose meaning follows device motion;
-        // content panning below intentionally keeps the delivered deltas.
-        let deviceDirectionMultiplier: CGFloat = isDirectionInvertedFromDevice ? -1 : 1
-        let deviceDeltaX = deltaX * deviceDirectionMultiplier
-        let deviceDeltaY = deltaY * deviceDirectionMultiplier
+        // AppKit has already applied the user's scrolling preference to deltaX/Y.
+        // Use those delivered values consistently for navigation, zoom, and panning.
 
         if modifierFlags.contains(.option) || modifierFlags.contains(.command) {
             resetTrackpadScrollState()
-            guard abs(deviceDeltaY) > 0.1 else { return }
-            let zoomDelta = max(0.7, min(1.3, 1.0 + (deviceDeltaY * 0.01)))
+            guard abs(deltaY) > 0.1 else { return }
+            let zoomDelta = max(0.7, min(1.3, 1.0 + (deltaY * 0.01)))
             zoom(by: zoomDelta, around: point)
             return
         }
@@ -280,7 +276,7 @@ final class ImageCanvasView: NSView {
         }
         guard trackpadScrollAxis == .horizontal else { return }
 
-        accumulatedTrackpadDeltaX += deviceDeltaX
+        accumulatedTrackpadDeltaX += deltaX
         guard !didNavigateDuringTrackpadScroll,
               abs(accumulatedTrackpadDeltaX) >= Self.trackpadNavigationThreshold else {
             return
