@@ -5,7 +5,17 @@ import XCTest
 
 @MainActor
 final class GestureCoordinatorTests: XCTestCase {
-    func testTwoFingerTapTogglesFitAndActualSize() {
+    func testOnlyDoubleClickRecognizerCanToggleZoom() {
+        let canvas = ImageCanvasView()
+
+        _ = GestureCoordinator(canvas: canvas)
+
+        let clickRecognizers = canvas.gestureRecognizers.compactMap { $0 as? NSClickGestureRecognizer }
+        XCTAssertEqual(clickRecognizers.count, 1)
+        XCTAssertEqual(clickRecognizers.first?.numberOfClicksRequired, 2)
+    }
+
+    func testDoubleClickTogglesFitAndActualSize() {
         let canvas = ImageCanvasView(frame: CGRect(x: 0, y: 0, width: 400, height: 300))
         let context = CGContext(
             data: nil,
@@ -23,11 +33,11 @@ final class GestureCoordinatorTests: XCTestCase {
         )
         let coordinator = GestureCoordinator(canvas: canvas)
 
-        coordinator.applyTwoFingerTap()
+        coordinator.applyDoubleClick()
         XCTAssertEqual(canvas.scale, 2, accuracy: 0.001)
         XCTAssertEqual(canvas.pixelScale!, 1, accuracy: 0.001)
 
-        coordinator.applyTwoFingerTap()
+        coordinator.applyDoubleClick()
         XCTAssertEqual(canvas.scale, 1, accuracy: 0.001)
     }
 }

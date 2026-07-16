@@ -126,37 +126,41 @@ final class ImageCanvasViewTests: XCTestCase {
         XCTAssertEqual(canvas.offset.y, 12, accuracy: 0.001)
     }
 
-    func testPhysicalScrollUpZoomsInWithNaturalScrollingDisabled() {
-        let canvas = ImageCanvasView()
-        canvas.scale = 2
+    func testSystemAdjustedPositiveScrollZoomsInRegardlessOfDeviceInversion() {
+        for isInverted in [false, true] {
+            let canvas = ImageCanvasView()
+            canvas.scale = 2
 
-        canvas.handleScroll(
-            deltaX: 0,
-            deltaY: 10,
-            at: CGPoint(x: 40, y: 30),
-            modifierFlags: [.option],
-            isDirectionInvertedFromDevice: false
-        )
+            canvas.handleScroll(
+                deltaX: 0,
+                deltaY: 10,
+                at: CGPoint(x: 40, y: 30),
+                modifierFlags: [.option],
+                isDirectionInvertedFromDevice: isInverted
+            )
 
-        XCTAssertGreaterThan(canvas.scale, 2)
+            XCTAssertGreaterThan(canvas.scale, 2)
+        }
     }
 
-    func testPhysicalScrollUpZoomsInWithNaturalScrollingEnabled() {
-        let canvas = ImageCanvasView()
-        canvas.scale = 2
+    func testSystemAdjustedNegativeScrollZoomsOutRegardlessOfDeviceInversion() {
+        for isInverted in [false, true] {
+            let canvas = ImageCanvasView()
+            canvas.scale = 2
 
-        canvas.handleScroll(
-            deltaX: 0,
-            deltaY: -10,
-            at: CGPoint(x: 40, y: 30),
-            modifierFlags: [.option],
-            isDirectionInvertedFromDevice: true
-        )
+            canvas.handleScroll(
+                deltaX: 0,
+                deltaY: -10,
+                at: CGPoint(x: 40, y: 30),
+                modifierFlags: [.option],
+                isDirectionInvertedFromDevice: isInverted
+            )
 
-        XCTAssertGreaterThan(canvas.scale, 2)
+            XCTAssertLessThan(canvas.scale, 2)
+        }
     }
 
-    func testPhysicalSwipeLeftNavigatesNextWithNaturalScrollingDisabled() {
+    func testSystemAdjustedPositiveHorizontalScrollNavigatesNextOnceAfterThreshold() {
         let canvas = ImageCanvasView()
         var nextCount = 0
         var previousCount = 0
@@ -177,7 +181,7 @@ final class ImageCanvasViewTests: XCTestCase {
         XCTAssertEqual(previousCount, 0)
     }
 
-    func testPhysicalSwipeLeftNavigatesNextWithNaturalScrollingEnabled() {
+    func testSystemAdjustedPositiveHorizontalScrollNavigatesNextWhenDirectionIsInvertedFromDevice() {
         let canvas = ImageCanvasView()
         var nextCount = 0
         var previousCount = 0
@@ -185,8 +189,8 @@ final class ImageCanvasViewTests: XCTestCase {
         canvas.onPrevious = { previousCount += 1 }
 
         canvas.handleScroll(
-            deltaX: -80,
-            deltaY: -2,
+            deltaX: 80,
+            deltaY: 2,
             at: .zero,
             isDirectionInvertedFromDevice: true
         )
@@ -195,8 +199,8 @@ final class ImageCanvasViewTests: XCTestCase {
         XCTAssertEqual(previousCount, 0)
     }
 
-    func testPhysicalSwipeRightNavigatesPreviousRegardlessOfNaturalScrolling() {
-        for (deltaX, isInverted) in [(-80.0, false), (80.0, true)] {
+    func testSystemAdjustedNegativeHorizontalScrollNavigatesPreviousRegardlessOfDeviceInversion() {
+        for isInverted in [false, true] {
             let canvas = ImageCanvasView()
             var nextCount = 0
             var previousCount = 0
@@ -204,7 +208,7 @@ final class ImageCanvasViewTests: XCTestCase {
             canvas.onPrevious = { previousCount += 1 }
 
             canvas.handleScroll(
-                deltaX: deltaX,
+                deltaX: -80,
                 deltaY: 0,
                 at: .zero,
                 isDirectionInvertedFromDevice: isInverted

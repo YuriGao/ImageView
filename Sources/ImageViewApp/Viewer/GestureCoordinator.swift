@@ -14,11 +14,8 @@ final class GestureCoordinator: NSObject {
         let magnification = NSMagnificationGestureRecognizer(target: self, action: #selector(handleMagnification(_:)))
         let click = NSClickGestureRecognizer(target: self, action: #selector(handleDoubleClick(_:)))
         click.numberOfClicksRequired = 2
-        let twoFingerTap = NSClickGestureRecognizer(target: self, action: #selector(handleTwoFingerTap(_:)))
-        twoFingerTap.numberOfTouchesRequired = 2
         canvas?.addGestureRecognizer(magnification)
         canvas?.addGestureRecognizer(click)
-        canvas?.addGestureRecognizer(twoFingerTap)
     }
 
     func applyMagnification(_ magnification: CGFloat, at point: CGPoint) {
@@ -26,10 +23,6 @@ final class GestureCoordinator: NSObject {
     }
 
     func applyDoubleClick() {
-        canvas?.toggleFitOrActualSize()
-    }
-
-    func applyTwoFingerTap() {
         canvas?.toggleFitOrActualSize()
     }
 
@@ -44,7 +37,4 @@ final class GestureCoordinator: NSObject {
         applyDoubleClick()
     }
 
-    @objc private func handleTwoFingerTap(_ gesture: NSClickGestureRecognizer) {
-        applyTwoFingerTap()
-    }
 }

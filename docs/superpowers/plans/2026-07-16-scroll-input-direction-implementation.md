@@ -2,9 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `dispatching-parallel-agents` when tasks are genuinely independent; otherwise use `executing-plans`. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make trackpad image navigation follow physical swipe direction independently of macOS natural scrolling while preserving system-adjusted content panning and predictable modifier-wheel zoom.
+> **Correction after device acceptance:** The initial physical-device-direction contract was incorrect. The final behavior follows AppKit's system-adjusted scrolling direction everywhere so ImageView matches native macOS scrolling preferences.
 
-**Architecture:** Keep AppKit's delivered `scrollingDeltaX/Y` for content panning because those values already respect the user's scroll preference. Derive a separate device-direction delta by undoing `isDirectionInvertedFromDevice` only for semantic gestures such as image navigation and modifier-wheel zoom. Continue routing directional callbacks through `MainWindowController`, which already applies left-to-right or right-to-left reading direction.
+**Goal:** Make image navigation, modifier-wheel zoom, and zoomed content panning follow the macOS scrolling direction consistently.
+
+**Architecture:** Use AppKit's delivered `scrollingDeltaX/Y` for navigation, zoom, and panning because those values already respect the user's scroll preference. Do not undo `isDirectionInvertedFromDevice`. Continue routing directional callbacks through `MainWindowController`, which already applies left-to-right or right-to-left reading direction.
 
 **Tech Stack:** Swift 6, AppKit `NSEvent`, XCTest, Swift Package Manager, shell packaging scripts, GitHub pull request workflow.
 
@@ -47,22 +49,22 @@ Run the focused test three times. Expected: three passes with zero failures.
 
 ---
 
-### Task 1: Lock the device-direction contract with regression tests
+### Task 1: Lock the system-adjusted direction contract with regression tests
 
 **Files:**
 - Modify: `Tests/ImageViewAppTests/ImageCanvasViewTests.swift:114-192`
 
 **Interfaces:**
 - Consumes: `ImageCanvasView.handleScroll(deltaX:deltaY:at:modifierFlags:phase:momentumPhase:hasPreciseScrollingDeltas:isDirectionInvertedFromDevice:)`
-- Produces: Regression coverage for physical left/right navigation, natural-scroll inversion, modifier zoom, system-adjusted panning, coarse-wheel suppression, threshold reset, and momentum behavior.
+- Produces: Regression coverage proving that delivered delta signs control navigation, modifier zoom, and panning regardless of how those deltas relate to the physical device.
 
-- [x] **Step 1: Add natural-scrolling navigation tests**
+- [x] **Step 1: Add system-adjusted navigation tests**
 
-Add tests proving that a physical left swipe invokes `onNext` with both uninverted `deltaX = 80` and inverted `deltaX = -80`, while a physical right swipe invokes `onPrevious` for the corresponding opposite signs.
+Add tests proving that delivered `deltaX = 80` invokes `onNext` and delivered `deltaX = -80` invokes `onPrevious`, with both values of `isDirectionInvertedFromDevice`.
 
 - [x] **Step 2: Add zoom and panning direction tests**
 
-Add tests proving that physical wheel-up zooms in for both inversion states, and that zoomed panning continues using the system-adjusted delta without undoing inversion.
+Add tests proving that positive delivered `deltaY` zooms in, negative delivered `deltaY` zooms out, and zoomed panning uses the same system-adjusted deltas without another inversion.
 
 - [x] **Step 3: Add coarse-wheel isolation coverage**
 
@@ -76,39 +78,31 @@ Run:
 swift test --disable-sandbox --filter ImageCanvasViewTests
 ```
 
-Expected: the new physical-direction navigation and natural-scroll-independent zoom tests fail against the current hard-coded sign mapping.
+Expected: the system-adjusted direction tests fail while the handler still undoes `isDirectionInvertedFromDevice`.
 
 ---
 
-### Task 2: Normalize semantic gesture direction at the AppKit boundary
+### Task 2: Use AppKit-adjusted direction at the input boundary
 
 **Files:**
 - Modify: `Sources/ImageViewApp/Viewer/ImageCanvasView.swift:232-340`
 - Test: `Tests/ImageViewAppTests/ImageCanvasViewTests.swift`
 
 **Interfaces:**
-- Consumes: `NSEvent.isDirectionInvertedFromDevice` and AppKit scrolling deltas.
-- Produces: `handleScroll(..., isDirectionInvertedFromDevice: Bool = false)` with physical-direction navigation and zoom, while retaining system-direction panning.
+- Consumes: AppKit scrolling deltas and `NSEvent.isDirectionInvertedFromDevice` as regression-test context.
+- Produces: `handleScroll(..., isDirectionInvertedFromDevice: Bool = false)` whose behavior follows the delivered deltas for navigation, zoom, and panning.
 
 - [x] **Step 1: Extend the handler input**
 
-Add `isDirectionInvertedFromDevice: Bool = false` to `handleScroll` and pass `event.isDirectionInvertedFromDevice` from `scrollWheel(with:)`.
+Keep passing `event.isDirectionInvertedFromDevice` into the testable handler so regression tests can prove it does not cause a second inversion.
 
-- [x] **Step 2: Derive device-direction deltas**
+- [x] **Step 2: Remove device-direction normalization**
 
-Inside `handleScroll`, derive the physical gesture delta with:
-
-```swift
-let directionMultiplier: CGFloat = isDirectionInvertedFromDevice ? -1 : 1
-let deviceDeltaX = deltaX * directionMultiplier
-let deviceDeltaY = deltaY * directionMultiplier
-```
-
-Use delivered `deltaX/Y` unchanged for `pan(by:)`.
+Inside `handleScroll`, use delivered `deltaX/Y` unchanged for every scroll-driven behavior. AppKit has already applied the user's scrolling preference.
 
 - [x] **Step 3: Apply semantic mappings**
 
-Use `1.0 + deviceDeltaY * 0.01` for modifier-wheel zoom. Accumulate `deviceDeltaX` for navigation and map positive physical-left movement to `onNext`, negative physical-right movement to `onPrevious`.
+Use `1.0 + deltaY * 0.01` for modifier-wheel zoom. Accumulate `deltaX` for navigation and map positive delivered movement to `onNext`, negative delivered movement to `onPrevious`.
 
 - [x] **Step 4: Run the focused suite and verify GREEN**
 
@@ -149,7 +143,7 @@ Expected: all tests pass, Release build succeeds, code signing is valid, and dif
 
 - [x] **Step 2: Perform installed-app acceptance**
 
-Use the installed development build to verify application launch and the system-file-picker-to-viewer flow. Exercise the physical-direction contract with deterministic event inputs for both natural-scroll states because UI automation cannot reproduce a user's physical trackpad motion. Capture event fields temporarily if later device acceptance disagrees with the contract; do not keep diagnostic telemetry in the release.
+Use the installed development build to verify application launch and the system-file-picker-to-viewer flow. Exercise the system-adjusted direction contract with deterministic event inputs for both values of `isDirectionInvertedFromDevice`. Confirm final direction on a physical trackpad or mouse because UI automation cannot reproduce the user's device motion.
 
 - [x] **Step 3: Install and verify the local application**
 
