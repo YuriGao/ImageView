@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `dispatching-parallel-agents` when tasks are genuinely independent; otherwise use `executing-plans`. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> **Correction after device acceptance:** The initial physical-device-direction contract was incorrect. The final behavior follows AppKit's system-adjusted scrolling direction everywhere so ImageView matches native macOS scrolling preferences.
+> **Correction after device acceptance:** AppKit's delivered deltas must not be inverted a second time. For ImageView's semantic actions, positive vertical movement zooms out and positive horizontal movement navigates to the previous image, matching native content movement on the accepted device setup.
 
 **Goal:** Make image navigation, modifier-wheel zoom, and zoomed content panning follow the macOS scrolling direction consistently.
 
@@ -60,11 +60,11 @@ Run the focused test three times. Expected: three passes with zero failures.
 
 - [x] **Step 1: Add system-adjusted navigation tests**
 
-Add tests proving that delivered `deltaX = 80` invokes `onNext` and delivered `deltaX = -80` invokes `onPrevious`, with both values of `isDirectionInvertedFromDevice`.
+Add tests proving that delivered `deltaX = 80` invokes `onPrevious` and delivered `deltaX = -80` invokes `onNext`, with both values of `isDirectionInvertedFromDevice`.
 
 - [x] **Step 2: Add zoom and panning direction tests**
 
-Add tests proving that positive delivered `deltaY` zooms in, negative delivered `deltaY` zooms out, and zoomed panning uses the same system-adjusted deltas without another inversion.
+Add tests proving that positive delivered `deltaY` zooms out, negative delivered `deltaY` zooms in, and zoomed panning uses the same system-adjusted deltas without device-direction compensation.
 
 - [x] **Step 3: Add coarse-wheel isolation coverage**
 
@@ -102,7 +102,7 @@ Inside `handleScroll`, use delivered `deltaX/Y` unchanged for every scroll-drive
 
 - [x] **Step 3: Apply semantic mappings**
 
-Use `1.0 + deltaY * 0.01` for modifier-wheel zoom. Accumulate `deltaX` for navigation and map positive delivered movement to `onNext`, negative delivered movement to `onPrevious`.
+Use `1.0 - deltaY * 0.01` for modifier-wheel zoom. Accumulate `deltaX` for navigation and map positive delivered movement to `onPrevious`, negative delivered movement to `onNext`.
 
 - [x] **Step 4: Run the focused suite and verify GREEN**
 

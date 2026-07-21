@@ -13,17 +13,40 @@ public struct AnimatedFrame: @unchecked Sendable {
     }
 }
 
+public final class AnimatedFrameSource: @unchecked Sendable {
+    public let frameCount: Int
+    private let frameLoader: (Int) -> AnimatedFrame?
+
+    public init(frameCount: Int, frameLoader: @escaping (Int) -> AnimatedFrame?) {
+        self.frameCount = max(0, frameCount)
+        self.frameLoader = frameLoader
+    }
+
+    public func frame(at index: Int) -> AnimatedFrame? {
+        guard (0..<frameCount).contains(index) else { return nil }
+        return frameLoader(index)
+    }
+}
+
 public struct DecodedImage: @unchecked Sendable {
     public let cgImage: CGImage
     public let pixelSize: CGSize
     public let isAnimated: Bool
     public let animationFrames: [AnimatedFrame]
+    public let animationFrameSource: AnimatedFrameSource?
 
-    public init(cgImage: CGImage, pixelSize: CGSize, isAnimated: Bool, animationFrames: [AnimatedFrame] = []) {
+    public init(
+        cgImage: CGImage,
+        pixelSize: CGSize,
+        isAnimated: Bool,
+        animationFrames: [AnimatedFrame] = [],
+        animationFrameSource: AnimatedFrameSource? = nil
+    ) {
         self.cgImage = cgImage
         self.pixelSize = pixelSize
         self.isAnimated = isAnimated
         self.animationFrames = animationFrames
+        self.animationFrameSource = animationFrameSource
     }
 
     public var decodedByteCost: Int {
@@ -128,19 +151,26 @@ public final class ImageDecodeService: @unchecked Sendable {
 
         let frameCount = CGImageSourceGetCount(source)
         let animationFrames: [AnimatedFrame]
-        if maxPixelSize == nil,
-           frameCount > 1,
-           let estimatedCost = estimatedAnimationByteCost(source: source),
-           estimatedCost <= animationByteLimit {
-            animationFrames = decodeAnimationFrames(source: source, options: options)
+        let animationFrameSource: AnimatedFrameSource?
+        if maxPixelSize == nil, frameCount > 1 {
+            let estimatedCost = estimatedAnimationByteCost(source: source)
+            if let estimatedCost, estimatedCost <= animationByteLimit {
+                animationFrames = decodeAnimationFrames(source: source, options: options)
+                animationFrameSource = nil
+            } else {
+                animationFrames = []
+                animationFrameSource = makeAnimationFrameSource(source: source)
+            }
         } else {
             animationFrames = []
+            animationFrameSource = nil
         }
         return DecodedImage(
             cgImage: orientedImage,
             pixelSize: CGSize(width: orientedImage.width, height: orientedImage.height),
             isAnimated: frameCount > 1,
-            animationFrames: animationFrames
+            animationFrames: animationFrames,
+            animationFrameSource: animationFrameSource
         )
     }
 
@@ -196,10 +226,28 @@ public final class ImageDecodeService: @unchecked Sendable {
         return context.makeImage() ?? image
     }
 
-    private func decodeAnimationFrames(source: CGImageSource, options: [CFString: Any]) -> [AnimatedFrame] {
-        (0..<CGImageSourceGetCount(source)).compactMap { index in
-            guard let image = CGImageSourceCreateImageAtIndex(source, index, options as CFDictionary) else { return nil }
+    private func decodeAnimationFrames(
+        source: CGImageSource,
+        options: [CFString: Any]
+    ) -> [AnimatedFrame] {
+        return (0..<CGImageSourceGetCount(source)).compactMap { index -> AnimatedFrame? in
+            let image = CGImageSourceCreateImageAtIndex(source, index, options as CFDictionary)
+            guard let image else { return nil }
             return AnimatedFrame(cgImage: image, duration: animationDuration(source: source, index: index))
+        }
+    }
+
+    private func makeAnimationFrameSource(source: CGImageSource) -> AnimatedFrameSource {
+        let frameCount = CGImageSourceGetCount(source)
+        let durations = (0..<frameCount).map {
+            animationDuration(source: source, index: $0)
+        }
+        let frameOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+        return AnimatedFrameSource(frameCount: frameCount) { index in
+            guard let image = CGImageSourceCreateImageAtIndex(source, index, frameOptions) else {
+                return nil
+            }
+            return AnimatedFrame(cgImage: image, duration: durations[index])
         }
     }
 
