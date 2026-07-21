@@ -36,6 +36,7 @@ final class ImageCanvasView: NSView {
     var image: DecodedImage? {
         didSet {
             currentAnimationFrameIndex = 0
+            currentOnDemandAnimationFrame = nil
             configureAnimation()
             if displayMode == .fitWidth { zoomToFitWidth() }
             needsDisplay = true
@@ -45,6 +46,7 @@ final class ImageCanvasView: NSView {
 
     private var animationTimer: Timer?
     private(set) var currentAnimationFrameIndex = 0
+    private var currentOnDemandAnimationFrame: AnimatedFrame?
     var isAnimating: Bool { animationTimer != nil }
 
     var scale: CGFloat = 1.0 {
@@ -240,12 +242,13 @@ final class ImageCanvasView: NSView {
         isDirectionInvertedFromDevice _: Bool = false
     ) {
         // AppKit has already applied the user's scrolling preference to deltaX/Y.
-        // Use those delivered values consistently for navigation, zoom, and panning.
+        // Interpret the delivered values as native content movement, without
+        // compensating again for the input device's inversion flag.
 
         if modifierFlags.contains(.option) || modifierFlags.contains(.command) {
             resetTrackpadScrollState()
             guard abs(deltaY) > 0.1 else { return }
-            let zoomDelta = max(0.7, min(1.3, 1.0 + (deltaY * 0.01)))
+            let zoomDelta = max(0.7, min(1.3, 1.0 - (deltaY * 0.01)))
             zoom(by: zoomDelta, around: point)
             return
         }
@@ -283,7 +286,7 @@ final class ImageCanvasView: NSView {
         }
 
         didNavigateDuringTrackpadScroll = true
-        accumulatedTrackpadDeltaX > 0 ? onNext?() : onPrevious?()
+        accumulatedTrackpadDeltaX > 0 ? onPrevious?() : onNext?()
     }
 
     private func resetTrackpadScrollState() {
@@ -351,16 +354,24 @@ final class ImageCanvasView: NSView {
 
         guard let drawRect = imageDrawRect else { return }
 
-        let displayedImage = image.animationFrames.indices.contains(currentAnimationFrameIndex)
-            ? image.animationFrames[currentAnimationFrameIndex].cgImage
-            : image.cgImage
+        let displayedImage = currentOnDemandAnimationFrame?.cgImage
+            ?? (image.animationFrames.indices.contains(currentAnimationFrameIndex)
+                ? image.animationFrames[currentAnimationFrameIndex].cgImage
+                : image.cgImage)
         let appKitImage = NSImage(cgImage: displayedImage, size: drawRect.size)
         appKitImage.draw(in: drawRect)
     }
 
     func advanceAnimationFrame() {
-        guard let image, !image.animationFrames.isEmpty else { return }
-        currentAnimationFrameIndex = (currentAnimationFrameIndex + 1) % image.animationFrames.count
+        guard let image else { return }
+        let frameCount = animationFrameCount(for: image)
+        guard frameCount > 0 else { return }
+        let nextFrameIndex = (currentAnimationFrameIndex + 1) % frameCount
+        if image.animationFrames.isEmpty {
+            guard let frame = image.animationFrameSource?.frame(at: nextFrameIndex) else { return }
+            currentOnDemandAnimationFrame = frame
+        }
+        currentAnimationFrameIndex = nextFrameIndex
         needsDisplay = true
         scheduleNextAnimationFrame()
     }
@@ -368,18 +379,33 @@ final class ImageCanvasView: NSView {
     private func configureAnimation() {
         animationTimer?.invalidate()
         animationTimer = nil
-        guard image?.animationFrames.isEmpty == false else { return }
+        guard let image, animationFrameCount(for: image) > 0 else { return }
+        if image.animationFrames.isEmpty {
+            guard let frame = image.animationFrameSource?.frame(at: 0) else { return }
+            currentOnDemandAnimationFrame = frame
+        }
         scheduleNextAnimationFrame()
     }
 
     private func scheduleNextAnimationFrame() {
         animationTimer?.invalidate()
-        guard let image,
-              image.animationFrames.indices.contains(currentAnimationFrameIndex) else { return }
-        animationTimer = Timer.scheduledTimer(withTimeInterval: image.animationFrames[currentAnimationFrameIndex].duration, repeats: false) { [weak self] _ in
+        guard let image else { return }
+        let frame = currentOnDemandAnimationFrame
+            ?? (image.animationFrames.indices.contains(currentAnimationFrameIndex)
+                ? image.animationFrames[currentAnimationFrameIndex]
+                : nil)
+        guard let frame else { return }
+        animationTimer = Timer.scheduledTimer(withTimeInterval: frame.duration, repeats: false) { [weak self] _ in
             Task { @MainActor in
                 self?.advanceAnimationFrame()
             }
         }
+    }
+
+    private func animationFrameCount(for image: DecodedImage) -> Int {
+        if !image.animationFrames.isEmpty {
+            return image.animationFrames.count
+        }
+        return image.animationFrameSource?.frameCount ?? 0
     }
 }

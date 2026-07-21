@@ -190,7 +190,30 @@ final class ImageDecodeServiceTests: XCTestCase {
         XCTAssertGreaterThan(limited.decodedByteCost, 0)
     }
 
-    func testAnimationBudgetAllowsExactEstimateAndRejectsOneByteLess() throws {
+    func testDecodeAnimatedGifKeepsOnlyFullResolutionFirstFrameEagerWhenAnimationExceedsBudget() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("streamed-animation.gif")
+        try writeAnimatedGIF(to: url)
+
+        let decoded = try ImageDecodeService(animationByteLimit: 64)
+            .decode(url: url, format: .gif)
+
+        XCTAssertTrue(decoded.isAnimated)
+        XCTAssertEqual(decoded.pixelSize, CGSize(width: 4, height: 3))
+        XCTAssertTrue(decoded.animationFrames.isEmpty)
+        let frameSource = try XCTUnwrap(decoded.animationFrameSource)
+        XCTAssertEqual(frameSource.frameCount, 2)
+        let secondFrame = try XCTUnwrap(frameSource.frame(at: 1))
+        XCTAssertEqual(
+            CGSize(width: secondFrame.cgImage.width, height: secondFrame.cgImage.height),
+            CGSize(width: 4, height: 3)
+        )
+        XCTAssertEqual(secondFrame.duration, 0.2)
+    }
+
+    func testAnimationBudgetAllowsExactEstimateAndKeepsOneByteLessOutOfEagerFrames() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -204,7 +227,10 @@ final class ImageDecodeServiceTests: XCTestCase {
             .decode(url: url, format: .gif)
 
         XCTAssertEqual(atLimit.animationFrames.count, 2)
+        XCTAssertTrue(atLimit.animationFrames.allSatisfy { max($0.cgImage.width, $0.cgImage.height) == 4 })
         XCTAssertTrue(belowLimit.animationFrames.isEmpty)
+        XCTAssertNil(atLimit.animationFrameSource)
+        XCTAssertEqual(belowLimit.animationFrameSource?.frameCount, 2)
     }
 
     func testAnimationEstimateRejectsMissingPropertiesAndOverflow() {

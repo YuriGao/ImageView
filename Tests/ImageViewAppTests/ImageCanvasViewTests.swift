@@ -126,7 +126,7 @@ final class ImageCanvasViewTests: XCTestCase {
         XCTAssertEqual(canvas.offset.y, 12, accuracy: 0.001)
     }
 
-    func testSystemAdjustedPositiveScrollZoomsInRegardlessOfDeviceInversion() {
+    func testSystemAdjustedPositiveScrollZoomsOutRegardlessOfDeviceInversion() {
         for isInverted in [false, true] {
             let canvas = ImageCanvasView()
             canvas.scale = 2
@@ -139,11 +139,11 @@ final class ImageCanvasViewTests: XCTestCase {
                 isDirectionInvertedFromDevice: isInverted
             )
 
-            XCTAssertGreaterThan(canvas.scale, 2)
+            XCTAssertLessThan(canvas.scale, 2)
         }
     }
 
-    func testSystemAdjustedNegativeScrollZoomsOutRegardlessOfDeviceInversion() {
+    func testSystemAdjustedNegativeScrollZoomsInRegardlessOfDeviceInversion() {
         for isInverted in [false, true] {
             let canvas = ImageCanvasView()
             canvas.scale = 2
@@ -156,11 +156,11 @@ final class ImageCanvasViewTests: XCTestCase {
                 isDirectionInvertedFromDevice: isInverted
             )
 
-            XCTAssertLessThan(canvas.scale, 2)
+            XCTAssertGreaterThan(canvas.scale, 2)
         }
     }
 
-    func testSystemAdjustedPositiveHorizontalScrollNavigatesNextOnceAfterThreshold() {
+    func testSystemAdjustedPositiveHorizontalScrollNavigatesPreviousOnceAfterThreshold() {
         let canvas = ImageCanvasView()
         var nextCount = 0
         var previousCount = 0
@@ -173,15 +173,15 @@ final class ImageCanvasViewTests: XCTestCase {
         XCTAssertEqual(previousCount, 0)
 
         canvas.handleScroll(deltaX: 35, deltaY: 2, at: .zero)
-        XCTAssertEqual(nextCount, 1)
-        XCTAssertEqual(previousCount, 0)
+        XCTAssertEqual(nextCount, 0)
+        XCTAssertEqual(previousCount, 1)
 
         canvas.handleScroll(deltaX: 40, deltaY: 2, at: .zero)
-        XCTAssertEqual(nextCount, 1)
-        XCTAssertEqual(previousCount, 0)
+        XCTAssertEqual(nextCount, 0)
+        XCTAssertEqual(previousCount, 1)
     }
 
-    func testSystemAdjustedPositiveHorizontalScrollNavigatesNextWhenDirectionIsInvertedFromDevice() {
+    func testSystemAdjustedPositiveHorizontalScrollNavigatesPreviousWhenDirectionIsInvertedFromDevice() {
         let canvas = ImageCanvasView()
         var nextCount = 0
         var previousCount = 0
@@ -195,11 +195,11 @@ final class ImageCanvasViewTests: XCTestCase {
             isDirectionInvertedFromDevice: true
         )
 
-        XCTAssertEqual(nextCount, 1)
-        XCTAssertEqual(previousCount, 0)
+        XCTAssertEqual(nextCount, 0)
+        XCTAssertEqual(previousCount, 1)
     }
 
-    func testSystemAdjustedNegativeHorizontalScrollNavigatesPreviousRegardlessOfDeviceInversion() {
+    func testSystemAdjustedNegativeHorizontalScrollNavigatesNextRegardlessOfDeviceInversion() {
         for isInverted in [false, true] {
             let canvas = ImageCanvasView()
             var nextCount = 0
@@ -214,8 +214,8 @@ final class ImageCanvasViewTests: XCTestCase {
                 isDirectionInvertedFromDevice: isInverted
             )
 
-            XCTAssertEqual(nextCount, 0)
-            XCTAssertEqual(previousCount, 1)
+            XCTAssertEqual(nextCount, 1)
+            XCTAssertEqual(previousCount, 0)
         }
     }
 
@@ -228,21 +228,21 @@ final class ImageCanvasViewTests: XCTestCase {
 
         canvas.handleScroll(deltaX: 40, deltaY: 0, at: .zero, phase: .began)
         canvas.handleScroll(deltaX: 40, deltaY: 0, at: .zero, phase: .ended)
-        XCTAssertEqual(nextCount, 1)
+        XCTAssertEqual(previousCount, 1)
 
         canvas.handleScroll(deltaX: -80, deltaY: 0, at: .zero, phase: .ended)
-        XCTAssertEqual(previousCount, 1)
+        XCTAssertEqual(nextCount, 1)
     }
 
     func testTrackpadMomentumDoesNotTriggerSecondNavigation() {
         let canvas = ImageCanvasView()
-        var nextCount = 0
-        canvas.onNext = { nextCount += 1 }
+        var previousCount = 0
+        canvas.onPrevious = { previousCount += 1 }
 
         canvas.handleScroll(deltaX: 80, deltaY: 0, at: .zero, phase: .ended)
         canvas.handleScroll(deltaX: 80, deltaY: 0, at: .zero, momentumPhase: .began)
 
-        XCTAssertEqual(nextCount, 1)
+        XCTAssertEqual(previousCount, 1)
     }
 
     func testNonPreciseHorizontalWheelDoesNotNavigate() {
@@ -339,6 +339,29 @@ final class ImageCanvasViewTests: XCTestCase {
 
         canvas.image = first
         XCTAssertFalse(canvas.isAnimating)
+    }
+
+    func testAnimationRunsFromOnDemandFullResolutionFrameSource() {
+        let canvas = ImageCanvasView(frame: CGRect(x: 0, y: 0, width: 400, height: 300))
+        let first = makeDecodedImage(width: 4, height: 3)
+        let second = makeDecodedImage(width: 8, height: 6)
+        let frameSource = AnimatedFrameSource(frameCount: 2) { index in
+            let image = index == 0 ? first.cgImage : second.cgImage
+            return AnimatedFrame(cgImage: image, duration: 1)
+        }
+        canvas.image = DecodedImage(
+            cgImage: first.cgImage,
+            pixelSize: first.pixelSize,
+            isAnimated: true,
+            animationFrameSource: frameSource
+        )
+
+        XCTAssertTrue(canvas.isAnimating)
+        XCTAssertEqual(canvas.currentAnimationFrameIndex, 0)
+
+        canvas.advanceAnimationFrame()
+
+        XCTAssertEqual(canvas.currentAnimationFrameIndex, 1)
     }
 
     private func makeDecodedImage(width: Int, height: Int) -> DecodedImage {
