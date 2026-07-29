@@ -21,7 +21,7 @@ jobs:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Validate release tag
         run: |
@@ -47,7 +47,7 @@ jobs:
                      ".build/ImageView.app"
 
       - name: Upload DMG as Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ImageView.dmg
           path: ImageView.dmg
