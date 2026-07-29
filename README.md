@@ -25,6 +25,37 @@ ImageView 是一款原生 macOS 图片浏览器，面向快速打开、同目录
 - macOS 14.0 或更高版本。
 - 从源码构建需要 Swift 6 工具链。
 
+## 下载并安装 Release
+
+不需要配置开发环境时，可以直接使用 GitHub Actions 自动构建的 Release 安装包：
+
+1. 打开 [GitHub Releases](https://github.com/YuriGao/ImageView/releases/latest)。
+2. 在对应版本的 **Assets** 中下载 `ImageView.dmg`。
+3. 打开 DMG，将 `ImageView.app` 拖入 `Applications` 文件夹。
+4. 从“应用程序”文件夹启动 ImageView。
+
+请只从本仓库的 GitHub Releases 页面下载安装包。
+
+### 关于签名和首次打开
+
+当前 Release 中的 `ImageView.app` 带有 **ad-hoc（临时）代码签名**，用于保持应用包代码签名结构完整。该签名不包含 Apple Developer ID 身份，DMG 也未经过 Apple 公证，因此它不等同于 Apple 官方认可的开发者签名分发。
+
+从网络下载后，macOS Gatekeeper 可能提示无法验证开发者或阻止首次运行。确认安装包来自本仓库后，可使用以下任一方式首次打开：
+
+- 在 Finder 的“应用程序”文件夹中按住 Control 键点按 `ImageView.app`，选择“打开”，然后再次确认。
+- 如果系统仍然拦截，前往“系统设置”→“隐私与安全性”，在安全提示处选择“仍要打开”。
+
+首次确认后，后续通常可以正常启动。未来如果 Release 改用 Apple Developer ID 签名并完成公证，此处会同步更新。
+
+### Release 的构建方式
+
+推送以 `v` 开头的版本标签后，GitHub Actions 会在 GitHub 托管的 macOS 环境中：
+
+1. 使用 Release 配置编译 ImageView。
+2. 组装并临时签名 `ImageView.app`。
+3. 创建 `ImageView.dmg`。
+4. 创建对应的 GitHub Release，并将 DMG 同时上传到 Release 和 Actions Artifact。
+
 ## 开发
 
 ```bash
@@ -41,7 +72,7 @@ open .build/ImageView.app
 
 构建产物为 `.build/ImageView.app`。应用包声明了上述图片类型，macOS 可将其作为候选默认图片查看器。
 
-## 安装到本机
+## 从源码安装到本机
 
 ```bash
 scripts/install-app.sh
