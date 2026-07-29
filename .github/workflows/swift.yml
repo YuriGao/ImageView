@@ -1,0 +1,39 @@
+name: Build and Package DMG
+
+on:
+  push:
+    tags:
+      - 'v*'  # 当你推送一个以 'v' 开头的标签时触发，例如 v1.0.0
+  workflow_dispatch: # 允许你从 GitHub 网页手动触发
+
+jobs:
+  build:
+    runs-on: macos-latest # 使用 GitHub 提供的 macOS 运行器[reference:1]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build App
+        run: |
+          scripts/build-app.sh # 使用项目自带的构建脚本[reference:2]
+
+      - name: Create DMG
+        run: |
+          # 在这里添加创建 DMG 的命令
+          # 例如使用 create-dmg 工具
+          brew install create-dmg
+          create-dmg --volname "ImageView Installer" \
+                     --window-pos 200 120 \
+                     --window-size 800 400 \
+                     --icon-size 100 \
+                     --icon "ImageView.app" 200 190 \
+                     --hide-extension "ImageView.app" \
+                     --app-drop-link 600 185 \
+                     "ImageView.dmg" \
+                     ".build/ImageView.app" # 构建产物路径[reference:3]
+
+      - name: Upload DMG as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ImageView.dmg
+          path: ImageView.dmg
