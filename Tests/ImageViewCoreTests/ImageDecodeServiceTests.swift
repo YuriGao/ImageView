@@ -34,25 +34,39 @@ final class ImageDecodeServiceTests: XCTestCase {
         XCTAssertTrue(ImageDecodeService.requiresDownsampledPreview(url: largeURL, maxPixelSize: 2_048))
     }
 
-    func testDecodeAppliesExifOrientationForFullResolutionImages() throws {
+    func testDecodeMatchesImageIOPixelOrientationForEveryExifValue() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let url = root.appendingPathComponent("oriented.jpg")
-        try writeOrientedJPEG(to: url, width: 4, height: 3)
+        let markerImage = try makeOrientationMarkerImage(width: 80, height: 60)
+        let samplePositions: [(CGFloat, CGFloat)] = [
+            (0.25, 0.25),
+            (0.75, 0.25),
+            (0.25, 0.75),
+            (0.75, 0.75)
+        ]
 
-        let source = try XCTUnwrap(CGImageSourceCreateWithURL(url as CFURL, nil))
-        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
-        let tiff = properties?[kCGImagePropertyTIFFDictionary] as? [CFString: Any]
-        XCTAssertEqual(
-            (properties?[kCGImagePropertyOrientation] as? NSNumber)?.intValue
-                ?? (tiff?[kCGImagePropertyTIFFOrientation] as? NSNumber)?.intValue,
-            6
-        )
+        for orientation in 1...8 {
+            let url = root.appendingPathComponent("orientation-\(orientation).jpg")
+            try writeOrientedJPEG(markerImage, to: url, orientation: orientation)
 
-        let decoded = try ImageDecodeService().decode(url: url, format: .jpeg)
+            let decoded = try ImageDecodeService().decode(url: url, format: .jpeg)
+            let expected = try imageIOOrientedImage(at: url)
 
-        XCTAssertEqual(decoded.pixelSize, CGSize(width: 3, height: 4))
+            XCTAssertEqual(
+                decoded.pixelSize,
+                CGSize(width: expected.width, height: expected.height),
+                "Unexpected dimensions for EXIF orientation \(orientation)"
+            )
+
+            for (xRatio, yRatio) in samplePositions {
+                XCTAssertEqual(
+                    sampledLuminance(in: decoded.cgImage, xRatio: xRatio, yRatio: yRatio),
+                    sampledLuminance(in: expected, xRatio: xRatio, yRatio: yRatio),
+                    "Unexpected pixel placement for EXIF orientation \(orientation) at \(xRatio), \(yRatio)"
+                )
+            }
+        }
     }
 
     func testDecodeSvgThroughSystemFallback() throws {
@@ -290,6 +304,38 @@ final class ImageDecodeServiceTests: XCTestCase {
         return image
     }
 
+    private func makeOrientationMarkerImage(width: Int, height: Int) throws -> CGImage {
+        guard let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceGray(),
+            bitmapInfo: CGImageAlphaInfo.none.rawValue
+        ) else {
+            throw TestError.cannotCreateContext
+        }
+
+        let halfWidth = CGFloat(width) / 2
+        let halfHeight = CGFloat(height) / 2
+        let quadrants: [(CGFloat, CGRect)] = [
+            (0.1, CGRect(x: 0, y: 0, width: halfWidth, height: halfHeight)),
+            (0.35, CGRect(x: halfWidth, y: 0, width: halfWidth, height: halfHeight)),
+            (0.65, CGRect(x: 0, y: halfHeight, width: halfWidth, height: halfHeight)),
+            (0.9, CGRect(x: halfWidth, y: halfHeight, width: halfWidth, height: halfHeight))
+        ]
+        for (gray, rect) in quadrants {
+            context.setFillColor(gray: gray, alpha: 1)
+            context.fill(rect)
+        }
+
+        guard let image = context.makeImage() else {
+            throw TestError.cannotCreateContext
+        }
+        return image
+    }
+
     private func write(_ image: CGImage, to url: URL, type: String) throws {
         guard let destination = CGImageDestinationCreateWithURL(url as CFURL, type as CFString, 1, nil) else {
             throw TestError.cannotEncodeImage
@@ -300,15 +346,61 @@ final class ImageDecodeServiceTests: XCTestCase {
         }
     }
 
-    private func writeOrientedJPEG(to url: URL, width: Int, height: Int) throws {
-        let image = try makeImage(width: width, height: height)
+    private func writeOrientedJPEG(_ image: CGImage, to url: URL, orientation: Int) throws {
         guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.jpeg.identifier as CFString, 1, nil) else {
             throw TestError.cannotEncodeImage
         }
-        CGImageDestinationAddImage(destination, image, [kCGImagePropertyOrientation: 6] as CFDictionary)
+        CGImageDestinationAddImage(
+            destination,
+            image,
+            [
+                kCGImagePropertyOrientation: orientation,
+                kCGImageDestinationLossyCompressionQuality: 1.0
+            ] as CFDictionary
+        )
         guard CGImageDestinationFinalize(destination) else {
             throw TestError.cannotEncodeImage
         }
+    }
+
+    private func imageIOOrientedImage(at url: URL) throws -> CGImage {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.doubleValue,
+              let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.doubleValue,
+              let image = CGImageSourceCreateThumbnailAtIndex(
+                  source,
+                  0,
+                  [
+                      kCGImageSourceCreateThumbnailFromImageAlways: true,
+                      kCGImageSourceCreateThumbnailWithTransform: true,
+                      kCGImageSourceThumbnailMaxPixelSize: max(width, height)
+                  ] as CFDictionary
+              ) else {
+            throw TestError.cannotDecodeImage
+        }
+        return image
+    }
+
+    private func sampledLuminance(in image: CGImage, xRatio: CGFloat, yRatio: CGFloat) -> UInt8? {
+        guard let context = CGContext(
+            data: nil,
+            width: image.width,
+            height: image.height,
+            bitsPerComponent: 8,
+            bytesPerRow: image.width,
+            space: CGColorSpaceCreateDeviceGray(),
+            bitmapInfo: CGImageAlphaInfo.none.rawValue
+        ) else {
+            return nil
+        }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        guard let data = context.data?.assumingMemoryBound(to: UInt8.self) else {
+            return nil
+        }
+        let x = min(image.width - 1, max(0, Int(CGFloat(image.width) * xRatio)))
+        let y = min(image.height - 1, max(0, Int(CGFloat(image.height) * yRatio)))
+        return data[(y * image.width) + x]
     }
 
     private func writeAnimatedGIF(to url: URL) throws {
@@ -329,6 +421,7 @@ final class ImageDecodeServiceTests: XCTestCase {
     private enum TestError: Error {
         case cannotCreateContext
         case cannotEncodeImage
+        case cannotDecodeImage
     }
 
     private func pixelColor(in image: CGImage, x: Int, y: Int) -> RGBA? {
