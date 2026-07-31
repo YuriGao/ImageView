@@ -84,6 +84,21 @@ final class ImageCacheTests: XCTestCase {
         XCTAssertNil(evicted)
     }
 
+    func testContentIdentityIgnoresReadSideChangeTimeUpdates() {
+        let beforeRead = makeVersion(inode: 1, changeNanoseconds: 1)
+        let afterRead = makeVersion(inode: 1, changeNanoseconds: 2)
+
+        XCTAssertNotEqual(beforeRead, afterRead)
+        XCTAssertTrue(beforeRead.hasSameContentIdentity(as: afterRead))
+    }
+
+    func testContentIdentityDetectsStableFieldChanges() {
+        let original = makeVersion(inode: 1, changeNanoseconds: 1)
+        let replacement = makeVersion(inode: 2, changeNanoseconds: 2)
+
+        XCTAssertFalse(original.hasSameContentIdentity(as: replacement))
+    }
+
     func testConcurrentLoadsForSameVersionShareOneLoader() async throws {
         let image = DecodedImage(cgImage: makeImage(), pixelSize: CGSize(width: 1, height: 1), isAnimated: false)
         let cache = ImageCache(costLimit: image.decodedByteCost * 2)
