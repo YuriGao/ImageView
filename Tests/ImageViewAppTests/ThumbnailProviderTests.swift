@@ -68,6 +68,51 @@ final class ThumbnailProviderTests: XCTestCase {
         withExtendedLifetime(secondRequest) {}
     }
 
+    func testDefaultProviderAcceptsReadSideChangeTimeUpdateAndCachesCompletedVersion() throws {
+        ThumbnailProvider.removeAllCachedThumbnailsForTesting()
+        let beforeRead = CurrentFileVersion(
+            device: 3,
+            inode: 4,
+            fileSize: 5,
+            modificationNanoseconds: 6,
+            changeNanoseconds: 7
+        )
+        let afterRead = CurrentFileVersion(
+            device: 3,
+            inode: 4,
+            fileSize: 5,
+            modificationNanoseconds: 6,
+            changeNanoseconds: 8
+        )
+        let versions = ThumbnailVersionSequence(values: [beforeRead, afterRead, afterRead])
+        let decodeCount = ThumbnailLockedCounter()
+        let image = try Self.makeDecodedImage()
+        let provider = ThumbnailProvider(
+            currentFileVersionAtURL: { _ in versions.next() },
+            decoder: { _, _ in
+                decodeCount.increment()
+                return image
+            }
+        )
+        let item = ImageItem(url: URL(fileURLWithPath: "/tmp/network-share.png"), format: .png)
+
+        let firstLoaded = expectation(description: "thumbnail survives ctime update")
+        let firstRequest = provider.loadThumbnail(for: item) { result in
+            if case .success = result { firstLoaded.fulfill() }
+        }
+        wait(for: [firstLoaded], timeout: 1)
+        withExtendedLifetime(firstRequest) {}
+
+        let cachedLoaded = expectation(description: "completed network version is cached")
+        let secondRequest = provider.loadThumbnail(for: item) { result in
+            if case .success = result { cachedLoaded.fulfill() }
+        }
+        wait(for: [cachedLoaded], timeout: 1)
+        withExtendedLifetime(secondRequest) {}
+
+        XCTAssertEqual(decodeCount.value, 1)
+    }
+
     func testCancellingQueuedDefaultRequestPreventsDecodeFromStarting() throws {
         ThumbnailProvider.removeAllCachedThumbnailsForTesting()
         let gate = DispatchSemaphore(value: 0)
@@ -149,5 +194,24 @@ private final class ThumbnailLockedCounter: @unchecked Sendable {
 
     func increment() {
         lock.withLock { storage += 1 }
+    }
+}
+
+private final class ThumbnailVersionSequence: @unchecked Sendable {
+    private let lock = NSLock()
+    private let values: [CurrentFileVersion]
+    private var index = 0
+
+    init(values: [CurrentFileVersion]) {
+        self.values = values
+    }
+
+    func next() -> CurrentFileVersion? {
+        lock.withLock {
+            guard !values.isEmpty else { return nil }
+            let value = values[min(index, values.count - 1)]
+            index += 1
+            return value
+        }
     }
 }

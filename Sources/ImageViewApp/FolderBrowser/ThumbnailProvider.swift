@@ -65,9 +65,13 @@ final class ThumbnailProvider {
         decoder: @escaping Decoder,
         completion: @escaping Completion
     ) -> @Sendable () -> Void {
-        let version = currentFileVersionAtURL(item.url)
-        let key = ThumbnailCacheKey(url: item.url, version: version, maxPixelSize: maxPixelSize)
-        if let cached = cache.object(forKey: key) {
+        let versionBeforeDecode = currentFileVersionAtURL(item.url)
+        let initialKey = ThumbnailCacheKey(
+            url: item.url,
+            version: versionBeforeDecode,
+            maxPixelSize: maxPixelSize
+        )
+        if let cached = cache.object(forKey: initialKey) {
             DispatchQueue.main.async {
                 completion(.success(cached))
             }
@@ -80,7 +84,8 @@ final class ThumbnailProvider {
             do {
                 let decoded = try decoder(item, maxPixelSize)
                 guard operation?.isCancelled == false else { return }
-                guard currentFileVersionAtURL(item.url) == version else {
+                let versionAfterDecode = currentFileVersionAtURL(item.url)
+                guard versionsDescribeSameContent(versionBeforeDecode, versionAfterDecode) else {
                     DispatchQueue.main.async { [weak operation] in
                         guard operation?.isCancelled == false else { return }
                         completion(.failure(ImageDecodeError.cannotDecodeImage))
@@ -88,7 +93,12 @@ final class ThumbnailProvider {
                     return
                 }
                 let image = NSImage(cgImage: decoded.cgImage, size: decoded.pixelSize)
-                cache.setObject(image, forKey: key, cost: decoded.decodedByteCost)
+                let completedKey = ThumbnailCacheKey(
+                    url: item.url,
+                    version: versionAfterDecode,
+                    maxPixelSize: maxPixelSize
+                )
+                cache.setObject(image, forKey: completedKey, cost: decoded.decodedByteCost)
                 DispatchQueue.main.async { [weak operation] in
                     guard operation?.isCancelled == false else { return }
                     completion(.success(image))
@@ -104,6 +114,20 @@ final class ThumbnailProvider {
 
         let cancellation = OperationCancellation(operation: operation)
         return { cancellation.cancel() }
+    }
+
+    private static func versionsDescribeSameContent(
+        _ lhs: CurrentFileVersion?,
+        _ rhs: CurrentFileVersion?
+    ) -> Bool {
+        switch (lhs, rhs) {
+        case let (.some(lhs), .some(rhs)):
+            lhs.hasSameContentIdentity(as: rhs)
+        case (nil, nil):
+            true
+        default:
+            false
+        }
     }
 
     static func removeAllCachedThumbnailsForTesting() {

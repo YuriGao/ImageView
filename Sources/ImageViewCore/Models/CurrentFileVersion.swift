@@ -22,6 +22,18 @@ public struct CurrentFileVersion: Equatable, Hashable, Sendable {
         self.changeNanoseconds = changeNanoseconds
     }
 
+    /// Compares the fields that should remain stable while file contents are read.
+    ///
+    /// Some network file systems update `ctime` as a side effect of reading a file.
+    /// Keep tracking `ctime` for cache invalidation and external-change detection, but
+    /// do not treat that behavior alone as a concurrent content replacement.
+    public func hasSameContentIdentity(as other: CurrentFileVersion) -> Bool {
+        device == other.device &&
+            inode == other.inode &&
+            fileSize == other.fileSize &&
+            modificationNanoseconds == other.modificationNanoseconds
+    }
+
     public static func read(at url: URL) -> CurrentFileVersion? {
         guard FileManager.default.isReadableFile(atPath: url.path) else {
             return nil

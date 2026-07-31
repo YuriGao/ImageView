@@ -147,14 +147,24 @@ final class ViewerViewModel: ObservableObject {
                             let decoded = try await detachedDecode {
                                 try resolvedDecodeImageAtURL(url, format)
                             }
-                            guard currentFileVersionAtURL(url) == beforeVersion else {
+                            guard let afterVersion = currentFileVersionAtURL(url),
+                                  afterVersion.hasSameContentIdentity(as: beforeVersion) else {
                                 throw ImageDecodeError.cannotDecodeImage
                             }
                             return decoded
                         }
-                        return VersionedLoadedImage(image: decoded, version: beforeVersion)
+                        guard let completedVersion = currentFileVersionAtURL(url),
+                              completedVersion.hasSameContentIdentity(as: beforeVersion) else {
+                            throw ImageDecodeError.cannotDecodeImage
+                        }
+                        if completedVersion != beforeVersion {
+                            await cache.insert(decoded, for: url, version: completedVersion)
+                        }
+                        return VersionedLoadedImage(image: decoded, version: completedVersion)
                     } catch {
-                        if attempt == 0, currentFileVersionAtURL(url) != beforeVersion {
+                        if attempt == 0,
+                           let currentVersion = currentFileVersionAtURL(url),
+                           !currentVersion.hasSameContentIdentity(as: beforeVersion) {
                             continue
                         }
                         throw error
