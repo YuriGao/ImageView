@@ -404,16 +404,21 @@ final class ViewerViewModel: ObservableObject {
 
             guard generation == displayRequestGeneration, loadPhase == .full else { return }
 
-            do {
-                let items = try await scanContainingDirectory(url)
+            if let items = try? await scanContainingDirectory(url) {
                 guard generation == displayRequestGeneration else { return }
-
-                if items.contains(where: { $0.url.standardizedFileURL == url.standardizedFileURL }) {
-                    navigationState = NavigationState(items: items, currentURL: url)
+                let scannedNavigationState = NavigationState(items: items, currentURL: url)
+                if let scannedItem = scannedNavigationState.currentItem {
+                    if scannedItem.url.standardizedFileURL != url.standardizedFileURL {
+                        let loaded = try await display(url: scannedItem.url, format: scannedItem.format)
+                        guard generation == displayRequestGeneration else { return }
+                        currentImage = loaded.image
+                        persistedCurrentImage = loaded.image
+                        displayedFileVersion = loaded.version
+                        updateMetadata(url: scannedItem.url, format: scannedItem.format, image: loaded.image)
+                    }
+                    navigationState = scannedNavigationState
                     updateDisplayTitle()
                 }
-            } catch {
-                guard generation == displayRequestGeneration else { return }
             }
 
             guard generation == displayRequestGeneration else { return }
@@ -1088,7 +1093,8 @@ final class ViewerViewModel: ObservableObject {
     }
 
     private func updateDisplayTitle() {
-        displayTitle = Self.displayTitle(filename: currentFilename, hasUnsavedEdits: hasUnsavedEdits)
+        let filename = navigationState?.currentItem?.displayFilename ?? "ImageView"
+        displayTitle = Self.displayTitle(filename: filename, hasUnsavedEdits: hasUnsavedEdits)
     }
 
     static func displayTitle(filename: String, hasUnsavedEdits: Bool) -> String {

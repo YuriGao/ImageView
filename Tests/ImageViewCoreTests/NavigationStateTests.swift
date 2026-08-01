@@ -33,6 +33,19 @@ final class NavigationStateTests: XCTestCase {
         XCTAssertEqual(state.currentItem?.url.lastPathComponent, "d.png")
     }
 
+    func testPairedRawURLSelectsJPEGRepresentative() {
+        let rawURL = URL(fileURLWithPath: "/tmp/123.ARW")
+        let jpeg = ImageItem(
+            url: URL(fileURLWithPath: "/tmp/123.JPG"),
+            format: .jpeg,
+            pairedRawURL: rawURL
+        )
+
+        let state = NavigationState(items: [jpeg], currentURL: rawURL)
+
+        XCTAssertEqual(state.currentItem, jpeg)
+    }
+
     private func makeItems(_ names: [String]) -> [ImageItem] {
         names.map { ImageItem(url: URL(fileURLWithPath: "/tmp/\($0)"), format: .png) }
     }

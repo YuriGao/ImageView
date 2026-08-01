@@ -31,7 +31,7 @@ public final class DirectoryScanner: @unchecked Sendable {
                         options: [.skipsHiddenFiles]
                     )
 
-                    let items = urls.compactMap { url -> ImageItem? in
+                    let scannedItems = urls.compactMap { url -> ImageItem? in
                         guard let values = try? url.resourceValues(forKeys: resourceKeys),
                               values.isRegularFile == true,
                               let format = SupportedImageFormat(fileExtension: url.pathExtension) else {
@@ -52,11 +52,49 @@ public final class DirectoryScanner: @unchecked Sendable {
                     }
                     .sorted { NaturalSort.compare($0.url.lastPathComponent, $1.url.lastPathComponent) }
 
+                    let items = Self.collapsingRawJPEGPairings(in: scannedItems)
+
                     continuation.resume(returning: items)
                 } catch {
                     continuation.resume(throwing: error)
                 }
             }
         }
+    }
+
+    static func collapsingRawJPEGPairings(in items: [ImageItem]) -> [ImageItem] {
+        let jpegByStem = Dictionary(grouping: items.filter { $0.format == .jpeg }) {
+            pairingStem(for: $0.url)
+        }
+        let rawByStem = Dictionary(grouping: items.filter { $0.format == .arw }) {
+            pairingStem(for: $0.url)
+        }
+
+        return items.compactMap { item in
+            let stem = pairingStem(for: item.url)
+            if item.format == .arw, jpegByStem[stem]?.isEmpty == false {
+                return nil
+            }
+            guard item.format == .jpeg,
+                  let jpeg = jpegByStem[stem]?.first,
+                  jpeg.id == item.id,
+                  let raw = rawByStem[stem]?.first else {
+                return item
+            }
+            return ImageItem(
+                url: item.url,
+                format: item.format,
+                contentModificationDate: item.contentModificationDate,
+                fileSize: item.fileSize,
+                pairedRawURL: raw.url
+            )
+        }
+    }
+
+    private static func pairingStem(for url: URL) -> String {
+        url.deletingPathExtension().lastPathComponent.folding(
+            options: [.caseInsensitive, .diacriticInsensitive],
+            locale: Locale(identifier: "en_US_POSIX")
+        )
     }
 }
