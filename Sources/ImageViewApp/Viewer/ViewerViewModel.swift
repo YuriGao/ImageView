@@ -21,6 +21,13 @@ private enum ImageLoadEvent: Sendable {
     case full(VersionedLoadedImage)
 }
 
+private struct TrashOperation {
+    let navigationStateBefore: NavigationState
+    let navigationStateAfter: NavigationState?
+    let originalURL: URL
+    var trashedURL: URL
+}
+
 private func detachedDecode(
     _ operation: @escaping @Sendable () throws -> DecodedImage
 ) async throws -> DecodedImage {
@@ -76,7 +83,8 @@ final class ViewerViewModel: ObservableObject {
     private let loadFullResolutionAtURL: @Sendable (URL, SupportedImageFormat) async throws -> VersionedLoadedImage
     private let loadPreviewAtURL: @Sendable (URL, SupportedImageFormat) async throws -> DecodedImage
     private let shouldLoadPreviewAtURL: @Sendable (URL) -> Bool
-    private let moveToTrashAtURL: @Sendable (URL) throws -> Void
+    private let moveToTrashAtURL: @Sendable (URL) throws -> URL
+    private let restoreFromTrashAtURL: @Sendable (URL, URL) throws -> Void
     private let currentFileVersionAtURL: @Sendable (URL) -> CurrentFileVersion?
     private let fullResolutionRequestDelay: Duration
     private let metadataService = ImageMetadataService()
@@ -91,24 +99,38 @@ final class ViewerViewModel: ObservableObject {
     private var fullResolutionRequestGeneration: UInt64 = 0
     private var pendingOperations: [EditOperation] = []
     private var redoOperations: [EditOperation] = []
+    private var trashUndoOperation: TrashOperation?
+    private var trashRedoOperation: TrashOperation?
     private var persistedCurrentImage: DecodedImage?
     private var displayedFileVersion: CurrentFileVersion?
     var pendingOperationCountForTesting: Int { pendingOperations.count }
     var redoOperationCountForTesting: Int { redoOperations.count }
-    var canUndo: Bool { !pendingOperations.isEmpty }
-    var canRedo: Bool { !redoOperations.isEmpty }
+    var canUndo: Bool { !pendingOperations.isEmpty || trashUndoOperation != nil }
+    var canRedo: Bool { !redoOperations.isEmpty || trashRedoOperation != nil }
     var undoMenuTitle: String {
-        guard let operation = pendingOperations.last else { return AppStrings.text("menu.edit.undo") }
+        if let operation = pendingOperations.last {
+            return String(
+                format: AppStrings.text("menu.edit.undoNamed"),
+                Self.localizedName(for: operation)
+            )
+        }
+        guard trashUndoOperation != nil else { return AppStrings.text("menu.edit.undo") }
         return String(
             format: AppStrings.text("menu.edit.undoNamed"),
-            Self.localizedName(for: operation)
+            AppStrings.text("editing.operation.moveToTrash")
         )
     }
     var redoMenuTitle: String {
-        guard let operation = redoOperations.last else { return AppStrings.text("menu.edit.redo") }
+        if let operation = redoOperations.last {
+            return String(
+                format: AppStrings.text("menu.edit.redoNamed"),
+                Self.localizedName(for: operation)
+            )
+        }
+        guard trashRedoOperation != nil else { return AppStrings.text("menu.edit.redo") }
         return String(
             format: AppStrings.text("menu.edit.redoNamed"),
-            Self.localizedName(for: operation)
+            AppStrings.text("editing.operation.moveToTrash")
         )
     }
     static let maximumEditHistoryCount = 20
@@ -121,8 +143,11 @@ final class ViewerViewModel: ObservableObject {
             return try await scanner.scan(containing: $0)
         },
         decodeImageAtURL: (@Sendable (URL, SupportedImageFormat) throws -> DecodedImage)? = nil,
-        moveToTrashAtURL: @escaping @Sendable (URL) throws -> Void = {
+        moveToTrashAtURL: @escaping @Sendable (URL) throws -> URL = {
             try FileActions().moveToTrash($0)
+        },
+        restoreFromTrashAtURL: @escaping @Sendable (URL, URL) throws -> Void = {
+            try FileActions().restoreFromTrash($0, to: $1)
         },
         currentFileVersionAtURL: @escaping @Sendable (URL) -> CurrentFileVersion? = CurrentFileVersion.read(at:),
         loadImageAtURL: (@Sendable (URL, SupportedImageFormat) async throws -> DecodedImage)? = nil,
@@ -139,6 +164,7 @@ final class ViewerViewModel: ObservableObject {
         self.scanContainingDirectory = scanContainingDirectory
         self.decodeImageAtURL = resolvedDecodeImageAtURL
         self.moveToTrashAtURL = moveToTrashAtURL
+        self.restoreFromTrashAtURL = restoreFromTrashAtURL
         self.currentFileVersionAtURL = currentFileVersionAtURL
         self.fullResolutionRequestDelay = fullResolutionRequestDelay
         self.cache = cache
@@ -442,10 +468,19 @@ final class ViewerViewModel: ObservableObject {
     }
 
     func moveCurrentToTrash() {
-        guard let url = navigationState?.currentItem?.url else { return }
+        guard let navigationStateBefore = navigationState,
+              let url = navigationStateBefore.currentItem?.url else { return }
         do {
-            try moveToTrashAtURL(url)
+            let trashedURL = try moveToTrashAtURL(url)
             navigationState?.removeCurrent()
+            let navigationStateAfter = navigationState?.currentItem == nil ? nil : navigationState
+            trashUndoOperation = TrashOperation(
+                navigationStateBefore: navigationStateBefore,
+                navigationStateAfter: navigationStateAfter,
+                originalURL: url,
+                trashedURL: trashedURL
+            )
+            trashRedoOperation = nil
             if navigationState?.currentItem == nil {
                 navigationState = nil
                 currentImage = nil
@@ -565,6 +600,7 @@ final class ViewerViewModel: ObservableObject {
             }
             pendingOperations.append(operation)
             redoOperations.removeAll()
+            trashRedoOperation = nil
             hasUnsavedEdits = true
             errorMessage = nil
             updateDisplayTitle()
@@ -575,16 +611,40 @@ final class ViewerViewModel: ObservableObject {
 
     @discardableResult
     func undoEdit() -> Bool {
-        guard let operation = pendingOperations.popLast() else { return false }
-        redoOperations.append(operation)
-        return rebuildEditedImageFromHistory()
+        if let operation = pendingOperations.popLast() {
+            redoOperations.append(operation)
+            return rebuildEditedImageFromHistory()
+        }
+        guard let operation = trashUndoOperation else { return false }
+        do {
+            try restoreFromTrashAtURL(operation.trashedURL, operation.originalURL)
+            trashUndoOperation = nil
+            trashRedoOperation = operation
+            displayNavigationState(operation.navigationStateBefore)
+            return true
+        } catch {
+            errorMessage = AppStrings.text("fileOperation.restoreFromTrashFailed")
+            return false
+        }
     }
 
     @discardableResult
     func redoEdit() -> Bool {
-        guard let operation = redoOperations.popLast() else { return false }
-        pendingOperations.append(operation)
-        return rebuildEditedImageFromHistory()
+        if let operation = redoOperations.popLast() {
+            pendingOperations.append(operation)
+            return rebuildEditedImageFromHistory()
+        }
+        guard var operation = trashRedoOperation else { return false }
+        do {
+            operation.trashedURL = try moveToTrashAtURL(operation.originalURL)
+            trashRedoOperation = nil
+            trashUndoOperation = operation
+            displayNavigationState(operation.navigationStateAfter)
+            return true
+        } catch {
+            errorMessage = AppStrings.text("fileOperation.moveToTrashFailed")
+            return false
+        }
     }
 
     @discardableResult
@@ -873,6 +933,26 @@ final class ViewerViewModel: ObservableObject {
     private func clearEditHistory() {
         pendingOperations.removeAll()
         redoOperations.removeAll()
+    }
+
+    private func displayNavigationState(_ state: NavigationState?) {
+        _ = beginDisplayRequest()
+        clearEditHistory()
+        navigationState = state
+        hasUnsavedEdits = false
+        errorMessage = nil
+        guard state?.currentItem != nil else {
+            currentImage = nil
+            currentMetadata = nil
+            persistedCurrentImage = nil
+            displayedFileVersion = nil
+            loadPhase = .empty
+            updateDisplayTitle()
+            return
+        }
+        loadPhase = .loading
+        updateDisplayTitle()
+        startDisplayCurrentAndPreload()
     }
 
     private static func localizedName(for operation: EditOperation) -> String {

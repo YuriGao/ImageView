@@ -4,6 +4,9 @@
 "menu.edit.redo" = "重做编辑";
 "menu.edit.undoNamed" = "撤销%@";
 "menu.edit.redoNamed" = "重做%@";
+"editing.operation.moveToTrash" = "移到废纸篓";
+"fileOperation.restoreFromTrashFailed" = "无法从废纸篓恢复图片。";
+"fileOperation.moveToTrashFailed" = "无法将图片移到废纸篓。";
 "editing.operation.rotateClockwise" = "顺时针旋转";
 "editing.operation.rotateCounterClockwise" = "逆时针旋转";
 "editing.operation.mirrorHorizontal" = "水平翻转";

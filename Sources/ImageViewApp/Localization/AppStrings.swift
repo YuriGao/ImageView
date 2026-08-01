@@ -170,10 +170,11 @@ enum AppStrings {
         "viewer.zoom.custom.menu", "viewer.zoom.custom.title", "viewer.zoom.custom.message",
         "viewer.zoom.custom.field", "viewer.zoom.custom.apply", "viewer.zoom.custom.cancel",
         "editing.history.limitReached", "editing.history.rebuildFailed",
+        "fileOperation.restoreFromTrashFailed", "fileOperation.moveToTrashFailed",
         "menu.edit.undoNamed", "menu.edit.redoNamed",
         "editing.operation.rotateClockwise", "editing.operation.rotateCounterClockwise",
         "editing.operation.mirrorHorizontal", "editing.operation.mirrorVertical",
-        "editing.operation.crop",
+        "editing.operation.crop", "editing.operation.moveToTrash",
         "common.ok",
         "batchRename.defaultBaseName"
     ]

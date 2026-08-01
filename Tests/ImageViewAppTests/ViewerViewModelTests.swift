@@ -977,7 +977,9 @@ final class ViewerViewModelTests: XCTestCase {
         let imageURL = root.appendingPathComponent("solo.png")
         try makePNGData(width: 5, height: 4).write(to: imageURL)
         let viewModel = ViewerViewModel(
-            moveToTrashAtURL: { _ in }
+            moveToTrashAtURL: { url in
+                url.deletingLastPathComponent().appendingPathComponent("trashed-\(url.lastPathComponent)")
+            }
         )
 
         await viewModel.open(url: imageURL)
@@ -992,6 +994,72 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.displayTitle, "ImageView")
         XCTAssertEqual(viewModel.loadPhase, .empty)
         XCTAssertNil(viewModel.errorMessage)
+    }
+
+    func testUndoAfterMoveToTrashRestoresOriginalImageAndEnablesRedo() async throws {
+        let imageURL = try makeTemporaryPNG(width: 5, height: 4, name: "undo-trash")
+        defer { try? FileManager.default.removeItem(at: imageURL.deletingLastPathComponent()) }
+        let trashedURL = imageURL.deletingLastPathComponent().appendingPathComponent("trashed-undo-trash.png")
+        let restoredPair = ViewerLockedValue<(URL, URL)?>(nil)
+        let viewModel = ViewerViewModel(
+            moveToTrashAtURL: { _ in trashedURL },
+            restoreFromTrashAtURL: { source, destination in
+                restoredPair.set((source, destination))
+            }
+        )
+        await viewModel.open(url: imageURL)
+
+        viewModel.moveCurrentToTrash()
+
+        XCTAssertTrue(viewModel.canUndo)
+        XCTAssertEqual(
+            viewModel.undoMenuTitle,
+            String(
+                format: AppStrings.text("menu.edit.undoNamed"),
+                AppStrings.text("editing.operation.moveToTrash")
+            )
+        )
+        XCTAssertTrue(viewModel.undoEdit())
+        await waitUntil { viewModel.loadPhase == .full }
+        XCTAssertEqual(restoredPair.value?.0, trashedURL)
+        XCTAssertEqual(restoredPair.value?.1, imageURL)
+        XCTAssertEqual(viewModel.navigationState?.currentItem?.url, imageURL)
+        XCTAssertTrue(viewModel.canRedo)
+        XCTAssertEqual(
+            viewModel.redoMenuTitle,
+            String(
+                format: AppStrings.text("menu.edit.redoNamed"),
+                AppStrings.text("editing.operation.moveToTrash")
+            )
+        )
+    }
+
+    func testRedoAfterUndoingMoveToTrashMovesRestoredImageBackToTrash() async throws {
+        let imageURL = try makeTemporaryPNG(width: 5, height: 4, name: "redo-trash")
+        defer { try? FileManager.default.removeItem(at: imageURL.deletingLastPathComponent()) }
+        let firstTrashURL = imageURL.deletingLastPathComponent().appendingPathComponent("first-trash.png")
+        let secondTrashURL = imageURL.deletingLastPathComponent().appendingPathComponent("second-trash.png")
+        let trashCallCount = ViewerLockedValue(0)
+        let viewModel = ViewerViewModel(
+            moveToTrashAtURL: { _ in
+                let callCount = trashCallCount.update {
+                    $0 += 1
+                    return $0
+                }
+                return callCount == 1 ? firstTrashURL : secondTrashURL
+            },
+            restoreFromTrashAtURL: { _, _ in }
+        )
+        await viewModel.open(url: imageURL)
+        viewModel.moveCurrentToTrash()
+        XCTAssertTrue(viewModel.undoEdit())
+
+        XCTAssertTrue(viewModel.redoEdit())
+
+        XCTAssertEqual(trashCallCount.value, 2)
+        XCTAssertNil(viewModel.navigationState)
+        XCTAssertTrue(viewModel.canUndo)
+        XCTAssertFalse(viewModel.canRedo)
     }
 
     func testRenameCurrentSuccessClearsPriorErrorMessage() async throws {
@@ -1755,6 +1823,33 @@ private actor ControlledImageLoader {
         }
 
         continuation.resume(returning: image)
+    }
+}
+
+private final class ViewerLockedValue<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValue: Value
+
+    init(_ value: Value) {
+        storedValue = value
+    }
+
+    var value: Value {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedValue
+    }
+
+    func set(_ value: Value) {
+        lock.lock()
+        storedValue = value
+        lock.unlock()
+    }
+
+    func update<Result>(_ update: (inout Value) -> Result) -> Result {
+        lock.lock()
+        defer { lock.unlock() }
+        return update(&storedValue)
     }
 }
 

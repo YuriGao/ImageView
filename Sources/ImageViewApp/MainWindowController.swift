@@ -1398,7 +1398,6 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
             window?.performClose(nil)
             return true
         case .moveToTrash:
-            guard confirmMoveCurrentImageToTrash() else { return true }
             confirmUnsavedEditsIfNeeded(for: .movingToTrash) { [weak self] in
                 self?.viewModel.moveCurrentToTrash()
             }

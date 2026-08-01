@@ -5,6 +5,9 @@ public enum FileActionError: Error, Equatable {
     case emptyName
     case invalidBaseName
     case unsupportedRenameTarget
+    case trashLocationUnavailable
+    case restoreSourceMissing
+    case restoreDestinationExists
 }
 
 public final class FileActions {
@@ -14,9 +17,24 @@ public final class FileActions {
         self.fileManager = fileManager
     }
 
-    public func moveToTrash(_ url: URL) throws {
+    @discardableResult
+    public func moveToTrash(_ url: URL) throws -> URL {
         var resultingURL: NSURL?
         try fileManager.trashItem(at: url, resultingItemURL: &resultingURL)
+        guard let resultingURL else {
+            throw FileActionError.trashLocationUnavailable
+        }
+        return resultingURL as URL
+    }
+
+    public func restoreFromTrash(_ trashedURL: URL, to originalURL: URL) throws {
+        guard fileManager.fileExists(atPath: trashedURL.path) else {
+            throw FileActionError.restoreSourceMissing
+        }
+        guard !fileManager.fileExists(atPath: originalURL.path) else {
+            throw FileActionError.restoreDestinationExists
+        }
+        try fileManager.moveItem(at: trashedURL, to: originalURL)
     }
 
     public func rename(_ url: URL, to newBaseName: String) throws -> URL {

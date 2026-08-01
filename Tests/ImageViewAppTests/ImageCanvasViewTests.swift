@@ -124,6 +124,33 @@ final class ImageCanvasViewTests: XCTestCase {
         XCTAssertEqual(canvas.offset.y, -100, accuracy: 0.001)
     }
 
+    func testDownsampledPreviewReplacementKeepsDrawRectStable() {
+        let canvas = ImageCanvasView(frame: CGRect(x: 0, y: 0, width: 400, height: 300))
+        canvas.image = makeDecodedImage(width: 800, height: 600, sourceWidth: 1_600, sourceHeight: 1_200)
+        canvas.setManualPercentage(50)
+        canvas.pan(by: CGPoint(x: -120, y: -60))
+        let previewDrawRect = canvas.imageDrawRect
+
+        canvas.image = makeDecodedImage(width: 1_600, height: 1_200)
+
+        XCTAssertEqual(canvas.imageDrawRect?.origin.x ?? 0, previewDrawRect?.origin.x ?? 0, accuracy: 0.001)
+        XCTAssertEqual(canvas.imageDrawRect?.origin.y ?? 0, previewDrawRect?.origin.y ?? 0, accuracy: 0.001)
+        XCTAssertEqual(canvas.imageDrawRect?.width ?? 0, previewDrawRect?.width ?? 0, accuracy: 0.001)
+        XCTAssertEqual(canvas.imageDrawRect?.height ?? 0, previewDrawRect?.height ?? 0, accuracy: 0.001)
+        XCTAssertEqual(canvas.pixelScale!, 0.5, accuracy: 0.001)
+    }
+
+    func testDownsampledPreviewUsesSourcePixelsForActualSize() {
+        let canvas = ImageCanvasView(frame: CGRect(x: 0, y: 0, width: 400, height: 300))
+        canvas.image = makeDecodedImage(width: 800, height: 600, sourceWidth: 1_600, sourceHeight: 1_200)
+
+        canvas.zoomToActualSize()
+
+        XCTAssertEqual(canvas.imageDrawRect?.width ?? 0, 1_600, accuracy: 0.001)
+        XCTAssertEqual(canvas.imageDrawRect?.height ?? 0, 1_200, accuracy: 0.001)
+        XCTAssertEqual(canvas.pixelScale!, 1, accuracy: 0.001)
+    }
+
     func testActualSizeRemainsOnePixelPerPointForVeryLargeImage() {
         let canvas = ImageCanvasView(frame: CGRect(x: 0, y: 0, width: 400, height: 300))
         canvas.image = makeDecodedImage(width: 40_000, height: 30_000)
@@ -408,7 +435,12 @@ final class ImageCanvasViewTests: XCTestCase {
         XCTAssertEqual(canvas.currentAnimationFrameIndex, 1)
     }
 
-    private func makeDecodedImage(width: Int, height: Int) -> DecodedImage {
+    private func makeDecodedImage(
+        width: Int,
+        height: Int,
+        sourceWidth: Int? = nil,
+        sourceHeight: Int? = nil
+    ) -> DecodedImage {
         let context = CGContext(
             data: nil,
             width: width,
@@ -421,7 +453,12 @@ final class ImageCanvasViewTests: XCTestCase {
         return DecodedImage(
             cgImage: context.makeImage()!,
             pixelSize: CGSize(width: width, height: height),
-            isAnimated: false
+            isAnimated: false,
+            sourcePixelSize: CGSize(
+                width: sourceWidth ?? width,
+                height: sourceHeight ?? height
+            ),
+            isFullResolution: sourceWidth == nil && sourceHeight == nil
         )
     }
 }

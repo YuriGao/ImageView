@@ -38,11 +38,11 @@ final class ImageCanvasView: NSView {
             let preservedManualPixelScale = displayMode == .manual ? lastManualPixelScale : nil
             let normalizedManualOffset: CGPoint? = if displayMode == .manual,
                                                        let oldImage = oldValue,
-                                                       oldImage.cgImage.width > 0,
-                                                       oldImage.cgImage.height > 0 {
+                                                       oldImage.sourcePixelSize.width > 0,
+                                                       oldImage.sourcePixelSize.height > 0 {
                 CGPoint(
-                    x: offset.x / CGFloat(oldImage.cgImage.width),
-                    y: offset.y / CGFloat(oldImage.cgImage.height)
+                    x: offset.x / oldImage.sourcePixelSize.width,
+                    y: offset.y / oldImage.sourcePixelSize.height
                 )
             } else {
                 nil
@@ -60,8 +60,8 @@ final class ImageCanvasView: NSView {
                 isApplyingDisplayMode = false
                 let projectedOffset = normalizedManualOffset.map {
                     CGPoint(
-                        x: $0.x * CGFloat(image?.cgImage.width ?? 0),
-                        y: $0.y * CGFloat(image?.cgImage.height ?? 0)
+                        x: $0.x * (image?.sourcePixelSize.width ?? 0),
+                        y: $0.y * (image?.sourcePixelSize.height ?? 0)
                     )
                 } ?? offset
                 offset = clampedOffset(for: projectedOffset)
@@ -103,8 +103,8 @@ final class ImageCanvasView: NSView {
     private var fittedScale: CGFloat? {
         guard let image, bounds.width > 0, bounds.height > 0 else { return nil }
         return min(
-            bounds.width / CGFloat(image.cgImage.width),
-            bounds.height / CGFloat(image.cgImage.height)
+            bounds.width / image.sourcePixelSize.width,
+            bounds.height / image.sourcePixelSize.height
         )
     }
 
@@ -115,7 +115,7 @@ final class ImageCanvasView: NSView {
             return nil
         }
 
-        let imageSize = CGSize(width: image.cgImage.width, height: image.cgImage.height)
+        let imageSize = image.sourcePixelSize
         guard let fittedScale else { return nil }
         let drawSize = CGSize(width: imageSize.width * fittedScale * scale, height: imageSize.height * fittedScale * scale)
         return CGRect(
@@ -164,7 +164,7 @@ final class ImageCanvasView: NSView {
 
     func zoomToFitWidth() {
         guard let image, let fittedScale, fittedScale > 0, bounds.width > 0 else { return }
-        let widthPixelScale = bounds.width / CGFloat(image.cgImage.width)
+        let widthPixelScale = bounds.width / image.sourcePixelSize.width
         isApplyingDisplayMode = true
         displayMode = .fitWidth
         scale = widthPixelScale / fittedScale
@@ -252,7 +252,7 @@ final class ImageCanvasView: NSView {
         guard let image,
               bounds.width > 0,
               bounds.height > 0 else { return proposedOffset }
-        let imageSize = CGSize(width: image.cgImage.width, height: image.cgImage.height)
+        let imageSize = image.sourcePixelSize
         guard let fittedScale else { return proposedOffset }
         let drawSize = CGSize(width: imageSize.width * fittedScale * scale, height: imageSize.height * fittedScale * scale)
         let horizontalLimit = max(0, (drawSize.width - bounds.width) / 2)

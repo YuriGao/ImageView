@@ -4,6 +4,9 @@
 "menu.edit.redo" = "Redo Edit";
 "menu.edit.undoNamed" = "Undo %@";
 "menu.edit.redoNamed" = "Redo %@";
+"editing.operation.moveToTrash" = "Move to Trash";
+"fileOperation.restoreFromTrashFailed" = "Could not restore the image from Trash.";
+"fileOperation.moveToTrashFailed" = "Could not move the image to Trash.";
 "editing.operation.rotateClockwise" = "Rotate Clockwise";
 "editing.operation.rotateCounterClockwise" = "Rotate Counterclockwise";
 "editing.operation.mirrorHorizontal" = "Flip Horizontal";
