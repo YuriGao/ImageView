@@ -68,14 +68,25 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertEqual(controller.window?.titleVisibility, .hidden)
     }
 
-    func testDoubleClickTitleBarTogglesWindowZoom() throws {
-        let controller = MainWindowController()
-        let window = try XCTUnwrap(controller.window)
-        let initialZoomState = window.isZoomed
+    func testDoubleClickTitleBarMaximizesAndRestoresWindowFrame() {
+        let normalFrame = NSRect(x: 120, y: 90, width: 900, height: 640)
+        let visibleFrame = NSRect(x: 0, y: 40, width: 1_728, height: 1_077)
 
-        controller.toggleWindowZoom(nil)
+        let maximize = MainWindowController.titleBarZoomTransition(
+            currentFrame: normalFrame,
+            visibleFrame: visibleFrame,
+            restorationFrame: nil
+        )
+        XCTAssertEqual(maximize.targetFrame, visibleFrame)
+        XCTAssertEqual(maximize.restorationFrame, normalFrame)
 
-        XCTAssertNotEqual(window.isZoomed, initialZoomState)
+        let restore = MainWindowController.titleBarZoomTransition(
+            currentFrame: visibleFrame,
+            visibleFrame: visibleFrame,
+            restorationFrame: maximize.restorationFrame
+        )
+        XCTAssertEqual(restore.targetFrame, normalFrame)
+        XCTAssertNil(restore.restorationFrame)
     }
 
     func testContentBarsReserveStableSpaceAroundCanvas() {
@@ -1387,12 +1398,11 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertFalse(controller.titleBarGridButtonForTesting.isEnabled)
     }
 
-    func testTitleBarDoubleClickOnlyZoomsBarBackground() throws {
+    func testTitleBarDoubleClickAcceptsBackgroundAndTitleButNotControls() throws {
         let controller = MainWindowController(settings: AppSettings(defaults: makeIsolatedDefaults()))
         let window = try XCTUnwrap(controller.window)
         window.contentView?.layoutSubtreeIfNeeded()
         let initialZoomState = window.isZoomed
-        let recognizer = controller.titleBarDoubleClickRecognizerForTesting
 
         for protectedView in [
             controller.titleBarGridButtonForTesting,
@@ -1414,10 +1424,7 @@ final class MainWindowControllerTests: XCTestCase {
                 clickCount: 2,
                 pressure: 1
             ))
-            XCTAssertFalse(controller.gestureRecognizer(
-                recognizer,
-                shouldAttemptToRecognizeWith: event
-            ))
+            XCTAssertFalse(controller.handleTitleBarDoubleClickForTesting(event))
             controller.performTitleBarDoubleClickForTesting(hitView: protectedView)
             XCTAssertEqual(window.isZoomed, initialZoomState)
         }
@@ -1425,8 +1432,28 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertTrue(controller.shouldRecognizeTitleBarDoubleClickForTesting(
             hitView: controller.titleBarViewForTesting
         ))
-        controller.performTitleBarDoubleClickForTesting(hitView: controller.titleBarViewForTesting)
-        XCTAssertNotEqual(window.isZoomed, initialZoomState)
+        XCTAssertTrue(controller.shouldRecognizeTitleBarDoubleClickForTesting(
+            hitView: controller.titleLabelForTesting
+        ))
+        let titleLocation = controller.titleLabelForTesting.convert(
+            NSPoint(
+                x: controller.titleLabelForTesting.bounds.midX,
+                y: controller.titleLabelForTesting.bounds.midY
+            ),
+            to: nil
+        )
+        let titleEvent = try XCTUnwrap(NSEvent.mouseEvent(
+            with: .leftMouseDown,
+            location: titleLocation,
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 0,
+            clickCount: 2,
+            pressure: 1
+        ))
+        XCTAssertTrue(controller.handleTitleBarDoubleClickForTesting(titleEvent))
     }
 
     func testDirectImageOpenDoesNotInventBackHistory() throws {

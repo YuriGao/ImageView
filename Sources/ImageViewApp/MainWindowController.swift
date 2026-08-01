@@ -37,7 +37,7 @@ private final class ContextMenuActionDispatcher: NSObject {
 }
 
 @MainActor
-final class MainWindowController: NSWindowController, NSGestureRecognizerDelegate {
+final class MainWindowController: NSWindowController {
     static let externalFileCheckInterval: TimeInterval = 2
     static let titleBarHeight: CGFloat = 32
     static let bottomBarHeight: CGFloat = 28
@@ -144,6 +144,11 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         let next: Bool
     }
 
+    struct TitleBarZoomTransition: Equatable {
+        let targetFrame: NSRect
+        let restorationFrame: NSRect?
+    }
+
     private enum ContentRoute: Equatable {
         case viewer(URL)
         case folder(URL)
@@ -164,10 +169,6 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
     private let titleBarGridButton = HoverToolbarButton()
     private let titleBarMoreButton = HoverToolbarButton()
     private let titleBarControlsStack = NSStackView()
-    private lazy var titleBarDoubleClickRecognizer = NSClickGestureRecognizer(
-        target: self,
-        action: #selector(toggleWindowZoom(_:))
-    )
     private let canvas = ImageCanvasView()
     private let continuousReadingView = ContinuousReadingView()
     private let folderBrowserView = FolderBrowserView()
@@ -193,6 +194,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
     private var cancellables: Set<AnyCancellable> = []
     private var gestureCoordinator: GestureCoordinator?
     private var keyMonitor: LocalEventMonitor?
+    private var titleBarDoubleClickMonitor: LocalEventMonitor?
     private var displayedItemURL: URL?
     private var associatedViewerURL: URL?
     private var externalFileCheckTimer: Timer?
@@ -226,6 +228,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         didSet { updateTitleBarControlAvailability() }
     }
     private var activeBatchRenameSheet: BatchRenameSheetController?
+    private var windowFrameBeforeTitleBarMaximize: NSRect?
     var batchActionDialogProviderForTesting: BatchActionDialogProvider?
     var recoveryAlertPresenterForTesting: ((RecoveryAlertPresentation) -> Void)?
     var accessibilityAnnouncementHandlerForTesting: ((String) -> Void)?
@@ -265,6 +268,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         folderRetryTask?.cancel()
         continuousReadingTask?.cancel()
         keyMonitor?.invalidate()
+        titleBarDoubleClickMonitor?.invalidate()
         let folderBrowserViewModel = folderBrowserViewModel
         folderBrowserViewModel.invalidateOpenFolderRequest()
         Task { @MainActor in
@@ -756,6 +760,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
             .store(in: &cancellables)
 
         installKeyMonitor()
+        installTitleBarDoubleClickMonitor()
         applySettings()
         updateDimensionStatus(metadata: viewModel.currentMetadata)
         updatePageStatus(navigationState: viewModel.navigationState)
@@ -773,15 +778,6 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
     override func keyDown(with event: NSEvent) {
         guard !handleKeyDown(event) else { return }
         super.keyDown(with: event)
-    }
-
-    func gestureRecognizer(
-        _ gestureRecognizer: NSGestureRecognizer,
-        shouldAttemptToRecognizeWith event: NSEvent
-    ) -> Bool {
-        guard gestureRecognizer === titleBarDoubleClickRecognizer else { return true }
-        let location = titleBarView.convert(event.locationInWindow, from: nil)
-        return shouldRecognizeTitleBarDoubleClick(hitView: titleBarView.hitTest(location))
     }
 
     @objc func renameCurrentImage(_ sender: Any?) {
@@ -812,7 +808,17 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
     }
 
     @objc func toggleWindowZoom(_ sender: Any?) {
-        window?.zoom(sender)
+        guard let window,
+              let visibleFrame = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame else {
+            return
+        }
+        let transition = Self.titleBarZoomTransition(
+            currentFrame: window.frame,
+            visibleFrame: visibleFrame,
+            restorationFrame: windowFrameBeforeTitleBarMaximize
+        )
+        windowFrameBeforeTitleBarMaximize = transition.restorationFrame
+        window.setFrame(transition.targetFrame, display: true, animate: true)
     }
 
     @objc func copyCurrentImagePath(_ sender: Any?) {
@@ -1667,6 +1673,49 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         self.keyMonitor = nil
     }
 
+    private func installTitleBarDoubleClickMonitor() {
+        removeTitleBarDoubleClickMonitor()
+        titleBarDoubleClickMonitor = LocalEventMonitor(mask: .leftMouseDown) { [weak self] event in
+            guard let self else { return event }
+            return self.handleTitleBarDoubleClick(event) ? nil : event
+        }
+    }
+
+    private func removeTitleBarDoubleClickMonitor() {
+        titleBarDoubleClickMonitor?.invalidate()
+        titleBarDoubleClickMonitor = nil
+    }
+
+    private func handleTitleBarDoubleClick(_ event: NSEvent) -> Bool {
+        guard event.clickCount == 2,
+              let window,
+              event.windowNumber == window.windowNumber,
+              !isPointOverStandardWindowButton(event.locationInWindow),
+              !isPoint(event.locationInWindow, inside: titleBarControlsStack) else {
+            return false
+        }
+        let location = titleBarView.convert(event.locationInWindow, from: nil)
+        guard titleBarView.bounds.contains(location) else {
+            return false
+        }
+        toggleWindowZoom(nil)
+        return true
+    }
+
+    private func isPointOverStandardWindowButton(_ locationInWindow: NSPoint) -> Bool {
+        guard let window else { return false }
+        return [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton].contains { type in
+            guard let button = window.standardWindowButton(type) else { return false }
+            let point = button.convert(locationInWindow, from: nil)
+            return button.bounds.contains(point)
+        }
+    }
+
+    private func isPoint(_ locationInWindow: NSPoint, inside view: NSView) -> Bool {
+        guard !view.isHidden else { return false }
+        return view.bounds.contains(view.convert(locationInWindow, from: nil))
+    }
+
     private func handleKeyDown(_ event: NSEvent) -> Bool {
         hideUsageHint()
         revealFullScreenChromeIfNeeded()
@@ -2255,9 +2304,6 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         titleBarControlsStack.addArrangedSubview(titleBarMoreButton)
         titleBarView.addSubview(titleBarControlsStack)
         updateTitleBarControlAvailability()
-        titleBarDoubleClickRecognizer.numberOfClicksRequired = 2
-        titleBarDoubleClickRecognizer.delegate = self
-        titleBarView.addGestureRecognizer(titleBarDoubleClickRecognizer)
 
         for label in [bottomDimensionLabel, bottomPageLabel, bottomZoomLabel] {
             label.font = .systemFont(ofSize: 10, weight: .medium)
@@ -2443,7 +2489,32 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
     }
 
     private func shouldRecognizeTitleBarDoubleClick(hitView: NSView?) -> Bool {
-        hitView === titleBarView
+        hitView === titleBarView || hitView === titleLabel
+    }
+
+    static func titleBarZoomTransition(
+        currentFrame: NSRect,
+        visibleFrame: NSRect,
+        restorationFrame: NSRect?
+    ) -> TitleBarZoomTransition {
+        if let restorationFrame,
+           framesApproximatelyEqual(currentFrame, visibleFrame) {
+            return TitleBarZoomTransition(
+                targetFrame: restorationFrame,
+                restorationFrame: nil
+            )
+        }
+        return TitleBarZoomTransition(
+            targetFrame: visibleFrame,
+            restorationFrame: currentFrame
+        )
+    }
+
+    private static func framesApproximatelyEqual(_ lhs: NSRect, _ rhs: NSRect) -> Bool {
+        abs(lhs.minX - rhs.minX) < 1
+            && abs(lhs.minY - rhs.minY) < 1
+            && abs(lhs.width - rhs.width) < 1
+            && abs(lhs.height - rhs.height) < 1
     }
 
     static func canvasBackgroundColor() -> NSColor {
@@ -2643,7 +2714,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
     var titleBarGridButtonForTesting: NSButton { titleBarGridButton }
     var titleBarControlsStackForTesting: NSStackView { titleBarControlsStack }
     var titleBarViewForTesting: NSView { titleBarView }
-    var titleBarDoubleClickRecognizerForTesting: NSClickGestureRecognizer { titleBarDoubleClickRecognizer }
+    var titleLabelForTesting: NSView { titleLabel }
 
     func shouldRecognizeTitleBarDoubleClickForTesting(hitView: NSView) -> Bool {
         shouldRecognizeTitleBarDoubleClick(hitView: hitView)
@@ -2652,6 +2723,10 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
     func performTitleBarDoubleClickForTesting(hitView: NSView) {
         guard shouldRecognizeTitleBarDoubleClick(hitView: hitView) else { return }
         toggleWindowZoom(nil)
+    }
+
+    func handleTitleBarDoubleClickForTesting(_ event: NSEvent) -> Bool {
+        handleTitleBarDoubleClick(event)
     }
 
     func requestOpenFromEmptyStateForTesting() {
@@ -2997,6 +3072,7 @@ extension MainWindowController: NSWindowDelegate {
         continuousReadingTask?.cancel()
         continuousReadingTask = nil
         removeKeyMonitor()
+        removeTitleBarDoubleClickMonitor()
         externalFileCheckTimer?.invalidate()
         externalFileCheckTimer = nil
         onWindowDidClose?(self)
