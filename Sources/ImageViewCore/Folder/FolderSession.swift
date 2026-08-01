@@ -68,7 +68,7 @@ public struct FolderSession: Equatable, Sendable {
             return true
         }
 
-        return item.url.lastPathComponent.range(
+        return item.displayFilename.range(
             of: searchText,
             options: [.caseInsensitive, .diacriticInsensitive]
         ) != nil

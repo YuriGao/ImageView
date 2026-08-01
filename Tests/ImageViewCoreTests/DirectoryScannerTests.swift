@@ -48,6 +48,42 @@ final class DirectoryScannerTests: XCTestCase {
         XCTAssertEqual(items.map(\.url.lastPathComponent), ["image-2.png", "image-10.jpg"])
     }
 
+    func testCollapsesMatchingARWAndJPEGIntoJPEGDisplayItem() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let raw = root.appendingPathComponent("123.ARW")
+        let jpeg = root.appendingPathComponent("123.JPG")
+        let standaloneRaw = root.appendingPathComponent("124.ARW")
+        FileManager.default.createFile(atPath: raw.path, contents: Data())
+        FileManager.default.createFile(atPath: jpeg.path, contents: Data())
+        FileManager.default.createFile(atPath: standaloneRaw.path, contents: Data())
+
+        let items = try await DirectoryScanner().scan(folder: root)
+
+        XCTAssertEqual(items.map(\.url.lastPathComponent), ["123.JPG", "124.ARW"])
+        XCTAssertEqual(items.first?.pairedRawURL?.standardizedFileURL, raw.standardizedFileURL)
+        XCTAssertEqual(items.first?.displayFilename, "123.ARW / 123.JPG")
+    }
+
+    func testPairMatchingIsCaseInsensitiveAndPreservesOpenedRawURL() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let raw = root.appendingPathComponent("Vacation.ArW")
+        let jpeg = root.appendingPathComponent("VACATION.jpeg")
+        FileManager.default.createFile(atPath: raw.path, contents: Data())
+        FileManager.default.createFile(atPath: jpeg.path, contents: Data())
+
+        let items = try await DirectoryScanner().scan(containing: raw)
+
+        XCTAssertEqual(items.count, 1)
+        XCTAssertEqual(items.first?.url.lastPathComponent, "VACATION.jpeg")
+        XCTAssertEqual(items.first?.pairedRawURL, raw)
+    }
+
     func testScanCapturesSortMetadataOnce() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

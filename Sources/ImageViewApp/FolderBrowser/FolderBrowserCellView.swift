@@ -81,7 +81,9 @@ final class FolderBrowserCellView: NSCollectionViewItem {
         representedObject = item
         accessibilityPosition = position
         accessibilityTotal = total
-        filenameField.stringValue = item.url.deletingPathExtension().lastPathComponent
+        filenameField.stringValue = item.pairedRawURL == nil
+            ? item.url.deletingPathExtension().lastPathComponent
+            : item.displayFilename
         thumbnailView.image = nil
         updateAccessibility()
 
@@ -127,7 +129,7 @@ final class FolderBrowserCellView: NSCollectionViewItem {
 
     private func updateAccessibility() {
         guard let item = representedObject as? ImageItem else { return }
-        var parts = [item.url.lastPathComponent, item.format.rawValue.uppercased()]
+        var parts = [item.displayFilename, item.format.rawValue.uppercased()]
         if let accessibilityPosition, let accessibilityTotal {
             parts.append(String(
                 format: AppStrings.text("folderBrowser.item.position"),

@@ -57,6 +57,24 @@ final class FilmstripViewTests: XCTestCase {
         XCTAssertEqual(selected?.format, .png)
     }
 
+    func testPairedItemFilmstripUsesJPEGAndShowsBothFilenamesInTooltip() {
+        let rawURL = URL(fileURLWithPath: "/tmp/123.ARW")
+        let jpegURL = URL(fileURLWithPath: "/tmp/123.JPG")
+        let item = ImageItem(url: jpegURL, format: .jpeg, pairedRawURL: rawURL)
+        let requestedURL = FilmstripLockedURL()
+        let provider = ThumbnailProvider(loader: { requestedItem, _, completion in
+            requestedURL.set(requestedItem.url)
+            completion(.success(NSImage(size: NSSize(width: 8, height: 8))))
+            return {}
+        })
+        let filmstrip = FilmstripView(thumbnailProvider: provider)
+
+        filmstrip.apply(items: [item], current: item)
+
+        XCTAssertEqual(filmstrip.debugButtons().first?.toolTip, "123.ARW / 123.JPG")
+        XCTAssertEqual(requestedURL.value, jpegURL)
+    }
+
     func testMiddleSelectionIsCenteredInViewport() {
         let items = makeItems(count: 7)
         let filmstrip = FilmstripView()
@@ -173,5 +191,16 @@ private final class FilmstripLockedCounter: @unchecked Sendable {
 
     func increment() {
         lock.withLock { storage += 1 }
+    }
+}
+
+private final class FilmstripLockedURL: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: URL?
+
+    var value: URL? { lock.withLock { storage } }
+
+    func set(_ value: URL) {
+        lock.withLock { storage = value }
     }
 }

@@ -37,6 +37,23 @@ final class FolderSessionTests: XCTestCase {
         XCTAssertEqual(session.selectedItems, [png])
     }
 
+    func testSearchMatchesPairedRawFilename() {
+        let folder = URL(fileURLWithPath: "/tmp/folder", isDirectory: true)
+        let jpeg = ImageItem(
+            url: folder.appendingPathComponent("123.JPG"),
+            format: .jpeg,
+            pairedRawURL: folder.appendingPathComponent("123.ARW")
+        )
+
+        let session = FolderSession(
+            folderURL: folder,
+            items: [jpeg],
+            filter: FolderFilter(searchText: "ARW")
+        )
+
+        XCTAssertEqual(session.visibleItems, [jpeg])
+    }
+
     func testLastOpenedItemSurvivesRemovingAndReplacingOtherItems() {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

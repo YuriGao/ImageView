@@ -51,4 +51,34 @@ final class FolderBrowserCellViewTests: XCTestCase {
             XCTAssertEqual(cell.view.fittingSize, size)
         }
     }
+
+    func testPairedRawAndJPEGUseCombinedFilenameWhileLoadingJPEGThumbnail() {
+        let rawURL = URL(fileURLWithPath: "/tmp/123.ARW")
+        let jpegURL = URL(fileURLWithPath: "/tmp/123.JPG")
+        let item = ImageItem(url: jpegURL, format: .jpeg, pairedRawURL: rawURL)
+        let requestedURL = FolderBrowserCellLockedURL()
+        let provider = ThumbnailProvider(loader: { requestedItem, _, completion in
+            requestedURL.set(requestedItem.url)
+            completion(.success(NSImage(size: NSSize(width: 8, height: 8))))
+            return {}
+        })
+        let cell = FolderBrowserCellView()
+        cell.loadView()
+
+        cell.configure(with: item, thumbnailProvider: provider)
+
+        XCTAssertEqual(cell.testingFilename, "123.ARW / 123.JPG")
+        XCTAssertEqual(requestedURL.value, jpegURL)
+    }
+}
+
+private final class FolderBrowserCellLockedURL: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: URL?
+
+    var value: URL? { lock.withLock { storage } }
+
+    func set(_ value: URL) {
+        lock.withLock { storage = value }
+    }
 }

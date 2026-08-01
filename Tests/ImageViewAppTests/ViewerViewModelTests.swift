@@ -71,6 +71,33 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertEqual(fullLoadCount, 0)
     }
 
+    func testOpeningPairedRawSwitchesToJPEGRepresentativeAndCombinedTitle() async throws {
+        let rawURL = URL(fileURLWithPath: "/tmp/123.ARW")
+        let jpegURL = URL(fileURLWithPath: "/tmp/123.JPG")
+        let rawPreview = try makeDecodedImage(width: 320, height: 213, isFullResolution: false)
+        let jpegImage = try makeDecodedImage(width: 600, height: 400)
+        let jpegItem = ImageItem(url: jpegURL, format: .jpeg, pairedRawURL: rawURL)
+        let fullLoader = ControlledImageLoader(images: [jpegURL: jpegImage])
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: { _ in [jpegItem] },
+            loadImageAtURL: fullLoader.load(url:format:),
+            loadPreviewAtURL: { url, _ in
+                guard url == rawURL else { throw ImageDecodeError.cannotDecodeImage }
+                return rawPreview
+            }
+        )
+
+        await viewModel.open(url: rawURL)
+
+        XCTAssertEqual(viewModel.navigationState?.items, [jpegItem])
+        XCTAssertEqual(viewModel.navigationState?.currentItem?.url, jpegURL)
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, jpegImage.pixelSize)
+        XCTAssertEqual(viewModel.currentMetadata?.url, jpegURL)
+        XCTAssertEqual(viewModel.currentFilename, "123.JPG")
+        XCTAssertEqual(viewModel.displayTitle, "123.ARW / 123.JPG")
+        XCTAssertTrue(viewModel.canEditCurrentImage)
+    }
+
     func testRawOpenFallsBackToFullDecodeWhenPreviewFails() async throws {
         let url = URL(fileURLWithPath: "/tmp/raw-without-preview.arw")
         let full = try makeDecodedImage(width: 600, height: 400)

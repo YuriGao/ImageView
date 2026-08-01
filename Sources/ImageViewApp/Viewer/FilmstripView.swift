@@ -123,7 +123,7 @@ final class FilmstripView: NSScrollView {
             button.layer?.cornerRadius = 5
             button.imagePosition = .imageOnly
             button.imageScaling = .scaleProportionallyUpOrDown
-            button.toolTip = item.url.lastPathComponent
+            button.toolTip = item.displayFilename
             button.setButtonType(.momentaryPushIn)
             button.target = self
             button.action = #selector(selectItem(_:))

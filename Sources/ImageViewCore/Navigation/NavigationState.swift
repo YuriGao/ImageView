@@ -6,7 +6,7 @@ public struct NavigationState: Equatable, Sendable {
 
     public init(items: [ImageItem], currentURL: URL) {
         self.items = items.sorted { NaturalSort.compare($0.url.lastPathComponent, $1.url.lastPathComponent) }
-        self.currentIndex = self.items.firstIndex { $0.url == currentURL } ?? self.items.firstIndex { $0.url.standardizedFileURL == currentURL.standardizedFileURL }
+        self.currentIndex = self.items.firstIndex { $0.represents(currentURL) }
     }
 
     public var currentItem: ImageItem? {
