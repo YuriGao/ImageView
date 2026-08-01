@@ -80,6 +80,50 @@ final class ImageCanvasViewTests: XCTestCase {
         XCTAssertEqual(canvas.displayMode, .manual)
     }
 
+    func testFitModeReportsPixelScaleWhenCanvasResizeCrossesActualSize() {
+        let canvas = ImageCanvasView(frame: CGRect(x: 0, y: 0, width: 400, height: 300))
+        canvas.image = makeDecodedImage(width: 800, height: 600)
+        var reportedPixelScales: [CGFloat] = []
+        canvas.onTransformChanged = { _ in
+            if let pixelScale = canvas.pixelScale {
+                reportedPixelScales.append(pixelScale)
+            }
+        }
+
+        canvas.setFrameSize(CGSize(width: 800, height: 600))
+        canvas.setFrameSize(CGSize(width: 200, height: 150))
+
+        XCTAssertEqual(reportedPixelScales.count, 2)
+        XCTAssertEqual(reportedPixelScales[0], 1.0, accuracy: 0.001)
+        XCTAssertEqual(reportedPixelScales[1], 0.25, accuracy: 0.001)
+        XCTAssertEqual(canvas.displayMode, .fit)
+    }
+
+    func testManualPixelScaleSurvivesPreviewReplacementWithFullResolutionImage() {
+        let canvas = ImageCanvasView(frame: CGRect(x: 0, y: 0, width: 400, height: 300))
+        canvas.image = makeDecodedImage(width: 800, height: 600)
+        canvas.zoomToActualSize()
+
+        canvas.image = makeDecodedImage(width: 1_600, height: 1_200)
+
+        XCTAssertEqual(canvas.pixelScale!, 1.0, accuracy: 0.001)
+        XCTAssertEqual(canvas.scale, 4.0, accuracy: 0.001)
+        XCTAssertEqual(canvas.displayMode, .manual)
+    }
+
+    func testManualFocusSurvivesPreviewReplacementWithFullResolutionImage() {
+        let canvas = ImageCanvasView(frame: CGRect(x: 0, y: 0, width: 400, height: 300))
+        canvas.image = makeDecodedImage(width: 800, height: 600)
+        canvas.zoomToActualSize()
+        canvas.pan(by: CGPoint(x: -100, y: -50))
+
+        canvas.image = makeDecodedImage(width: 1_600, height: 1_200)
+
+        XCTAssertEqual(canvas.pixelScale!, 1.0, accuracy: 0.001)
+        XCTAssertEqual(canvas.offset.x, -200, accuracy: 0.001)
+        XCTAssertEqual(canvas.offset.y, -100, accuracy: 0.001)
+    }
+
     func testActualSizeRemainsOnePixelPerPointForVeryLargeImage() {
         let canvas = ImageCanvasView(frame: CGRect(x: 0, y: 0, width: 400, height: 300))
         canvas.image = makeDecodedImage(width: 40_000, height: 30_000)

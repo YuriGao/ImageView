@@ -163,7 +163,7 @@ public final class ImageEditingService {
         switch format {
         case .jpeg, .tiff, .heic, .heif:
             return true
-        case .png, .bmp, .gif, .webp, .avif, .svg:
+        case .png, .bmp, .gif, .webp, .avif, .svg, .arw:
             return false
         }
     }
@@ -237,7 +237,7 @@ public final class ImageEditingService {
             let heifIdentifier = UTType.heif.identifier
             let destinationTypes = CGImageDestinationCopyTypeIdentifiers() as? [String] ?? []
             return destinationTypes.contains(heifIdentifier) ? heifIdentifier : nil
-        case .gif, .webp, .avif, .svg:
+        case .gif, .webp, .avif, .svg, .arw:
             return nil
         }
     }

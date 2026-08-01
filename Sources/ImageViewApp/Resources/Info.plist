@@ -39,7 +39,30 @@
         <string>org.webmproject.webp</string>
         <string>public.avif</string>
         <string>public.svg-image</string>
+        <string>com.sony.arw-raw-image</string>
       </array>
+    </dict>
+  </array>
+  <key>UTImportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeIdentifier</key>
+      <string>com.sony.arw-raw-image</string>
+      <key>UTTypeDescription</key>
+      <string>Sony ARW RAW Image</string>
+      <key>UTTypeConformsTo</key>
+      <array>
+        <string>public.camera-raw-image</string>
+      </array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key>
+        <array>
+          <string>arw</string>
+        </array>
+        <key>public.mime-type</key>
+        <string>image/x-sony-arw</string>
+      </dict>
     </dict>
   </array>
 </dict>

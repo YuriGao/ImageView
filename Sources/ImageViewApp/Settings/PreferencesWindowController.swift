@@ -302,6 +302,7 @@ final class PreferencesWindowController: NSWindowController {
         case .heif: return "HEIF"
         case .avif: return "AVIF"
         case .svg: return "SVG"
+        case .arw: return "ARW"
         }
     }
 

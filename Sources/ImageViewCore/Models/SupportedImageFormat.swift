@@ -12,6 +12,7 @@ public enum SupportedImageFormat: String, CaseIterable, Sendable, Hashable {
     case webp
     case avif
     case svg
+    case arw
 
     public init?(fileExtension: String) {
         switch fileExtension.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ".")) {
@@ -35,6 +36,8 @@ public enum SupportedImageFormat: String, CaseIterable, Sendable, Hashable {
             self = .avif
         case "svg":
             self = .svg
+        case "arw":
+            self = .arw
         default:
             return nil
         }
@@ -44,7 +47,7 @@ public enum SupportedImageFormat: String, CaseIterable, Sendable, Hashable {
         switch self {
         case .jpeg, .png, .tiff, .bmp, .heic, .heif:
             return true
-        case .gif, .webp, .avif, .svg:
+        case .gif, .webp, .avif, .svg, .arw:
             return false
         }
     }
@@ -71,6 +74,8 @@ public enum SupportedImageFormat: String, CaseIterable, Sendable, Hashable {
             return UTType(filenameExtension: "avif")
         case .svg:
             return UTType.svg
+        case .arw:
+            return UTType(importedAs: "com.sony.arw-raw-image", conformingTo: .rawImage)
         }
     }
 
@@ -78,6 +83,8 @@ public enum SupportedImageFormat: String, CaseIterable, Sendable, Hashable {
         switch self {
         case .avif:
             return "public.avif"
+        case .arw:
+            return "com.sony.arw-raw-image"
         default:
             return contentType?.identifier
         }

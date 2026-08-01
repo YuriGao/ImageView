@@ -18,7 +18,196 @@ final class ImageDecodeServiceTests: XCTestCase {
 
         XCTAssertEqual(decoded.pixelSize.width, 4)
         XCTAssertEqual(decoded.pixelSize.height, 3)
+        XCTAssertEqual(decoded.sourcePixelSize, CGSize(width: 4, height: 3))
+        XCTAssertTrue(decoded.isFullResolution)
         XCTAssertFalse(decoded.isAnimated)
+    }
+
+    func testExplicitPreviewReportsSourceSizeAndDownsampling() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("preview.png")
+        try makePNGData(width: 400, height: 200).write(to: url)
+
+        let preview = try ImageDecodeService().decode(
+            url: url,
+            format: .png,
+            purpose: .preview(maxPixelSize: 100)
+        )
+
+        XCTAssertEqual(preview.pixelSize, CGSize(width: 100, height: 50))
+        XCTAssertEqual(preview.sourcePixelSize, CGSize(width: 400, height: 200))
+        XCTAssertFalse(preview.isFullResolution)
+    }
+
+    func testPreviewThatDoesNotDownsampleIsFullResolution() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("small-preview.png")
+        try makePNGData(width: 4, height: 3).write(to: url)
+
+        let preview = try ImageDecodeService().decode(
+            url: url,
+            format: .png,
+            purpose: .preview(maxPixelSize: 100)
+        )
+
+        XCTAssertEqual(preview.pixelSize, CGSize(width: 4, height: 3))
+        XCTAssertEqual(preview.sourcePixelSize, CGSize(width: 4, height: 3))
+        XCTAssertTrue(preview.isFullResolution)
+    }
+
+    func testARWThumbnailAndPreviewPreferEmbeddedThumbnailButFullDecodeUsesPrimaryImage() {
+        let thumbnail = ImageDecodeService.imageIODecodePlan(
+            format: .arw,
+            purpose: .thumbnail(maxPixelSize: 320),
+            sourceMaxPixelSize: 9_504
+        )
+        let preview = ImageDecodeService.imageIODecodePlan(
+            format: .arw,
+            purpose: .preview(maxPixelSize: 2_048),
+            sourceMaxPixelSize: 9_504
+        )
+        let full = ImageDecodeService.imageIODecodePlan(
+            format: .arw,
+            purpose: .full,
+            sourceMaxPixelSize: 9_504
+        )
+
+        XCTAssertEqual(thumbnail.thumbnailSource, .embeddedThumbnailIfAvailable)
+        XCTAssertEqual(thumbnail.maxPixelSize, 320)
+        XCTAssertFalse(thumbnail.loadsAnimationFrames)
+        XCTAssertEqual(thumbnail.thumbnailOptions[kCGImageSourceCreateThumbnailFromImageIfAbsent] as? Bool, true)
+        XCTAssertNil(thumbnail.thumbnailOptions[kCGImageSourceCreateThumbnailFromImageAlways])
+
+        XCTAssertEqual(preview.thumbnailSource, .embeddedThumbnailIfAvailable)
+        XCTAssertEqual(preview.maxPixelSize, 2_048)
+        XCTAssertFalse(preview.loadsAnimationFrames)
+        XCTAssertEqual(preview.thumbnailOptions[kCGImageSourceCreateThumbnailFromImageIfAbsent] as? Bool, true)
+        XCTAssertNil(preview.thumbnailOptions[kCGImageSourceCreateThumbnailFromImageAlways])
+
+        XCTAssertEqual(full.thumbnailSource, .primaryImage)
+        XCTAssertEqual(full.maxPixelSize, 9_504)
+        XCTAssertTrue(full.loadsAnimationFrames)
+        XCTAssertEqual(full.thumbnailOptions[kCGImageSourceCreateThumbnailFromImageAlways] as? Bool, true)
+        XCTAssertNil(full.thumbnailOptions[kCGImageSourceCreateThumbnailFromImageIfAbsent])
+    }
+
+    func testNonRAWPreviewContinuesToDecodeFromPrimaryImage() {
+        let preview = ImageDecodeService.imageIODecodePlan(
+            format: .jpeg,
+            purpose: .preview(maxPixelSize: 2_048),
+            sourceMaxPixelSize: 9_504
+        )
+
+        XCTAssertEqual(preview.thumbnailSource, .primaryImage)
+        XCTAssertEqual(preview.thumbnailOptions[kCGImageSourceCreateThumbnailFromImageAlways] as? Bool, true)
+        XCTAssertNil(preview.thumbnailOptions[kCGImageSourceCreateThumbnailFromImageIfAbsent])
+    }
+
+    func testARWFixturePreviewWhenProvided() throws {
+        guard let fixturePath = ProcessInfo.processInfo.environment["IMAGEVIEW_RAW_FIXTURE"],
+              !fixturePath.isEmpty else {
+            throw XCTSkip("Set IMAGEVIEW_RAW_FIXTURE to an ARW file to run the optional integration test")
+        }
+
+        let url = URL(fileURLWithPath: fixturePath)
+        XCTAssertEqual(SupportedImageFormat(fileExtension: url.pathExtension), .arw)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+        let source = try XCTUnwrap(CGImageSourceCreateWithURL(url as CFURL, nil))
+        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        let expectedSourcePixelSize = try XCTUnwrap(ImageDecodeService.orientedPixelSize(properties: properties))
+        XCTAssertGreaterThan(max(expectedSourcePixelSize.width, expectedSourcePixelSize.height), 2_048)
+
+        let preview = try ImageDecodeService().decode(
+            url: url,
+            format: .arw,
+            purpose: .preview(maxPixelSize: 2_048)
+        )
+
+        XCTAssertLessThanOrEqual(max(preview.pixelSize.width, preview.pixelSize.height), 2_048)
+        XCTAssertEqual(preview.sourcePixelSize, expectedSourcePixelSize)
+        XCTAssertFalse(preview.isFullResolution)
+        let luminanceRange = try XCTUnwrap(luminanceRange(in: preview.cgImage))
+        XCTAssertGreaterThan(luminanceRange.maximum, luminanceRange.minimum + 4)
+    }
+
+    func testARWFixtureDirectoryCoversRepresentativeOrientationsWhenProvided() throws {
+        guard let directoryPath = ProcessInfo.processInfo.environment["IMAGEVIEW_RAW_FIXTURE_DIRECTORY"],
+              !directoryPath.isEmpty else {
+            throw XCTSkip("Set IMAGEVIEW_RAW_FIXTURE_DIRECTORY to run the optional ARW orientation test")
+        }
+
+        let directoryURL = URL(fileURLWithPath: directoryPath, isDirectory: true)
+        let urls = try FileManager.default.contentsOfDirectory(
+            at: directoryURL,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ).filter { $0.pathExtension.caseInsensitiveCompare("arw") == .orderedSame }
+        var fixtureByOrientation: [Int: (URL, CGSize)] = [:]
+        for url in urls where fixtureByOrientation.count < 3 {
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+                  let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+                  let orientation = (properties[kCGImagePropertyOrientation] as? NSNumber)?.intValue,
+                  [1, 6, 8].contains(orientation),
+                  fixtureByOrientation[orientation] == nil,
+                  let sourceSize = ImageDecodeService.orientedPixelSize(properties: properties) else {
+                continue
+            }
+            fixtureByOrientation[orientation] = (url, sourceSize)
+        }
+        XCTAssertEqual(Set(fixtureByOrientation.keys), Set([1, 6, 8]))
+
+        for orientation in [1, 6, 8] {
+            let fixture = try XCTUnwrap(fixtureByOrientation[orientation])
+            let preview = try ImageDecodeService().decode(
+                url: fixture.0,
+                format: .arw,
+                purpose: .preview(maxPixelSize: 2_048)
+            )
+            XCTAssertEqual(preview.sourcePixelSize, fixture.1)
+            XCTAssertEqual(
+                preview.pixelSize.width > preview.pixelSize.height,
+                fixture.1.width > fixture.1.height,
+                "Unexpected preview aspect for EXIF orientation \(orientation)"
+            )
+            let range = try XCTUnwrap(luminanceRange(in: preview.cgImage))
+            XCTAssertGreaterThan(range.maximum, range.minimum + 4)
+        }
+    }
+
+    func testARWFixtureFullDecodeWhenProvided() throws {
+        guard let fixturePath = ProcessInfo.processInfo.environment["IMAGEVIEW_RAW_FULL_FIXTURE"],
+              !fixturePath.isEmpty else {
+            throw XCTSkip("Set IMAGEVIEW_RAW_FULL_FIXTURE to run the optional full-resolution ARW test")
+        }
+
+        let url = URL(fileURLWithPath: fixturePath)
+        let source = try XCTUnwrap(CGImageSourceCreateWithURL(url as CFURL, nil))
+        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        let expectedSourcePixelSize = try XCTUnwrap(ImageDecodeService.orientedPixelSize(properties: properties))
+        let full = try ImageDecodeService().decode(url: url, format: .arw, purpose: .full)
+
+        XCTAssertTrue(full.isFullResolution)
+        XCTAssertEqual(full.pixelSize, expectedSourcePixelSize)
+        XCTAssertEqual(full.sourcePixelSize, expectedSourcePixelSize)
+        let range = try XCTUnwrap(luminanceRange(in: full.cgImage))
+        XCTAssertGreaterThan(range.maximum, range.minimum + 4)
+    }
+
+    func testDecodedImageDefaultsSourceSemanticsForExistingCallers() throws {
+        let image = try makeImage(width: 4, height: 3)
+
+        let decoded = DecodedImage(
+            cgImage: image,
+            pixelSize: CGSize(width: 4, height: 3),
+            isAnimated: false
+        )
+
+        XCTAssertEqual(decoded.sourcePixelSize, decoded.pixelSize)
+        XCTAssertTrue(decoded.isFullResolution)
     }
 
     func testProgressivePreviewIsSkippedWhenOriginalFitsPreviewLimit() throws {
@@ -58,6 +247,12 @@ final class ImageDecodeServiceTests: XCTestCase {
                 CGSize(width: expected.width, height: expected.height),
                 "Unexpected dimensions for EXIF orientation \(orientation)"
             )
+            XCTAssertEqual(
+                decoded.sourcePixelSize,
+                CGSize(width: expected.width, height: expected.height),
+                "Unexpected source dimensions for EXIF orientation \(orientation)"
+            )
+            XCTAssertTrue(decoded.isFullResolution)
 
             for (xRatio, yRatio) in samplePositions {
                 XCTAssertEqual(
@@ -66,6 +261,35 @@ final class ImageDecodeServiceTests: XCTestCase {
                     "Unexpected pixel placement for EXIF orientation \(orientation) at \(xRatio), \(yRatio)"
                 )
             }
+        }
+    }
+
+    func testPreviewSourcePixelSizeAppliesExifOrientationBeforeDownsampling() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let markerImage = try makeOrientationMarkerImage(width: 80, height: 60)
+
+        for orientation in 1...8 {
+            let url = root.appendingPathComponent("preview-orientation-\(orientation).jpg")
+            try writeOrientedJPEG(markerImage, to: url, orientation: orientation)
+
+            let decoded = try ImageDecodeService().decode(
+                url: url,
+                format: .jpeg,
+                purpose: .preview(maxPixelSize: 40)
+            )
+            let swapsDimensions = (5...8).contains(orientation)
+            let expectedSourceSize = swapsDimensions
+                ? CGSize(width: 60, height: 80)
+                : CGSize(width: 80, height: 60)
+            let expectedPreviewSize = swapsDimensions
+                ? CGSize(width: 30, height: 40)
+                : CGSize(width: 40, height: 30)
+
+            XCTAssertEqual(decoded.sourcePixelSize, expectedSourceSize)
+            XCTAssertEqual(decoded.pixelSize, expectedPreviewSize)
+            XCTAssertFalse(decoded.isFullResolution)
         }
     }
 
@@ -401,6 +625,35 @@ final class ImageDecodeServiceTests: XCTestCase {
         let x = min(image.width - 1, max(0, Int(CGFloat(image.width) * xRatio)))
         let y = min(image.height - 1, max(0, Int(CGFloat(image.height) * yRatio)))
         return data[(y * image.width) + x]
+    }
+
+    private func luminanceRange(in image: CGImage) -> (minimum: Int, maximum: Int)? {
+        let width = 32
+        let height = 32
+        guard let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width,
+            space: CGColorSpaceCreateDeviceGray(),
+            bitmapInfo: CGImageAlphaInfo.none.rawValue
+        ) else {
+            return nil
+        }
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        guard let data = context.data?.assumingMemoryBound(to: UInt8.self) else {
+            return nil
+        }
+        var minimum = 255
+        var maximum = 0
+        for index in 0..<(width * height) {
+            let value = Int(data[index])
+            minimum = min(minimum, value)
+            maximum = max(maximum, value)
+        }
+        return (minimum, maximum)
     }
 
     private func writeAnimatedGIF(to url: URL) throws {

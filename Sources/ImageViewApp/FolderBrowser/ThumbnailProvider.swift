@@ -33,7 +33,7 @@ final class ThumbnailProvider {
             try ImageDecodeService().decode(
                 url: item.url,
                 format: item.format,
-                maxPixelSize: maxPixelSize
+                purpose: .thumbnail(maxPixelSize: maxPixelSize)
             )
         }
         self.loader = loader ?? { item, maxPixelSize, completion in

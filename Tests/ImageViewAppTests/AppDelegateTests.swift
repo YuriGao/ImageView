@@ -16,6 +16,32 @@ final class AppDelegateTests: XCTestCase {
         XCTAssertFalse(panel.canChooseDirectories)
         XCTAssertTrue(panel.canChooseFiles)
         XCTAssertTrue(panel.allowsMultipleSelection)
+        XCTAssertTrue(panel.allowedContentTypes.contains { $0.identifier == "com.sony.arw-raw-image" })
+    }
+
+    func testInfoPlistDeclaresImportedSonyARWType() throws {
+        let repositoryRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let infoPlistURL = repositoryRoot.appendingPathComponent("Sources/ImageViewApp/Resources/Info.plist")
+        let data = try Data(contentsOf: infoPlistURL)
+        let plist = try XCTUnwrap(
+            try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
+        )
+
+        let documentTypes = try XCTUnwrap(plist["CFBundleDocumentTypes"] as? [[String: Any]])
+        let declaredContentTypes = documentTypes.flatMap { $0["LSItemContentTypes"] as? [String] ?? [] }
+        XCTAssertTrue(declaredContentTypes.contains("com.sony.arw-raw-image"))
+
+        let importedTypes = try XCTUnwrap(plist["UTImportedTypeDeclarations"] as? [[String: Any]])
+        let arwType = try XCTUnwrap(importedTypes.first {
+            $0["UTTypeIdentifier"] as? String == "com.sony.arw-raw-image"
+        })
+        XCTAssertEqual(arwType["UTTypeConformsTo"] as? [String], ["public.camera-raw-image"])
+        let tags = try XCTUnwrap(arwType["UTTypeTagSpecification"] as? [String: Any])
+        XCTAssertEqual(tags["public.filename-extension"] as? [String], ["arw"])
+        XCTAssertEqual(tags["public.mime-type"] as? String, "image/x-sony-arw")
     }
 
     @MainActor

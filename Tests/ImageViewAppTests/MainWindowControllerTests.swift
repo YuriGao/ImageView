@@ -179,6 +179,13 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertTrue(MainWindowController.shouldRefreshCurrentFileOnWindowActivation())
     }
 
+    func testFullResolutionRequestRequiresActualPixelScale() {
+        XCTAssertFalse(MainWindowController.shouldRequestFullResolution(pixelScale: nil))
+        XCTAssertFalse(MainWindowController.shouldRequestFullResolution(pixelScale: 0.999))
+        XCTAssertTrue(MainWindowController.shouldRequestFullResolution(pixelScale: 1))
+        XCTAssertTrue(MainWindowController.shouldRequestFullResolution(pixelScale: 2))
+    }
+
     func testExternalFileCheckIntervalStaysLightweight() {
         XCTAssertEqual(MainWindowController.externalFileCheckInterval, 2)
     }
@@ -238,6 +245,15 @@ final class MainWindowControllerTests: XCTestCase {
     }
 
     func testMenuCommandAvailabilityRequiresFullImageForEditingButKeepsPreviewViewingAvailable() {
+        XCTAssertTrue(
+            MainWindowController.isMenuCommandEnabled(
+                .fileOperationRequiringCurrentItem,
+                hasCurrentItem: true,
+                hasCurrentImage: true,
+                canEditCurrentImage: false,
+                hasUnsavedEdits: false
+            )
+        )
         XCTAssertFalse(
             MainWindowController.isMenuCommandEnabled(
                 .startCropping,

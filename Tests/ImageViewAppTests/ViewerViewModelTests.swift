@@ -36,6 +36,261 @@ final class ViewerViewModelTests: XCTestCase {
         )
     }
 
+    func testRawOpenPublishesPreviewAsReadyWithoutStartingFullDecode() async throws {
+        let url = URL(fileURLWithPath: "/tmp/raw-preview.ARW")
+        let sourceSize = CGSize(width: 9_504, height: 6_336)
+        let preview = try makeDecodedImage(
+            width: 2_048,
+            height: 1_365,
+            sourcePixelSize: sourceSize,
+            isFullResolution: false
+        )
+        let full = try makeDecodedImage(
+            width: 640,
+            height: 426,
+            sourcePixelSize: sourceSize
+        )
+        let previewLoader = ControlledImageLoader(images: [url: preview])
+        let fullLoader = ControlledImageLoader(images: [url: full])
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: { _ in [ImageItem(url: url, format: .arw)] },
+            loadImageAtURL: fullLoader.load(url:format:),
+            loadPreviewAtURL: previewLoader.load(url:format:)
+        )
+
+        await viewModel.open(url: url)
+
+        XCTAssertEqual(viewModel.loadPhase, .full)
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, preview.pixelSize)
+        XCTAssertEqual(viewModel.currentMetadata?.pixelWidth, 9_504)
+        XCTAssertEqual(viewModel.currentMetadata?.pixelHeight, 6_336)
+        XCTAssertFalse(viewModel.canEditCurrentImage)
+        viewModel.applyEdit(.rotateClockwise)
+        XCTAssertFalse(viewModel.hasUnsavedEdits)
+        let fullLoadCount = await fullLoader.loadCount(for: url)
+        XCTAssertEqual(fullLoadCount, 0)
+    }
+
+    func testRawOpenFallsBackToFullDecodeWhenPreviewFails() async throws {
+        let url = URL(fileURLWithPath: "/tmp/raw-without-preview.arw")
+        let full = try makeDecodedImage(width: 600, height: 400)
+        let previewLoader = ControlledImageLoader(images: [:])
+        let fullLoader = ControlledImageLoader(images: [url: full])
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: { _ in [ImageItem(url: url, format: .arw)] },
+            loadImageAtURL: fullLoader.load(url:format:),
+            loadPreviewAtURL: previewLoader.load(url:format:)
+        )
+
+        await viewModel.open(url: url)
+
+        XCTAssertEqual(viewModel.loadPhase, .full)
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, full.pixelSize)
+        XCTAssertFalse(viewModel.canEditCurrentImage)
+        let previewLoadCount = await previewLoader.loadCount(for: url)
+        let fullLoadCount = await fullLoader.loadCount(for: url)
+        XCTAssertEqual(previewLoadCount, 1)
+        XCTAssertEqual(fullLoadCount, 1)
+    }
+
+    func testRawFullResolutionRequestIsDeduplicatedAndReplacesPreview() async throws {
+        let url = URL(fileURLWithPath: "/tmp/raw-full-request.arw")
+        let sourceSize = CGSize(width: 9_504, height: 6_336)
+        let preview = try makeDecodedImage(
+            width: 2_048,
+            height: 1_365,
+            sourcePixelSize: sourceSize,
+            isFullResolution: false
+        )
+        let full = try makeDecodedImage(
+            width: 640,
+            height: 426,
+            sourcePixelSize: sourceSize
+        )
+        let fullLoader = ControlledImageLoader(images: [url: full])
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: { _ in [ImageItem(url: url, format: .arw)] },
+            loadImageAtURL: fullLoader.load(url:format:),
+            loadPreviewAtURL: { _, _ in preview },
+            fullResolutionRequestDelay: .zero
+        )
+        await viewModel.open(url: url)
+        await fullLoader.pauseNextLoad(for: url)
+
+        viewModel.requestCurrentFullResolutionIfNeeded()
+        viewModel.requestCurrentFullResolutionIfNeeded()
+        await fullLoader.waitUntilPaused(url: url)
+
+        let inFlightLoadCount = await fullLoader.loadCount(for: url)
+        XCTAssertEqual(inFlightLoadCount, 1)
+        try await fullLoader.resume(url: url)
+        await waitUntil { viewModel.currentImage?.isFullResolution == true }
+
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, full.pixelSize)
+        XCTAssertEqual(viewModel.currentMetadata?.pixelWidth, 9_504)
+        XCTAssertEqual(viewModel.currentMetadata?.pixelHeight, 6_336)
+        XCTAssertFalse(viewModel.canEditCurrentImage)
+    }
+
+    func testCancellingRawFullResolutionRequestDuringDebounceAvoidsDecode() async throws {
+        let url = URL(fileURLWithPath: "/tmp/raw-cancel-full-request.arw")
+        let preview = try makeDecodedImage(width: 320, height: 213, isFullResolution: false)
+        let full = try makeDecodedImage(width: 640, height: 426)
+        let fullLoader = ControlledImageLoader(images: [url: full])
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: { _ in [ImageItem(url: url, format: .arw)] },
+            loadImageAtURL: fullLoader.load(url:format:),
+            loadPreviewAtURL: { _, _ in preview },
+            fullResolutionRequestDelay: .seconds(10)
+        )
+        await viewModel.open(url: url)
+
+        viewModel.requestCurrentFullResolutionIfNeeded()
+        viewModel.cancelCurrentFullResolutionRequest()
+        await Task.yield()
+
+        let fullLoadCount = await fullLoader.loadCount(for: url)
+        XCTAssertEqual(fullLoadCount, 0)
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, preview.pixelSize)
+        XCTAssertFalse(viewModel.currentImage?.isFullResolution == true)
+    }
+
+    func testCancelledRawFullRequestCannotClearOrPublishAReplacementRequest() async throws {
+        let url = URL(fileURLWithPath: "/tmp/raw-cancel-and-rerequest.arw")
+        let preview = try makeDecodedImage(width: 320, height: 213, isFullResolution: false)
+        let firstFull = try makeDecodedImage(width: 640, height: 426)
+        let secondFull = try makeDecodedImage(width: 800, height: 533)
+        let fullLoader = SequencedImageLoader(plans: [
+            url: [
+                .init(image: firstFull, pauseID: "cancelled-full"),
+                .init(image: secondFull, pauseID: "replacement-full")
+            ]
+        ])
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: { _ in [ImageItem(url: url, format: .arw)] },
+            loadImageAtURL: fullLoader.load(url:format:),
+            loadPreviewAtURL: { _, _ in preview },
+            fullResolutionRequestDelay: .zero
+        )
+        await viewModel.open(url: url)
+
+        viewModel.requestCurrentFullResolutionIfNeeded()
+        await fullLoader.waitUntilPaused(id: "cancelled-full")
+        viewModel.cancelCurrentFullResolutionRequest()
+        viewModel.requestCurrentFullResolutionIfNeeded()
+        await fullLoader.waitUntilPaused(id: "replacement-full")
+
+        try await fullLoader.resume(id: "cancelled-full")
+        await fullLoader.waitUntilCompleted(id: "cancelled-full")
+        viewModel.cancelCurrentFullResolutionRequest()
+        try await fullLoader.resume(id: "replacement-full")
+        await fullLoader.waitUntilCompleted(id: "replacement-full")
+        await Task.yield()
+
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, preview.pixelSize)
+        XCTAssertFalse(viewModel.currentImage?.isFullResolution == true)
+    }
+
+    func testRawPreviewRetriesWhenFileVersionChangesDuringDecode() async throws {
+        let url = URL(fileURLWithPath: "/tmp/raw-preview-version-change.arw")
+        let preview = try makeDecodedImage(width: 320, height: 213, isFullResolution: false)
+        let full = try makeDecodedImage(width: 640, height: 426)
+        let versions = FileVersionSequence(values: [
+            url: [
+                FileVersionSequence.initial,
+                FileVersionSequence.replacement,
+                FileVersionSequence.replacement,
+                FileVersionSequence.replacement
+            ]
+        ])
+        let previewLoader = ControlledImageLoader(images: [url: preview])
+        let fullLoader = ControlledImageLoader(images: [url: full])
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: { _ in [ImageItem(url: url, format: .arw)] },
+            currentFileVersionAtURL: versions.value(for:),
+            loadImageAtURL: fullLoader.load(url:format:),
+            loadPreviewAtURL: previewLoader.load(url:format:)
+        )
+
+        await viewModel.open(url: url)
+
+        let previewLoadCount = await previewLoader.loadCount(for: url)
+        let fullLoadCount = await fullLoader.loadCount(for: url)
+        XCTAssertEqual(previewLoadCount, 2)
+        XCTAssertEqual(fullLoadCount, 0)
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, preview.pixelSize)
+    }
+
+    func testNavigatingCancelsStaleRawFullResolutionReplacement() async throws {
+        let firstURL = URL(fileURLWithPath: "/tmp/raw-stale-full-first.arw")
+        let secondURL = URL(fileURLWithPath: "/tmp/raw-stale-full-second.arw")
+        let firstPreview = try makeDecodedImage(width: 320, height: 213, isFullResolution: false)
+        let secondPreview = try makeDecodedImage(width: 400, height: 267, isFullResolution: false)
+        let staleFull = try makeDecodedImage(width: 640, height: 426)
+        let previewLoader = ControlledImageLoader(images: [
+            firstURL: firstPreview,
+            secondURL: secondPreview
+        ])
+        let fullLoader = SequencedImageLoader(plans: [
+            firstURL: [.init(image: staleFull, pauseID: "stale-raw-full")]
+        ])
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: { _ in [
+                ImageItem(url: firstURL, format: .arw),
+                ImageItem(url: secondURL, format: .arw)
+            ] },
+            loadImageAtURL: fullLoader.load(url:format:),
+            loadPreviewAtURL: previewLoader.load(url:format:),
+            fullResolutionRequestDelay: .zero
+        )
+        await viewModel.open(url: firstURL)
+
+        viewModel.requestCurrentFullResolutionIfNeeded()
+        await fullLoader.waitUntilPaused(id: "stale-raw-full")
+        viewModel.showNext()
+        await waitUntil {
+            viewModel.navigationState?.currentItem?.url == secondURL
+                && viewModel.currentImage?.pixelSize == secondPreview.pixelSize
+        }
+
+        try await fullLoader.resume(id: "stale-raw-full")
+        await fullLoader.waitUntilCompleted(id: "stale-raw-full")
+        await Task.yield()
+
+        XCTAssertEqual(viewModel.navigationState?.currentItem?.url, secondURL)
+        XCTAssertEqual(viewModel.currentImage?.pixelSize, secondPreview.pixelSize)
+        XCTAssertFalse(viewModel.currentImage?.isFullResolution == true)
+    }
+
+    func testContinuousReadingUsesPreviewLoaderForRawNeighbors() async throws {
+        let urls = (0..<5).map { URL(fileURLWithPath: "/tmp/raw-continuous-\($0).arw") }
+        let items = urls.map { ImageItem(url: $0, format: .arw) }
+        let previews = try Dictionary(uniqueKeysWithValues: urls.map { url in
+            (url, try makeDecodedImage(width: 320, height: 213, isFullResolution: false))
+        })
+        let fulls = try Dictionary(uniqueKeysWithValues: urls.map { url in
+            (url, try makeDecodedImage(width: 640, height: 426))
+        })
+        let previewLoader = ControlledImageLoader(images: previews)
+        let fullLoader = ControlledImageLoader(images: fulls)
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: { _ in items },
+            loadImageAtURL: fullLoader.load(url:format:),
+            loadPreviewAtURL: previewLoader.load(url:format:)
+        )
+        await viewModel.open(url: urls[2])
+
+        let pages = await viewModel.continuousReadingPages()
+
+        XCTAssertEqual(pages.compactMap(\.image).count, 5)
+        XCTAssertTrue(pages.compactMap(\.image).allSatisfy { !$0.isFullResolution })
+        var totalFullLoadCount = 0
+        for url in urls {
+            totalFullLoadCount += await fullLoader.loadCount(for: url)
+        }
+        XCTAssertEqual(totalFullLoadCount, 0)
+    }
+
     func testUndoAndRedoMenuTitlesNameThePendingOperation() async throws {
         let url = URL(fileURLWithPath: "/tmp/history-title.png")
         let image = try makeDecodedImage(width: 4, height: 3)
@@ -765,6 +1020,7 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertFalse(ViewerViewModel.canPreloadInBackground(.svg))
         XCTAssertFalse(ViewerViewModel.canPreloadInBackground(.webp))
         XCTAssertFalse(ViewerViewModel.canPreloadInBackground(.avif))
+        XCTAssertFalse(ViewerViewModel.canPreloadInBackground(.arw))
     }
 
     func testFileVersionDetectsSameSizeRewriteWithRestoredModificationDate() throws {
@@ -1297,7 +1553,12 @@ final class ViewerViewModelTests: XCTestCase {
         return properties
     }
 
-    private func makeDecodedImage(width: Int, height: Int) throws -> DecodedImage {
+    private func makeDecodedImage(
+        width: Int,
+        height: Int,
+        sourcePixelSize: CGSize? = nil,
+        isFullResolution: Bool = true
+    ) throws -> DecodedImage {
         let colorSpace = CGColorSpaceCreateDeviceRGB()
         guard let context = CGContext(
             data: nil,
@@ -1311,7 +1572,13 @@ final class ViewerViewModelTests: XCTestCase {
             throw TestError.cannotCreateContext
         }
 
-        return DecodedImage(cgImage: image, pixelSize: CGSize(width: width, height: height), isAnimated: false)
+        return DecodedImage(
+            cgImage: image,
+            pixelSize: CGSize(width: width, height: height),
+            isAnimated: false,
+            sourcePixelSize: sourcePixelSize,
+            isFullResolution: isFullResolution
+        )
     }
 
     private enum TestError: Error {

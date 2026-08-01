@@ -35,10 +35,37 @@ final class ImageCanvasView: NSView {
 
     var image: DecodedImage? {
         didSet {
+            let preservedManualPixelScale = displayMode == .manual ? lastManualPixelScale : nil
+            let normalizedManualOffset: CGPoint? = if displayMode == .manual,
+                                                       let oldImage = oldValue,
+                                                       oldImage.cgImage.width > 0,
+                                                       oldImage.cgImage.height > 0 {
+                CGPoint(
+                    x: offset.x / CGFloat(oldImage.cgImage.width),
+                    y: offset.y / CGFloat(oldImage.cgImage.height)
+                )
+            } else {
+                nil
+            }
             currentAnimationFrameIndex = 0
             currentOnDemandAnimationFrame = nil
             configureAnimation()
-            if displayMode == .fitWidth { zoomToFitWidth() }
+            if displayMode == .fitWidth {
+                zoomToFitWidth()
+            } else if let preservedManualPixelScale,
+                      let fittedScale,
+                      fittedScale > 0 {
+                isApplyingDisplayMode = true
+                scale = preservedManualPixelScale / fittedScale
+                isApplyingDisplayMode = false
+                let projectedOffset = normalizedManualOffset.map {
+                    CGPoint(
+                        x: $0.x * CGFloat(image?.cgImage.width ?? 0),
+                        y: $0.y * CGFloat(image?.cgImage.height ?? 0)
+                    )
+                } ?? offset
+                offset = clampedOffset(for: projectedOffset)
+            }
             needsDisplay = true
             onTransformChanged?(scale)
         }
@@ -182,6 +209,11 @@ final class ImageCanvasView: NSView {
         super.setFrameSize(newSize)
         if previousMode == .fitWidth {
             zoomToFitWidth()
+            return
+        }
+        if previousMode == .fit {
+            needsDisplay = true
+            onTransformChanged?(scale)
             return
         }
         guard let preservedPixelScale, let fittedScale, fittedScale > 0 else { return }

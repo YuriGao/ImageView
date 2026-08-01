@@ -27,6 +27,28 @@ private func detachedDecode(
     try await ImageDecodeExecutor.shared.decode(operation)
 }
 
+private let rawFullImageDecodeExecutor = ImageDecodeExecutor(maxConcurrentDecodeCount: 1)
+
+private func detachedRawFullDecode(
+    _ operation: @escaping @Sendable () throws -> DecodedImage
+) async throws -> DecodedImage {
+    try await rawFullImageDecodeExecutor.decode(operation)
+}
+
+private func versionsDescribeSameContent(
+    _ lhs: CurrentFileVersion?,
+    _ rhs: CurrentFileVersion?
+) -> Bool {
+    switch (lhs, rhs) {
+    case (nil, nil):
+        return true
+    case let (lhs?, rhs?):
+        return lhs.hasSameContentIdentity(as: rhs)
+    default:
+        return false
+    }
+}
+
 @MainActor
 final class ViewerViewModel: ObservableObject {
     var onSuccessfulOpen: ((URL) -> Void)?
@@ -39,7 +61,9 @@ final class ViewerViewModel: ObservableObject {
     @Published private(set) var loadPhase: ImageLoadPhase = .empty
 
     var canEditCurrentImage: Bool {
-        loadPhase == .full && currentImage != nil
+        loadPhase == .full
+            && currentImage != nil
+            && navigationState?.currentItem?.format != .arw
     }
 
     var currentFilename: String {
@@ -49,10 +73,12 @@ final class ViewerViewModel: ObservableObject {
     private let scanContainingDirectory: @Sendable (URL) async throws -> [ImageItem]
     private let decodeImageAtURL: @Sendable (URL, SupportedImageFormat) throws -> DecodedImage
     private let loadImageAtURL: @Sendable (URL, SupportedImageFormat) async throws -> VersionedLoadedImage
+    private let loadFullResolutionAtURL: @Sendable (URL, SupportedImageFormat) async throws -> VersionedLoadedImage
     private let loadPreviewAtURL: @Sendable (URL, SupportedImageFormat) async throws -> DecodedImage
     private let shouldLoadPreviewAtURL: @Sendable (URL) -> Bool
     private let moveToTrashAtURL: @Sendable (URL) throws -> Void
     private let currentFileVersionAtURL: @Sendable (URL) -> CurrentFileVersion?
+    private let fullResolutionRequestDelay: Duration
     private let metadataService = ImageMetadataService()
     private let fileActions = FileActions()
     private let editingService = ImageEditingService()
@@ -61,6 +87,8 @@ final class ViewerViewModel: ObservableObject {
     private var cancelActiveProgressiveLoad: (@Sendable () -> Void)?
     private var displayTask: Task<Void, Never>?
     private var preloadTask: Task<Void, Never>?
+    private var fullResolutionTask: Task<Void, Never>?
+    private var fullResolutionRequestGeneration: UInt64 = 0
     private var pendingOperations: [EditOperation] = []
     private var redoOperations: [EditOperation] = []
     private var persistedCurrentImage: DecodedImage?
@@ -84,6 +112,7 @@ final class ViewerViewModel: ObservableObject {
         )
     }
     static let maximumEditHistoryCount = 20
+    static let defaultFullResolutionRequestDelay: Duration = .milliseconds(200)
     var cacheIdentityForTesting: ObjectIdentifier { ObjectIdentifier(cache) }
 
     init(
@@ -99,17 +128,19 @@ final class ViewerViewModel: ObservableObject {
         loadImageAtURL: (@Sendable (URL, SupportedImageFormat) async throws -> DecodedImage)? = nil,
         loadPreviewAtURL: (@Sendable (URL, SupportedImageFormat) async throws -> DecodedImage)? = nil,
         shouldLoadPreviewAtURL: (@Sendable (URL) -> Bool)? = nil,
+        fullResolutionRequestDelay: Duration = ViewerViewModel.defaultFullResolutionRequestDelay,
         cache: ImageCache = .shared
     ) {
         let resolvedDecodeImageAtURL: @Sendable (URL, SupportedImageFormat) throws -> DecodedImage =
             decodeImageAtURL ?? {
                 let decoder = ImageDecodeService()
-                return try decoder.decode(url: $0, format: $1, maxPixelSize: nil)
+                return try decoder.decode(url: $0, format: $1, purpose: .full)
             }
         self.scanContainingDirectory = scanContainingDirectory
         self.decodeImageAtURL = resolvedDecodeImageAtURL
         self.moveToTrashAtURL = moveToTrashAtURL
         self.currentFileVersionAtURL = currentFileVersionAtURL
+        self.fullResolutionRequestDelay = fullResolutionRequestDelay
         self.cache = cache
         self.shouldLoadPreviewAtURL = shouldLoadPreviewAtURL ?? { url in
             loadPreviewAtURL != nil || ImageDecodeService.requiresDownsampledPreview(url: url, maxPixelSize: 2_048)
@@ -119,15 +150,48 @@ final class ViewerViewModel: ObservableObject {
         } else {
             self.loadPreviewAtURL = { url, format in
                 try await detachedDecode {
-                    try ImageDecodeService().decode(url: url, format: format, maxPixelSize: 2_048)
+                    try ImageDecodeService().decode(
+                        url: url,
+                        format: format,
+                        purpose: .preview(maxPixelSize: 2_048)
+                    )
                 }
             }
         }
+        let directFullResolutionLoader: @Sendable (URL, SupportedImageFormat) async throws -> VersionedLoadedImage = { url, format in
+            for attempt in 0..<2 {
+                guard let beforeVersion = currentFileVersionAtURL(url) else {
+                    throw ImageDecodeError.cannotCreateSource
+                }
+                do {
+                    let decoded = try await detachedRawFullDecode {
+                        try resolvedDecodeImageAtURL(url, format)
+                    }
+                    try Task.checkCancellation()
+                    guard let afterVersion = currentFileVersionAtURL(url),
+                          afterVersion.hasSameContentIdentity(as: beforeVersion) else {
+                        throw ImageDecodeError.cannotDecodeImage
+                    }
+                    return VersionedLoadedImage(image: decoded, version: afterVersion)
+                } catch {
+                    try Task.checkCancellation()
+                    if attempt == 0,
+                       let latestVersion = currentFileVersionAtURL(url),
+                       !latestVersion.hasSameContentIdentity(as: beforeVersion) {
+                        continue
+                    }
+                    throw error
+                }
+            }
+            throw ImageDecodeError.cannotDecodeImage
+        }
         if let loadImageAtURL {
-            self.loadImageAtURL = { url, format in
+            let versionedLoader: @Sendable (URL, SupportedImageFormat) async throws -> VersionedLoadedImage = { url, format in
                 let image = try await loadImageAtURL(url, format)
                 return VersionedLoadedImage(image: image, version: currentFileVersionAtURL(url))
             }
+            self.loadImageAtURL = versionedLoader
+            self.loadFullResolutionAtURL = versionedLoader
         } else if let decodeImageAtURL {
             self.loadImageAtURL = { url, format in
                 let image = try await detachedDecode {
@@ -135,6 +199,7 @@ final class ViewerViewModel: ObservableObject {
                 }
                 return VersionedLoadedImage(image: image, version: currentFileVersionAtURL(url))
             }
+            self.loadFullResolutionAtURL = directFullResolutionLoader
         } else {
             let cache = cache
             self.loadImageAtURL = { url, format in
@@ -173,12 +238,14 @@ final class ViewerViewModel: ObservableObject {
 
                 throw ImageDecodeError.cannotDecodeImage
             }
+            self.loadFullResolutionAtURL = directFullResolutionLoader
         }
     }
 
     deinit {
         displayTask?.cancel()
         preloadTask?.cancel()
+        fullResolutionTask?.cancel()
         cancelActiveProgressiveLoad?()
     }
 
@@ -222,63 +289,90 @@ final class ViewerViewModel: ObservableObject {
         let fallbackItem = ImageItem(url: url, format: format)
 
         do {
-            let loadPreviewAtURL = self.loadPreviewAtURL
-            let loadImageAtURL = self.loadImageAtURL
-            let (events, continuation) = AsyncThrowingStream<ImageLoadEvent, Error>.makeStream()
-            let previewTask: Task<Void, Never>? = if shouldLoadPreviewAtURL(url) {
-                Task {
-                    do {
-                        let image = try await loadPreviewAtURL(url, format)
-                        try Task.checkCancellation()
-                        continuation.yield(.preview(image))
-                    } catch {
-                        // Preview failures are non-fatal; the full image still decides the open result.
+            if format == .arw {
+                let initialLoadTask = Task { [weak self] in
+                    guard let self else { throw CancellationError() }
+                    return try await self.display(url: url, format: format)
+                }
+                let cancelInitialLoad: @Sendable () -> Void = {
+                    initialLoadTask.cancel()
+                }
+                cancelActiveProgressiveLoad = cancelInitialLoad
+                defer {
+                    cancelInitialLoad()
+                    if generation == displayRequestGeneration {
+                        cancelActiveProgressiveLoad = nil
                     }
                 }
+
+                let loaded = try await initialLoadTask.value
+                guard generation == displayRequestGeneration else { return }
+                currentImage = loaded.image
+                persistedCurrentImage = loaded.image
+                displayedFileVersion = loaded.version
+                updateMetadata(url: url, format: format, image: loaded.image)
+                navigationState = NavigationState(items: [fallbackItem], currentURL: url)
+                loadPhase = .full
+                updateDisplayTitle()
             } else {
-                nil
-            }
-            let fullTask = Task {
-                do {
-                    let image = try await loadImageAtURL(url, format)
-                    try Task.checkCancellation()
-                    continuation.yield(.full(image))
+                let loadPreviewAtURL = self.loadPreviewAtURL
+                let loadImageAtURL = self.loadImageAtURL
+                let (events, continuation) = AsyncThrowingStream<ImageLoadEvent, Error>.makeStream()
+                let previewTask: Task<Void, Never>? = if shouldLoadPreviewAtURL(url) {
+                    Task {
+                        do {
+                            let image = try await loadPreviewAtURL(url, format)
+                            try Task.checkCancellation()
+                            continuation.yield(.preview(image))
+                        } catch {
+                            // Preview failures are non-fatal; the full image still decides the open result.
+                        }
+                    }
+                } else {
+                    nil
+                }
+                let fullTask = Task {
+                    do {
+                        let image = try await loadImageAtURL(url, format)
+                        try Task.checkCancellation()
+                        continuation.yield(.full(image))
+                        continuation.finish()
+                    } catch {
+                        continuation.finish(throwing: error)
+                    }
+                }
+                let cancelProgressiveLoad: @Sendable () -> Void = {
+                    previewTask?.cancel()
+                    fullTask.cancel()
                     continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
                 }
-            }
-            let cancelProgressiveLoad: @Sendable () -> Void = {
-                previewTask?.cancel()
-                fullTask.cancel()
-                continuation.finish()
-            }
-            cancelActiveProgressiveLoad = cancelProgressiveLoad
-            defer {
-                cancelProgressiveLoad()
-                if generation == displayRequestGeneration {
-                    cancelActiveProgressiveLoad = nil
-                }
-            }
-
-            eventLoop: for try await event in events {
-                guard generation == displayRequestGeneration else { break }
-
-                switch event {
-                case let .preview(image):
-                    guard loadPhase != .full else { continue }
-                    currentImage = image
-                    loadPhase = .preview
-                case let .full(loaded):
-                    currentImage = loaded.image
-                    persistedCurrentImage = loaded.image
-                    displayedFileVersion = loaded.version
-                    updateMetadata(url: url, format: format, image: loaded.image)
-                    navigationState = NavigationState(items: [fallbackItem], currentURL: url)
-                    loadPhase = .full
-                    updateDisplayTitle()
+                cancelActiveProgressiveLoad = cancelProgressiveLoad
+                defer {
                     cancelProgressiveLoad()
-                    break eventLoop
+                    if generation == displayRequestGeneration {
+                        cancelActiveProgressiveLoad = nil
+                    }
+                }
+
+                eventLoop: for try await event in events {
+                    guard generation == displayRequestGeneration else { break }
+
+                    switch event {
+                    case let .preview(image):
+                        guard loadPhase != .full else { continue }
+                        currentImage = image
+                        loadPhase = .preview
+                    case let .full(loaded):
+                        currentImage = loaded.image
+                        persistedCurrentImage = loaded.image
+                        displayedFileVersion = loaded.version
+                        updateMetadata(url: url, format: format, image: loaded.image)
+                        navigationState = NavigationState(items: [fallbackItem], currentURL: url)
+                        loadPhase = .full
+                        updateDisplayTitle()
+                        cancelProgressiveLoad()
+                        break eventLoop
+                    }
                 }
             }
 
@@ -606,6 +700,68 @@ final class ViewerViewModel: ObservableObject {
         NSPasteboard.general.setString(fileActions.absolutePath(for: url), forType: .string)
     }
 
+    func requestCurrentFullResolutionIfNeeded() {
+        guard fullResolutionTask == nil,
+              loadPhase == .full,
+              let item = navigationState?.currentItem,
+              item.format == .arw,
+              let currentImage,
+              !currentImage.isFullResolution else {
+            return
+        }
+
+        let generation = displayRequestGeneration
+        fullResolutionRequestGeneration &+= 1
+        let fullResolutionGeneration = fullResolutionRequestGeneration
+        let expectedURL = item.url.standardizedFileURL
+        let expectedVersion = displayedFileVersion
+        let loadFullResolutionAtURL = self.loadFullResolutionAtURL
+        let currentFileVersionAtURL = self.currentFileVersionAtURL
+        let requestDelay = fullResolutionRequestDelay
+
+        fullResolutionTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: requestDelay)
+                try Task.checkCancellation()
+                let loaded = try await loadFullResolutionAtURL(item.url, item.format)
+                try Task.checkCancellation()
+                let latestVersion = currentFileVersionAtURL(item.url)
+
+                guard let self,
+                      generation == self.displayRequestGeneration,
+                      fullResolutionGeneration == self.fullResolutionRequestGeneration,
+                      self.navigationState?.currentItem?.url.standardizedFileURL == expectedURL,
+                      versionsDescribeSameContent(expectedVersion, loaded.version),
+                      versionsDescribeSameContent(loaded.version, latestVersion),
+                      loaded.image.isFullResolution else {
+                    if let self,
+                       generation == self.displayRequestGeneration,
+                       fullResolutionGeneration == self.fullResolutionRequestGeneration {
+                        self.fullResolutionTask = nil
+                    }
+                    return
+                }
+
+                self.currentImage = loaded.image
+                self.persistedCurrentImage = loaded.image
+                self.displayedFileVersion = loaded.version
+                self.updateMetadata(url: item.url, format: item.format, image: loaded.image)
+                self.fullResolutionTask = nil
+            } catch {
+                guard let self,
+                      generation == self.displayRequestGeneration,
+                      fullResolutionGeneration == self.fullResolutionRequestGeneration else { return }
+                self.fullResolutionTask = nil
+            }
+        }
+    }
+
+    func cancelCurrentFullResolutionRequest() {
+        fullResolutionRequestGeneration &+= 1
+        fullResolutionTask?.cancel()
+        fullResolutionTask = nil
+    }
+
     func continuousReadingPages(
         centeredAt focusedItemID: ImageItem.ID? = nil,
         radius: Int = ContinuousReadingView.preloadRadius
@@ -633,6 +789,8 @@ final class ViewerViewModel: ObservableObject {
             let image: DecodedImage?
             if item.id == current.id, let currentImage {
                 image = currentImage
+            } else if item.format == .arw {
+                image = try? await loadPreviewAtURL(item.url, item.format)
             } else {
                 image = try? await display(url: item.url, format: item.format).image
             }
@@ -753,7 +911,26 @@ final class ViewerViewModel: ObservableObject {
     }
 
     private func display(url: URL, format: SupportedImageFormat) async throws -> VersionedLoadedImage {
-        try await loadImageAtURL(url, format)
+        guard format == .arw else {
+            return try await loadImageAtURL(url, format)
+        }
+
+        for _ in 0..<2 {
+            let beforeVersion = currentFileVersionAtURL(url)
+            do {
+                let image = try await loadPreviewAtURL(url, format)
+                try Task.checkCancellation()
+                let afterVersion = currentFileVersionAtURL(url)
+                if versionsDescribeSameContent(beforeVersion, afterVersion) {
+                    return VersionedLoadedImage(image: image, version: afterVersion)
+                }
+            } catch {
+                try Task.checkCancellation()
+                break
+            }
+        }
+        try Task.checkCancellation()
+        return try await loadFullResolutionAtURL(url, format)
     }
 
     private func removeExternallyUnavailableCurrentItem(_ item: ImageItem) {
@@ -794,6 +971,9 @@ final class ViewerViewModel: ObservableObject {
         displayTask = nil
         preloadTask?.cancel()
         preloadTask = nil
+        fullResolutionRequestGeneration &+= 1
+        fullResolutionTask?.cancel()
+        fullResolutionTask = nil
         displayRequestGeneration &+= 1
         return displayRequestGeneration
     }
@@ -820,7 +1000,7 @@ final class ViewerViewModel: ObservableObject {
 
     static func canPreloadInBackground(_ format: SupportedImageFormat) -> Bool {
         switch format {
-        case .gif, .svg, .webp, .avif:
+        case .gif, .svg, .webp, .avif, .arw:
             return false
         case .jpeg, .png, .tiff, .bmp, .heic, .heif:
             return true
@@ -836,11 +1016,16 @@ final class ViewerViewModel: ObservableObject {
     }
 
     private func updateMetadata(url: URL, format: SupportedImageFormat, image: DecodedImage) {
+        let reportedPixelSize = if format == .arw {
+            image.sourcePixelSize
+        } else {
+            CGSize(width: image.cgImage.width, height: image.cgImage.height)
+        }
         currentMetadata = metadataService.metadata(
             for: url,
             format: format,
-            pixelWidth: image.cgImage.width,
-            pixelHeight: image.cgImage.height
+            pixelWidth: Int(reportedPixelSize.width.rounded()),
+            pixelHeight: Int(reportedPixelSize.height.rounded())
         )
     }
 

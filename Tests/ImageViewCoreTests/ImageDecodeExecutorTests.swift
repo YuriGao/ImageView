@@ -24,6 +24,40 @@ final class ImageDecodeExecutorTests: XCTestCase {
         XCTAssertLessThanOrEqual(concurrency.maximum, 2)
     }
 
+    func testCancellingQueuedDecodePreventsItsBodyFromRunning() async throws {
+        let executor = ImageDecodeExecutor(maxConcurrentDecodeCount: 1)
+        let firstGate = BlockingDecodeGate()
+        let cancelledBodyCount = DecodeExecutionCounter()
+        let first = Task<DecodedImage, Error>.detached { @Sendable [executor, firstGate] in
+            try await executor.decode {
+                firstGate.beginAndWait()
+                return Self.makeImage()
+            }
+        }
+        while !firstGate.hasStarted {
+            await Task.yield()
+        }
+
+        let queued = Task<DecodedImage, Error>.detached { @Sendable [executor, cancelledBodyCount] in
+            try await executor.decode {
+                cancelledBodyCount.increment()
+                return Self.makeImage()
+            }
+        }
+        await Task.yield()
+        queued.cancel()
+        firstGate.release()
+
+        _ = try await first.value
+        do {
+            _ = try await queued.value
+            XCTFail("Cancelled queued decode unexpectedly succeeded")
+        } catch is CancellationError {
+            // Expected.
+        }
+        XCTAssertEqual(cancelledBodyCount.value, 0)
+    }
+
     private static func makeImage() -> DecodedImage {
         let context = CGContext(
             data: nil,
@@ -36,6 +70,34 @@ final class ImageDecodeExecutorTests: XCTestCase {
         )!
         let image = context.makeImage()!
         return DecodedImage(cgImage: image, pixelSize: CGSize(width: 1, height: 1), isAnimated: false)
+    }
+}
+
+private final class BlockingDecodeGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private let semaphore = DispatchSemaphore(value: 0)
+    private var started = false
+
+    var hasStarted: Bool { lock.withLock { started } }
+
+    func beginAndWait() {
+        lock.withLock { started = true }
+        semaphore.wait()
+    }
+
+    func release() {
+        semaphore.signal()
+    }
+}
+
+private final class DecodeExecutionCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    var value: Int { lock.withLock { count } }
+
+    func increment() {
+        lock.withLock { count += 1 }
     }
 }
 

@@ -31,7 +31,7 @@ enum AppStrings {
         "settings.format.jpeg", "settings.format.png", "settings.format.gif",
         "settings.format.webp", "settings.format.heic", "settings.format.tiff",
         "settings.format.bmp", "settings.format.heif", "settings.format.avif",
-        "settings.format.svg"
+        "settings.format.svg", "settings.format.arw"
     ]
 
     static let emptyStateKeys = [

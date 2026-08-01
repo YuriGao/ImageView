@@ -134,7 +134,7 @@ private extension String {
     var nilIfEmpty: String? { isEmpty ? nil : self }
 }
 
-private extension SupportedImageFormat {
+extension SupportedImageFormat {
     var displayName: String {
         switch self {
         case .jpeg:
@@ -157,6 +157,8 @@ private extension SupportedImageFormat {
             return "AVIF"
         case .svg:
             return "SVG"
+        case .arw:
+            return "ARW"
         }
     }
 }

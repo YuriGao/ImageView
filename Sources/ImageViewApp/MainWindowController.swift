@@ -491,6 +491,11 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         canvas.onTransformChanged = { [weak self] scale in
             guard let self else { return }
             self.updateZoomStatus()
+            if Self.shouldRequestFullResolution(pixelScale: self.canvas.pixelScale) {
+                self.viewModel.requestCurrentFullResolutionIfNeeded()
+            } else {
+                self.viewModel.cancelCurrentFullResolutionRequest()
+            }
             if scale > 1.01 {
                 self.hideFilmstripOverlay(immediately: true)
             }
@@ -913,6 +918,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
 
     @objc func actualSize(_ sender: Any?) {
         canvas.zoomToActualSize()
+        viewModel.requestCurrentFullResolutionIfNeeded()
     }
 
     @objc func zoomToFit(_ sender: Any?) {
@@ -1483,6 +1489,11 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
 
     static func shouldRefreshCurrentFileOnWindowActivation() -> Bool {
         true
+    }
+
+    static func shouldRequestFullResolution(pixelScale: CGFloat?) -> Bool {
+        guard let pixelScale else { return false }
+        return pixelScale >= 1
     }
 
     static func shouldResetCanvasTransform(from previousURL: URL?, to newURL: URL?) -> Bool {
