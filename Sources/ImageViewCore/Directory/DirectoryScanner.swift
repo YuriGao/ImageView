@@ -66,13 +66,13 @@ public final class DirectoryScanner: @unchecked Sendable {
         let jpegByStem = Dictionary(grouping: items.filter { $0.format == .jpeg }) {
             pairingStem(for: $0.url)
         }
-        let rawByStem = Dictionary(grouping: items.filter { $0.format == .arw }) {
+        let rawByStem = Dictionary(grouping: items.filter { $0.format.isCameraRAW }) {
             pairingStem(for: $0.url)
         }
 
         return items.compactMap { item in
             let stem = pairingStem(for: item.url)
-            if item.format == .arw, jpegByStem[stem]?.isEmpty == false {
+            if item.format.isCameraRAW, jpegByStem[stem]?.isEmpty == false {
                 return nil
             }
             guard item.format == .jpeg,

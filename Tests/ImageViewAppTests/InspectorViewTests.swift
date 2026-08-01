@@ -24,4 +24,8 @@ final class InspectorViewTests: XCTestCase {
     func testSonyARWFormatHasInspectorDisplayName() {
         XCTAssertEqual(SupportedImageFormat.arw.displayName, "ARW")
     }
+
+    func testNikonNEFFormatHasInspectorDisplayName() {
+        XCTAssertEqual(SupportedImageFormat.nef.displayName, "NEF")
+    }
 }

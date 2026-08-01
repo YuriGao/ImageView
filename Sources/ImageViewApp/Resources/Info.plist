@@ -13,9 +13,9 @@
   <key>CFBundlePackageType</key>
   <string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1.6</string>
+	<string>0.1.7</string>
 	<key>CFBundleVersion</key>
-	<string>6</string>
+	<string>7</string>
   <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
   <key>CFBundleDocumentTypes</key>
@@ -40,6 +40,7 @@
         <string>public.avif</string>
         <string>public.svg-image</string>
         <string>com.sony.arw-raw-image</string>
+        <string>com.nikon.raw-image</string>
       </array>
     </dict>
   </array>
@@ -62,6 +63,25 @@
         </array>
         <key>public.mime-type</key>
         <string>image/x-sony-arw</string>
+      </dict>
+    </dict>
+    <dict>
+      <key>UTTypeIdentifier</key>
+      <string>com.nikon.raw-image</string>
+      <key>UTTypeDescription</key>
+      <string>Nikon NEF RAW Image</string>
+      <key>UTTypeConformsTo</key>
+      <array>
+        <string>public.camera-raw-image</string>
+      </array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key>
+        <array>
+          <string>nef</string>
+        </array>
+        <key>public.mime-type</key>
+        <string>image/x-nikon-nef</string>
       </dict>
     </dict>
   </array>

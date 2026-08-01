@@ -159,6 +159,8 @@ extension SupportedImageFormat {
             return "SVG"
         case .arw:
             return "ARW"
+        case .nef:
+            return "NEF"
         }
     }
 }

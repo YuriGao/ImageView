@@ -17,6 +17,7 @@ final class PreferencesWindowControllerTests: XCTestCase {
         XCTAssertNotNil(content.viewWithIdentifier("fileAssociation.heic"))
         XCTAssertNil(content.viewWithIdentifier("fileAssociation.svg"))
         XCTAssertNil(content.viewWithIdentifier("fileAssociation.arw"))
+        XCTAssertNil(content.viewWithIdentifier("fileAssociation.nef"))
     }
 
     func testApplyButtonStartsDisabled() throws {
@@ -44,7 +45,7 @@ final class PreferencesWindowControllerTests: XCTestCase {
         XCTAssertEqual(direction.itemTitles, ["从左到右", "从右到左"])
     }
 
-    func testShowAllRevealsExactlyElevenFormatsIncludingARW() throws {
+    func testShowAllRevealsExactlyTwelveFormatsIncludingRAWFormats() throws {
         let controller = makeController(preferredLanguages: ["en"])
         let content = try XCTUnwrap(controller.window?.contentView)
         let button = try XCTUnwrap(content.viewWithIdentifier("fileAssociation.showAll") as? NSButton)
@@ -53,11 +54,15 @@ final class PreferencesWindowControllerTests: XCTestCase {
 
         XCTAssertEqual(SupportedImageFormat.allCases.filter {
             content.viewWithIdentifier("fileAssociation.\($0.rawValue)") != nil
-        }.count, 11)
+        }.count, 12)
         let checkbox = try XCTUnwrap(content.viewWithIdentifier("fileAssociation.arw.checkbox") as? NSButton)
         let extensions = try XCTUnwrap(content.viewWithIdentifier("fileAssociation.arw.extensions") as? NSTextField)
         XCTAssertEqual(checkbox.title, "ARW")
         XCTAssertEqual(extensions.stringValue, "ARW")
+        let nefCheckbox = try XCTUnwrap(content.viewWithIdentifier("fileAssociation.nef.checkbox") as? NSButton)
+        let nefExtensions = try XCTUnwrap(content.viewWithIdentifier("fileAssociation.nef.extensions") as? NSTextField)
+        XCTAssertEqual(nefCheckbox.title, "NEF")
+        XCTAssertEqual(nefExtensions.stringValue, "NEF")
     }
 
     func testFormatRowsStayDirectlyBelowAssociationActions() throws {
@@ -67,15 +72,15 @@ final class PreferencesWindowControllerTests: XCTestCase {
         showAllButton.performClick(nil)
         content.layoutSubtreeIfNeeded()
         let jpegRow = try XCTUnwrap(content.viewWithIdentifier("fileAssociation.jpeg"))
-        let arwRow = try XCTUnwrap(content.viewWithIdentifier("fileAssociation.arw"))
+        let nefRow = try XCTUnwrap(content.viewWithIdentifier("fileAssociation.nef"))
         let apply = try XCTUnwrap(content.viewWithIdentifier("fileAssociation.apply"))
         let showAllFrame = showAllButton.convert(showAllButton.bounds, to: content)
         let jpegFrame = jpegRow.convert(jpegRow.bounds, to: content)
-        let arwFrame = arwRow.convert(arwRow.bounds, to: content)
+        let nefFrame = nefRow.convert(nefRow.bounds, to: content)
         let applyFrame = apply.convert(apply.bounds, to: content)
 
         XCTAssertLessThanOrEqual(showAllFrame.minY - jpegFrame.maxY, 24)
-        XCTAssertLessThanOrEqual(arwFrame.minY - applyFrame.maxY, 24)
+        XCTAssertLessThanOrEqual(nefFrame.minY - applyFrame.maxY, 24)
     }
 
     func testWindowHeightTracksVisibleFormatCount() throws {

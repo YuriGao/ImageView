@@ -1128,6 +1128,34 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.canRedo)
     }
 
+    func testPairedNEFAndJPEGMoveToTrashAndUndoAsSingleOperation() async throws {
+        let jpegURL = URL(fileURLWithPath: "/tmp/paired-nef.JPG")
+        let rawURL = URL(fileURLWithPath: "/tmp/paired-nef.NEF")
+        let jpegItem = ImageItem(url: jpegURL, format: .jpeg, pairedRawURL: rawURL)
+        let image = try makeDecodedImage(width: 6, height: 4)
+        let movedURLs = ViewerLockedValue<[URL]>([])
+        let restoredDestinations = ViewerLockedValue<[URL]>([])
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: { _ in [jpegItem] },
+            moveToTrashAtURL: { url in
+                movedURLs.update { $0.append(url) }
+                return URL(fileURLWithPath: "/tmp/trash-\(url.lastPathComponent)")
+            },
+            restoreFromTrashAtURL: { _, destination in
+                restoredDestinations.update { $0.append(destination) }
+            },
+            loadImageAtURL: { _, _ in image },
+            loadPreviewAtURL: { _, _ in image }
+        )
+        await viewModel.open(url: rawURL)
+
+        viewModel.moveCurrentToTrash()
+        XCTAssertEqual(movedURLs.value, [jpegURL, rawURL])
+        XCTAssertTrue(viewModel.undoEdit())
+        XCTAssertEqual(restoredDestinations.value, [jpegURL, rawURL])
+        XCTAssertEqual(viewModel.navigationState?.currentItem, jpegItem)
+    }
+
     func testPairedTrashFailureRestoresAlreadyMovedFileAndKeepsCombinationVisible() async throws {
         let jpegURL = URL(fileURLWithPath: "/tmp/paired-failure.JPG")
         let rawURL = URL(fileURLWithPath: "/tmp/paired-failure.ARW")
@@ -1185,6 +1213,7 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertFalse(ViewerViewModel.canPreloadInBackground(.webp))
         XCTAssertFalse(ViewerViewModel.canPreloadInBackground(.avif))
         XCTAssertFalse(ViewerViewModel.canPreloadInBackground(.arw))
+        XCTAssertFalse(ViewerViewModel.canPreloadInBackground(.nef))
     }
 
     func testFileVersionDetectsSameSizeRewriteWithRestoredModificationDate() throws {

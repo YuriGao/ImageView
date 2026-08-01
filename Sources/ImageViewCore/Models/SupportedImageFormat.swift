@@ -13,6 +13,7 @@ public enum SupportedImageFormat: String, CaseIterable, Sendable, Hashable {
     case avif
     case svg
     case arw
+    case nef
 
     public init?(fileExtension: String) {
         switch fileExtension.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ".")) {
@@ -38,6 +39,8 @@ public enum SupportedImageFormat: String, CaseIterable, Sendable, Hashable {
             self = .svg
         case "arw":
             self = .arw
+        case "nef":
+            self = .nef
         default:
             return nil
         }
@@ -47,7 +50,7 @@ public enum SupportedImageFormat: String, CaseIterable, Sendable, Hashable {
         switch self {
         case .jpeg, .png, .tiff, .bmp, .heic, .heif:
             return true
-        case .gif, .webp, .avif, .svg, .arw:
+        case .gif, .webp, .avif, .svg, .arw, .nef:
             return false
         }
     }
@@ -76,6 +79,8 @@ public enum SupportedImageFormat: String, CaseIterable, Sendable, Hashable {
             return UTType.svg
         case .arw:
             return UTType(importedAs: "com.sony.arw-raw-image", conformingTo: .rawImage)
+        case .nef:
+            return UTType(importedAs: "com.nikon.raw-image", conformingTo: .rawImage)
         }
     }
 
@@ -85,8 +90,19 @@ public enum SupportedImageFormat: String, CaseIterable, Sendable, Hashable {
             return "public.avif"
         case .arw:
             return "com.sony.arw-raw-image"
+        case .nef:
+            return "com.nikon.raw-image"
         default:
             return contentType?.identifier
+        }
+    }
+
+    public var isCameraRAW: Bool {
+        switch self {
+        case .arw, .nef:
+            return true
+        default:
+            return false
         }
     }
 }

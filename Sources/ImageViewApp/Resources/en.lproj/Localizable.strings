@@ -206,6 +206,7 @@
 "settings.format.avif" = "AVIF";
 "settings.format.svg" = "SVG";
 "settings.format.arw" = "ARW";
+"settings.format.nef" = "NEF";
 "inspector.title" = "Info";
 "inspector.format" = "Format";
 "inspector.pixels" = "Pixels";

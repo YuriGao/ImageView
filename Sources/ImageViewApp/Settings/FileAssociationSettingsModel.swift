@@ -26,7 +26,7 @@ final class FileAssociationSettingsModel: ObservableObject {
     static let commonFormats: [SupportedImageFormat] = [.jpeg, .png, .gif, .webp, .heic]
     static let allFormats: [SupportedImageFormat] = [
         .jpeg, .png, .gif, .webp, .heic,
-        .tiff, .bmp, .heif, .avif, .svg, .arw
+        .tiff, .bmp, .heif, .avif, .svg, .arw, .nef
     ]
 
     @Published private(set) var selectedFormats: Set<SupportedImageFormat> = []

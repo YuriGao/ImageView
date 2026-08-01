@@ -74,7 +74,7 @@ final class ViewerViewModel: ObservableObject {
     var canEditCurrentImage: Bool {
         loadPhase == .full
             && currentImage != nil
-            && navigationState?.currentItem?.format != .arw
+            && navigationState?.currentItem?.format.isCameraRAW != true
     }
 
     var currentFilename: String {
@@ -319,7 +319,7 @@ final class ViewerViewModel: ObservableObject {
         let fallbackItem = ImageItem(url: url, format: format)
 
         do {
-            if format == .arw {
+            if format.isCameraRAW {
                 let initialLoadTask = Task { [weak self] in
                     guard let self else { throw CancellationError() }
                     return try await self.display(url: url, format: format)
@@ -774,7 +774,7 @@ final class ViewerViewModel: ObservableObject {
         guard fullResolutionTask == nil,
               loadPhase == .full,
               let item = navigationState?.currentItem,
-              item.format == .arw,
+              item.format.isCameraRAW,
               let currentImage,
               !currentImage.isFullResolution else {
             return
@@ -859,7 +859,7 @@ final class ViewerViewModel: ObservableObject {
             let image: DecodedImage?
             if item.id == current.id, let currentImage {
                 image = currentImage
-            } else if item.format == .arw {
+            } else if item.format.isCameraRAW {
                 image = try? await loadPreviewAtURL(item.url, item.format)
             } else {
                 image = try? await display(url: item.url, format: item.format).image
@@ -1047,7 +1047,7 @@ final class ViewerViewModel: ObservableObject {
     }
 
     private func display(url: URL, format: SupportedImageFormat) async throws -> VersionedLoadedImage {
-        guard format == .arw else {
+        guard format.isCameraRAW else {
             return try await loadImageAtURL(url, format)
         }
 
@@ -1136,7 +1136,7 @@ final class ViewerViewModel: ObservableObject {
 
     static func canPreloadInBackground(_ format: SupportedImageFormat) -> Bool {
         switch format {
-        case .gif, .svg, .webp, .avif, .arw:
+        case .gif, .svg, .webp, .avif, .arw, .nef:
             return false
         case .jpeg, .png, .tiff, .bmp, .heic, .heif:
             return true
@@ -1153,7 +1153,7 @@ final class ViewerViewModel: ObservableObject {
     }
 
     private func updateMetadata(url: URL, format: SupportedImageFormat, image: DecodedImage) {
-        let reportedPixelSize = if format == .arw {
+        let reportedPixelSize = if format.isCameraRAW {
             image.sourcePixelSize
         } else {
             CGSize(width: image.cgImage.width, height: image.cgImage.height)

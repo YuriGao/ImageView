@@ -84,6 +84,25 @@ final class DirectoryScannerTests: XCTestCase {
         XCTAssertEqual(items.first?.pairedRawURL, raw)
     }
 
+    func testCollapsesMatchingNEFAndJPEGLikeARW() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let raw = root.appendingPathComponent("Nikon-001.NEF")
+        let jpeg = root.appendingPathComponent("nikon-001.jpg")
+        let standaloneRaw = root.appendingPathComponent("Nikon-002.nef")
+        FileManager.default.createFile(atPath: raw.path, contents: Data())
+        FileManager.default.createFile(atPath: jpeg.path, contents: Data())
+        FileManager.default.createFile(atPath: standaloneRaw.path, contents: Data())
+
+        let items = try await DirectoryScanner().scan(containing: raw)
+
+        XCTAssertEqual(items.map(\.url.lastPathComponent), ["nikon-001.jpg", "Nikon-002.nef"])
+        XCTAssertEqual(items.first?.pairedRawURL, raw)
+        XCTAssertEqual(items.first?.displayFilename, "Nikon-001.NEF / nikon-001.jpg")
+    }
+
     func testScanCapturesSortMetadataOnce() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

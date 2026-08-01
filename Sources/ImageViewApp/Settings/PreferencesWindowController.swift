@@ -303,6 +303,7 @@ final class PreferencesWindowController: NSWindowController {
         case .avif: return "AVIF"
         case .svg: return "SVG"
         case .arw: return "ARW"
+        case .nef: return "NEF"
         }
     }
 

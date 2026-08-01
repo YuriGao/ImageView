@@ -13,10 +13,11 @@ final class FileAssociationSettingsModelTests: XCTestCase {
 
         XCTAssertEqual(model.visibleFormats, [
             .jpeg, .png, .gif, .webp, .heic,
-            .tiff, .bmp, .heif, .avif, .svg, .arw
+            .tiff, .bmp, .heif, .avif, .svg, .arw, .nef
         ])
         XCTAssertFalse(FileAssociationSettingsModel.commonFormats.contains(.arw))
         XCTAssertTrue(FileAssociationSettingsModel.allFormats.contains(.arw))
+        XCTAssertTrue(FileAssociationSettingsModel.allFormats.contains(.nef))
     }
 
     func testSelectCommonFormatsPreservesExtraSelections() {

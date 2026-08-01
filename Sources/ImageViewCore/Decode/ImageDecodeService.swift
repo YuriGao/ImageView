@@ -222,7 +222,7 @@ public final class ImageDecodeService: @unchecked Sendable {
         purpose: ImageDecodePurpose,
         sourceMaxPixelSize: CGFloat
     ) -> ImageIODecodePlan {
-        let usesEmbeddedThumbnail = format == .arw && purpose != .full
+        let usesEmbeddedThumbnail = format.isCameraRAW && purpose != .full
         return ImageIODecodePlan(
             thumbnailSource: usesEmbeddedThumbnail ? .embeddedThumbnailIfAvailable : .primaryImage,
             maxPixelSize: purpose.maxPixelSize ?? max(1, sourceMaxPixelSize),

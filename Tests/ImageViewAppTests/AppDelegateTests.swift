@@ -17,6 +17,30 @@ final class AppDelegateTests: XCTestCase {
         XCTAssertTrue(panel.canChooseFiles)
         XCTAssertTrue(panel.allowsMultipleSelection)
         XCTAssertTrue(panel.allowedContentTypes.contains { $0.identifier == "com.sony.arw-raw-image" })
+        XCTAssertTrue(panel.allowedContentTypes.contains { $0.identifier == "com.nikon.raw-image" })
+    }
+
+    func testInfoPlistDeclaresImportedNikonNEFType() throws {
+        let repositoryRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let data = try Data(contentsOf: repositoryRoot.appendingPathComponent("Sources/ImageViewApp/Resources/Info.plist"))
+        let plist = try XCTUnwrap(
+            try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
+        )
+
+        let documentTypes = try XCTUnwrap(plist["CFBundleDocumentTypes"] as? [[String: Any]])
+        XCTAssertTrue(documentTypes.flatMap { $0["LSItemContentTypes"] as? [String] ?? [] }
+            .contains("com.nikon.raw-image"))
+        let importedTypes = try XCTUnwrap(plist["UTImportedTypeDeclarations"] as? [[String: Any]])
+        let nefType = try XCTUnwrap(importedTypes.first {
+            $0["UTTypeIdentifier"] as? String == "com.nikon.raw-image"
+        })
+        XCTAssertEqual(nefType["UTTypeConformsTo"] as? [String], ["public.camera-raw-image"])
+        let tags = try XCTUnwrap(nefType["UTTypeTagSpecification"] as? [String: Any])
+        XCTAssertEqual(tags["public.filename-extension"] as? [String], ["nef"])
+        XCTAssertEqual(tags["public.mime-type"] as? String, "image/x-nikon-nef")
     }
 
     func testInfoPlistDeclaresImportedSonyARWType() throws {

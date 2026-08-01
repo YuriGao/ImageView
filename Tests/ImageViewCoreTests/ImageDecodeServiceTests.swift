@@ -95,6 +95,46 @@ final class ImageDecodeServiceTests: XCTestCase {
         XCTAssertNil(full.thumbnailOptions[kCGImageSourceCreateThumbnailFromImageIfAbsent])
     }
 
+    func testNEFThumbnailAndPreviewUseRAWDecodePlan() {
+        let preview = ImageDecodeService.imageIODecodePlan(
+            format: .nef,
+            purpose: .preview(maxPixelSize: 2_048),
+            sourceMaxPixelSize: 8_256
+        )
+        let full = ImageDecodeService.imageIODecodePlan(
+            format: .nef,
+            purpose: .full,
+            sourceMaxPixelSize: 8_256
+        )
+
+        XCTAssertEqual(preview.thumbnailSource, .embeddedThumbnailIfAvailable)
+        XCTAssertEqual(preview.maxPixelSize, 2_048)
+        XCTAssertEqual(full.thumbnailSource, .primaryImage)
+        XCTAssertEqual(full.maxPixelSize, 8_256)
+    }
+
+    func testNEFFixturePreviewWhenProvided() throws {
+        guard let fixturePath = ProcessInfo.processInfo.environment["IMAGEVIEW_NEF_FIXTURE"],
+              !fixturePath.isEmpty else {
+            throw XCTSkip("Set IMAGEVIEW_NEF_FIXTURE to a NEF file to run the optional integration test")
+        }
+
+        let url = URL(fileURLWithPath: fixturePath)
+        XCTAssertEqual(SupportedImageFormat(fileExtension: url.pathExtension), .nef)
+        let preview = try ImageDecodeService().decode(
+            url: url,
+            format: .nef,
+            purpose: .preview(maxPixelSize: 2_048)
+        )
+
+        XCTAssertGreaterThan(preview.pixelSize.width, 0)
+        XCTAssertGreaterThan(preview.pixelSize.height, 0)
+        XCTAssertLessThanOrEqual(max(preview.pixelSize.width, preview.pixelSize.height), 2_048)
+        XCTAssertFalse(preview.isFullResolution)
+        let luminanceRange = try XCTUnwrap(luminanceRange(in: preview.cgImage))
+        XCTAssertGreaterThan(luminanceRange.maximum, luminanceRange.minimum + 4)
+    }
+
     func testNonRAWPreviewContinuesToDecodeFromPrimaryImage() {
         let preview = ImageDecodeService.imageIODecodePlan(
             format: .jpeg,
