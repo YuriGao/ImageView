@@ -63,6 +63,40 @@ final class ContinuousReadingViewTests: XCTestCase {
         XCTAssertEqual(view.testingDecodedPageCount, 1)
     }
 
+    func testPageHitTestingDistinguishesPagesAndInterPageGap() throws {
+        let view = ContinuousReadingView(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
+        let first = ImageItem(url: URL(fileURLWithPath: "/tmp/a.png"), format: .png)
+        let second = ImageItem(url: URL(fileURLWithPath: "/tmp/b.png"), format: .png)
+        view.apply(
+            pages: [
+                ContinuousReadingPage(item: first, image: makeDecodedImage(width: 400, height: 300)),
+                ContinuousReadingPage(item: second, image: makeDecodedImage(width: 400, height: 300))
+            ],
+            currentItemID: first.id
+        )
+        let firstFrame = try XCTUnwrap(view.testingFrame(for: first.id))
+        let secondFrame = try XCTUnwrap(view.testingFrame(for: second.id))
+
+        XCTAssertEqual(view.testingPage(at: CGPoint(x: firstFrame.midX, y: firstFrame.midY))?.item, first)
+        XCTAssertEqual(view.testingPage(at: CGPoint(x: secondFrame.midX, y: secondFrame.midY))?.item, second)
+        XCTAssertNil(view.testingPage(at: CGPoint(x: firstFrame.midX, y: (firstFrame.maxY + secondFrame.minY) / 2)))
+    }
+
+    func testContextMenuProviderReceivesExplicitPage() throws {
+        let view = ContinuousReadingView(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
+        let item = ImageItem(url: URL(fileURLWithPath: "/tmp/a.png"), format: .png)
+        let page = ContinuousReadingPage(item: item, image: makeDecodedImage(width: 400, height: 300))
+        var requestedItem: ImageItem?
+        view.onContextMenuRequested = {
+            requestedItem = $0.item
+            return NSMenu(title: "Context")
+        }
+        view.apply(pages: [page], currentItemID: item.id)
+        let frame = try XCTUnwrap(view.testingFrame(for: item.id))
+        XCTAssertNotNil(view.testingContextMenu(at: CGPoint(x: frame.midX, y: frame.midY)))
+        XCTAssertEqual(requestedItem, item)
+    }
+
     private func makeDecodedImage(width: Int, height: Int) -> DecodedImage {
         let colorSpace = CGColorSpaceCreateDeviceRGB()
         let context = CGContext(

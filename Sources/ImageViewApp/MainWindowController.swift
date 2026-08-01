@@ -24,6 +24,19 @@ private final class LocalEventMonitor: @unchecked Sendable {
 }
 
 @MainActor
+private final class ContextMenuActionDispatcher: NSObject {
+    private let handler: () -> Void
+
+    init(handler: @escaping () -> Void) {
+        self.handler = handler
+    }
+
+    @objc func perform(_ sender: Any?) {
+        handler()
+    }
+}
+
+@MainActor
 final class MainWindowController: NSWindowController, NSGestureRecognizerDelegate {
     static let externalFileCheckInterval: TimeInterval = 2
     static let titleBarHeight: CGFloat = 32
@@ -49,6 +62,7 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
     var onWindowDidClose: ((MainWindowController) -> Void)?
     enum MenuCommand: Equatable {
         case fileOperationRequiringCurrentItem
+        case copyImage
         case navigation
         case canvasSizing
         case startCropping
@@ -303,6 +317,9 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         rootView.onFileDropped = { [weak self] url in
             self?.open(url: url)
         }
+        canvas.contextMenuProvider = { [weak self] in
+            self?.makeImageContextMenu()
+        }
         emptyStateView.onOpenRequested = { [weak self] in
             self?.onOpenRequested?()
         }
@@ -504,11 +521,20 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         filmstripView.onSelect = { [weak self] item in
             self?.selectImage(item)
         }
+        filmstripView.onContextMenuRequested = { [weak self] item in
+            self?.makeFilmstripContextMenu(for: item)
+        }
+        continuousReadingView.onContextMenuRequested = { [weak self] page in
+            self?.makeContinuousReadingContextMenu(for: page)
+        }
         folderBrowserView.onOpenItem = { [weak self] item in
             self?.openFolderBrowserItem(item)
         }
         folderBrowserView.onSelectionChanged = { [weak self] selectedIDs in
             self?.folderBrowserViewModel.setSelection(Array(selectedIDs))
+        }
+        folderBrowserView.onContextMenuRequested = { [weak self] items in
+            self?.makeFolderBrowserContextMenu(for: items)
         }
         folderBrowserView.onSearchChanged = { [weak self] searchText in
             self?.folderBrowserViewModel.searchText = searchText
@@ -793,6 +819,24 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         viewModel.copyCurrentPathToPasteboard()
     }
 
+    @objc func copyCurrentImage(_ sender: Any?) {
+        guard let image = viewModel.currentImage,
+              Self.writeImage(image.cgImage, to: .general) else {
+            NSSound.beep()
+            return
+        }
+    }
+
+    @discardableResult
+    static func writeImage(_ cgImage: CGImage, to pasteboard: NSPasteboard) -> Bool {
+        let image = NSImage(
+            cgImage: cgImage,
+            size: NSSize(width: cgImage.width, height: cgImage.height)
+        )
+        pasteboard.clearContents()
+        return pasteboard.writeObjects([image])
+    }
+
     @objc func moveCurrentImageToTrash(_ sender: Any?) {
         cancelCrop(nil)
         guard confirmMoveCurrentImageToTrash() else { return }
@@ -1000,6 +1044,251 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
 
         let location = NSPoint(x: bottomZoomLabel.bounds.minX, y: bottomZoomLabel.bounds.maxY + 4)
         menu.popUp(positioning: nil, at: location, in: bottomZoomLabel)
+    }
+
+    private func makeImageContextMenu() -> NSMenu? {
+        guard !isFolderBrowserMode,
+              viewModel.navigationState?.currentItem != nil,
+              viewModel.currentImage != nil,
+              !cropOverlay.isCropping else {
+            return nil
+        }
+
+        let menu = NSMenu()
+        menu.addItem(contextMenuItem("menu.file.copyImage", action: #selector(copyCurrentImage(_:))))
+        menu.addItem(contextMenuItem("menu.file.copyPath", action: #selector(copyCurrentImagePath(_:))))
+        menu.addItem(contextMenuItem("menu.file.reveal", action: #selector(revealCurrentImageInFinder(_:))))
+        menu.addItem(.separator())
+
+        let zoomItem = NSMenuItem(title: AppStrings.text("viewer.contextMenu.zoom"), action: nil, keyEquivalent: "")
+        let zoomMenu = NSMenu(title: zoomItem.title)
+        let fitItem = contextMenuItem("menu.view.zoomToFit", action: #selector(zoomToFit(_:)))
+        fitItem.state = canvas.displayMode == .fit ? .on : .off
+        zoomMenu.addItem(fitItem)
+        let fitWidthItem = contextMenuItem("menu.view.zoomToFitWidth", action: #selector(zoomToFitWidth(_:)))
+        fitWidthItem.state = canvas.displayMode == .fitWidth ? .on : .off
+        zoomMenu.addItem(fitWidthItem)
+        let actualSizeItem = contextMenuItem("menu.view.actualSize", action: #selector(actualSize(_:)))
+        if canvas.displayMode == .manual,
+           let pixelScale = canvas.pixelScale,
+           abs(pixelScale - 1) < 0.005 {
+            actualSizeItem.state = .on
+        }
+        zoomMenu.addItem(actualSizeItem)
+        zoomItem.submenu = zoomMenu
+        menu.addItem(zoomItem)
+        menu.addItem(.separator())
+
+        menu.addItem(contextMenuItem("menu.image.rotateClockwise", action: #selector(rotateClockwise(_:))))
+        menu.addItem(contextMenuItem("menu.image.rotateCounterclockwise", action: #selector(rotateCounterClockwise(_:))))
+        let flipItem = NSMenuItem(title: AppStrings.text("viewer.contextMenu.flip"), action: nil, keyEquivalent: "")
+        let flipMenu = NSMenu(title: flipItem.title)
+        flipMenu.addItem(contextMenuItem("menu.image.flipHorizontal", action: #selector(mirrorHorizontal(_:))))
+        flipMenu.addItem(contextMenuItem("menu.image.flipVertical", action: #selector(mirrorVertical(_:))))
+        flipItem.submenu = flipMenu
+        menu.addItem(flipItem)
+        menu.addItem(contextMenuItem("menu.image.crop", action: #selector(startCropping(_:))))
+
+        if viewModel.hasUnsavedEdits {
+            menu.addItem(.separator())
+            menu.addItem(contextMenuItem("menu.image.saveEdits", action: #selector(saveEdits(_:))))
+            menu.addItem(contextMenuItem("menu.image.saveAs", action: #selector(saveEditsAs(_:))))
+            menu.addItem(contextMenuItem("menu.image.discardEdits", action: #selector(discardEdits(_:))))
+        }
+
+        menu.addItem(.separator())
+        menu.addItem(contextMenuItem("menu.view.showInfo", action: #selector(toggleInspector(_:))))
+        menu.addItem(contextMenuItem("menu.file.rename", action: #selector(renameCurrentImage(_:))))
+        menu.addItem(.separator())
+        menu.addItem(contextMenuItem("menu.file.moveToTrash", action: #selector(moveCurrentImageToTrash(_:))))
+        return menu
+    }
+
+    private func contextMenuItem(_ titleKey: String, action: Selector) -> NSMenuItem {
+        let item = NSMenuItem(title: AppStrings.text(titleKey), action: action, keyEquivalent: "")
+        if let sourceItem = Self.menuItem(in: NSApp.mainMenu, matching: action) {
+            item.keyEquivalent = sourceItem.keyEquivalent
+            item.keyEquivalentModifierMask = sourceItem.keyEquivalentModifierMask
+        }
+        item.target = self
+        item.isEnabled = validateMenuItem(item)
+        return item
+    }
+
+    private func makeFilmstripContextMenu(for item: ImageItem) -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let isCurrent = viewModel.navigationState?.currentItem?.id == item.id
+        menu.addItem(actionMenuItem(
+            title: AppStrings.text("viewer.contextMenu.showImage"),
+            isEnabled: !isCurrent
+        ) { [weak self] in
+            self?.selectImage(item)
+        })
+        menu.addItem(.separator())
+        menu.addItem(actionMenuItem(title: AppStrings.text("menu.file.copyPath")) { [weak self] in
+            self?.copyPaths([item.url])
+        })
+        menu.addItem(actionMenuItem(title: AppStrings.text("menu.file.reveal")) {
+            NSWorkspace.shared.activateFileViewerSelecting([item.url])
+        })
+        menu.addItem(.separator())
+        menu.addItem(actionMenuItem(title: AppStrings.text("menu.file.rename")) { [weak self] in
+            self?.renameContextItem(item)
+        })
+        menu.addItem(actionMenuItem(title: AppStrings.text("menu.file.moveToTrash")) { [weak self] in
+            self?.trashContextItem(item)
+        })
+        return menu
+    }
+
+    private func makeContinuousReadingContextMenu(for page: ContinuousReadingPage) -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        menu.addItem(actionMenuItem(title: AppStrings.text("viewer.contextMenu.showSingleImage")) { [weak self] in
+            self?.showContinuousPageInSingleImageView(page.item)
+        })
+        menu.addItem(.separator())
+        menu.addItem(actionMenuItem(
+            title: AppStrings.text("menu.file.copyImage"),
+            isEnabled: page.image != nil
+        ) {
+            guard let image = page.image else { return }
+            _ = Self.writeImage(image.cgImage, to: .general)
+        })
+        menu.addItem(actionMenuItem(title: AppStrings.text("menu.file.copyPath")) { [weak self] in
+            self?.copyPaths([page.item.url])
+        })
+        menu.addItem(actionMenuItem(title: AppStrings.text("menu.file.reveal")) {
+            NSWorkspace.shared.activateFileViewerSelecting([page.item.url])
+        })
+        menu.addItem(.separator())
+        menu.addItem(actionMenuItem(title: AppStrings.text("menu.file.rename")) { [weak self] in
+            self?.renameContextItem(page.item)
+        })
+        menu.addItem(actionMenuItem(title: AppStrings.text("menu.file.moveToTrash")) { [weak self] in
+            self?.trashContextItem(page.item)
+        })
+        return menu
+    }
+
+    private func makeFolderBrowserContextMenu(for items: [ImageItem]) -> NSMenu? {
+        guard !items.isEmpty, !folderBrowserViewModel.isOperating else { return nil }
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        if items.count == 1, let item = items.first {
+            menu.addItem(actionMenuItem(title: AppStrings.text("folderBrowser.contextMenu.open")) { [weak self] in
+                self?.openFolderBrowserItem(item)
+            })
+            menu.addItem(.separator())
+            menu.addItem(actionMenuItem(title: AppStrings.text("menu.file.copyPath")) { [weak self] in
+                self?.copyPaths([item.url])
+            })
+            menu.addItem(actionMenuItem(title: AppStrings.text("menu.file.reveal")) {
+                NSWorkspace.shared.activateFileViewerSelecting([item.url])
+            })
+            menu.addItem(.separator())
+            menu.addItem(actionMenuItem(title: AppStrings.text("folderBrowser.contextMenu.move")) { [weak self] in
+                self?.moveSelectedFolderBrowserItemsToFolder()
+            })
+            menu.addItem(actionMenuItem(title: AppStrings.text("menu.file.rename")) { [weak self] in
+                self?.renameSelectedFolderBrowserItems()
+            })
+            menu.addItem(.separator())
+            menu.addItem(actionMenuItem(title: AppStrings.text("menu.file.moveToTrash")) { [weak self] in
+                self?.moveSelectedFolderBrowserItemsToTrash()
+            })
+            return menu
+        }
+
+        let count = items.count
+        menu.addItem(actionMenuItem(
+            title: String(format: AppStrings.text("folderBrowser.contextMenu.copyPaths"), count)
+        ) { [weak self] in
+            self?.copyPaths(items.map(\.url))
+        })
+        menu.addItem(actionMenuItem(
+            title: String(format: AppStrings.text("folderBrowser.contextMenu.revealItems"), count)
+        ) {
+            NSWorkspace.shared.activateFileViewerSelecting(items.map(\.url))
+        })
+        menu.addItem(.separator())
+        menu.addItem(actionMenuItem(
+            title: String(format: AppStrings.text("folderBrowser.contextMenu.moveItems"), count)
+        ) { [weak self] in
+            self?.moveSelectedFolderBrowserItemsToFolder()
+        })
+        menu.addItem(actionMenuItem(
+            title: String(format: AppStrings.text("folderBrowser.contextMenu.renameItems"), count)
+        ) { [weak self] in
+            self?.renameSelectedFolderBrowserItems()
+        })
+        menu.addItem(.separator())
+        menu.addItem(actionMenuItem(
+            title: String(format: AppStrings.text("folderBrowser.contextMenu.trashItems"), count)
+        ) { [weak self] in
+            self?.moveSelectedFolderBrowserItemsToTrash()
+        })
+        return menu
+    }
+
+    private func actionMenuItem(
+        title: String,
+        isEnabled: Bool = true,
+        handler: @escaping () -> Void
+    ) -> NSMenuItem {
+        let dispatcher = ContextMenuActionDispatcher(handler: handler)
+        let item = NSMenuItem(
+            title: title,
+            action: #selector(ContextMenuActionDispatcher.perform(_:)),
+            keyEquivalent: ""
+        )
+        item.target = dispatcher
+        item.representedObject = dispatcher
+        item.isEnabled = isEnabled
+        return item
+    }
+
+    private func showContinuousPageInSingleImageView(_ item: ImageItem) {
+        performWithCurrentItem(item) { [weak self] in
+            self?.settings.usesContinuousReading = false
+        }
+    }
+
+    private func renameContextItem(_ item: ImageItem) {
+        performWithCurrentItem(item) { [weak self] in
+            self?.renameCurrentImage(nil)
+        }
+    }
+
+    private func trashContextItem(_ item: ImageItem) {
+        performWithCurrentItem(item) { [weak self] in
+            self?.moveCurrentImageToTrash(nil)
+        }
+    }
+
+    private func performWithCurrentItem(_ item: ImageItem, action: @escaping () -> Void) {
+        if viewModel.navigationState?.currentItem?.id == item.id {
+            action()
+            return
+        }
+        cancelCrop(nil)
+        confirmUnsavedEditsIfNeeded(for: .navigating) { [weak self] in
+            guard let self else { return }
+            self.viewModel.show(item: item)
+            action()
+        }
+    }
+
+    private func copyPaths(_ urls: [URL]) {
+        guard Self.writePaths(urls, to: .general) else { NSSound.beep(); return }
+    }
+
+    @discardableResult
+    static func writePaths(_ urls: [URL], to pasteboard: NSPasteboard) -> Bool {
+        guard !urls.isEmpty else { return false }
+        pasteboard.clearContents()
+        return pasteboard.setString(urls.map(\.path).joined(separator: "\n"), forType: .string)
     }
 
     @objc func browseCurrentImageFolder(_ sender: Any?) {
@@ -1517,6 +1806,8 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
              #selector(copyCurrentImagePath(_:)),
              #selector(moveCurrentImageToTrash(_:)):
             return .fileOperationRequiringCurrentItem
+        case #selector(copyCurrentImage(_:)):
+            return .copyImage
         case #selector(showPreviousImage(_:)), #selector(showNextImage(_:)):
             return .navigation
         case #selector(actualSize(_:)), #selector(zoomToFit(_:)), #selector(zoomToFitWidth(_:)):
@@ -1561,6 +1852,8 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
         switch command {
         case .fileOperationRequiringCurrentItem:
             return hasCurrentItem
+        case .copyImage:
+            return hasCurrentImage
         case .navigation:
             return hasCurrentItem
         case .canvasSizing:
@@ -2324,6 +2617,16 @@ final class MainWindowController: NSWindowController, NSGestureRecognizerDelegat
     var hasLoadedImageForTesting: Bool { viewModel.currentImage != nil }
     var canEditCurrentImageForTesting: Bool { viewModel.canEditCurrentImage }
     var hasUnsavedEditsForTesting: Bool { viewModel.hasUnsavedEdits }
+    var imageContextMenuForTesting: NSMenu? { makeImageContextMenu() }
+    func filmstripContextMenuForTesting(_ item: ImageItem) -> NSMenu {
+        makeFilmstripContextMenu(for: item)
+    }
+    func continuousReadingContextMenuForTesting(_ page: ContinuousReadingPage) -> NSMenu {
+        makeContinuousReadingContextMenu(for: page)
+    }
+    func folderBrowserContextMenuForTesting(_ items: [ImageItem]) -> NSMenu? {
+        makeFolderBrowserContextMenu(for: items)
+    }
     var isFolderBrowserVisibleForTesting: Bool { !folderBrowserView.isHidden }
     var folderBrowserIsOperatingForTesting: Bool { folderBrowserViewModel.isOperating }
     var isCanvasVisibleForTesting: Bool { !canvas.isHidden }

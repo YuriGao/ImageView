@@ -249,6 +249,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         revealMenuItem.keyEquivalentModifierMask = [.command, .option]
         fileMenu.addItem(revealMenuItem)
 
+        let copyImageMenuItem = NSMenuItem(title: text("menu.file.copyImage"), action: #selector(MainWindowController.copyCurrentImage(_:)), keyEquivalent: "c")
+        fileMenu.addItem(copyImageMenuItem)
+
         let copyPathMenuItem = NSMenuItem(title: text("menu.file.copyPath"), action: #selector(MainWindowController.copyCurrentImagePath(_:)), keyEquivalent: "c")
         copyPathMenuItem.keyEquivalentModifierMask = [.command, .option]
         fileMenu.addItem(copyPathMenuItem)

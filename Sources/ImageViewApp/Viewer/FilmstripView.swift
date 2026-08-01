@@ -11,6 +11,7 @@ final class FilmstripView: NSScrollView {
     private final class FilmstripButton: NSButton {
         let item: ImageItem
         var thumbnailRequest: ThumbnailRequest?
+        var contextMenuProvider: (() -> NSMenu?)?
         private var widthConstraint: NSLayoutConstraint!
         private var heightConstraint: NSLayoutConstraint!
 
@@ -28,6 +29,10 @@ final class FilmstripView: NSScrollView {
 
         deinit {
             thumbnailRequest?.cancel()
+        }
+
+        override func menu(for event: NSEvent) -> NSMenu? {
+            contextMenuProvider?()
         }
 
         func configure(isSelected: Bool) {
@@ -58,6 +63,7 @@ final class FilmstripView: NSScrollView {
     private var retainedItems: [ImageItem] = []
 
     var onSelect: ((ImageItem) -> Void)?
+    var onContextMenuRequested: ((ImageItem) -> NSMenu?)?
 
     init(thumbnailProvider: ThumbnailProvider = ThumbnailProvider(maxPixelSize: thumbnailDecodeMaxPixelSize)) {
         self.thumbnailProvider = thumbnailProvider
@@ -127,6 +133,9 @@ final class FilmstripView: NSScrollView {
             button.setButtonType(.momentaryPushIn)
             button.target = self
             button.action = #selector(selectItem(_:))
+            button.contextMenuProvider = { [weak self, item] in
+                self?.onContextMenuRequested?(item)
+            }
             stack.addArrangedSubview(button)
             if item == current {
                 selectedButton = button

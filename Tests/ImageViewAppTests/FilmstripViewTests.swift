@@ -57,6 +57,35 @@ final class FilmstripViewTests: XCTestCase {
         XCTAssertEqual(selected?.format, .png)
     }
 
+    func testRightClickReportsThumbnailWithoutSelectingIt() throws {
+        let first = ImageItem(url: URL(fileURLWithPath: "/tmp/a.png"), format: .png)
+        let second = ImageItem(url: URL(fileURLWithPath: "/tmp/b.png"), format: .png)
+        let filmstrip = FilmstripView()
+        var selectedItem: ImageItem?
+        var contextItem: ImageItem?
+        filmstrip.onSelect = { selectedItem = $0 }
+        filmstrip.onContextMenuRequested = { item in
+            contextItem = item
+            return NSMenu(title: "Context")
+        }
+        filmstrip.apply(items: [first, second], current: second)
+        let event = try XCTUnwrap(NSEvent.mouseEvent(
+            with: .rightMouseDown,
+            location: .zero,
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            eventNumber: 1,
+            clickCount: 1,
+            pressure: 1
+        ))
+
+        XCTAssertNotNil(filmstrip.debugButtons()[0].menu(for: event))
+        XCTAssertEqual(contextItem, first)
+        XCTAssertNil(selectedItem)
+    }
+
     func testPairedItemFilmstripUsesJPEGAndShowsBothFilenamesInTooltip() {
         let rawURL = URL(fileURLWithPath: "/tmp/123.ARW")
         let jpegURL = URL(fileURLWithPath: "/tmp/123.JPG")

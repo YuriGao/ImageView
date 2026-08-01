@@ -1089,6 +1089,75 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.canRedo)
     }
 
+    func testPairedRawAndJPEGMoveToTrashUndoAndRedoAsSingleOperation() async throws {
+        let jpegURL = URL(fileURLWithPath: "/tmp/paired-trash.JPG")
+        let rawURL = URL(fileURLWithPath: "/tmp/paired-trash.ARW")
+        let jpegItem = ImageItem(url: jpegURL, format: .jpeg, pairedRawURL: rawURL)
+        let image = try makeDecodedImage(width: 6, height: 4)
+        let movedURLs = ViewerLockedValue<[URL]>([])
+        let restoredPairs = ViewerLockedValue<[(URL, URL)]>([])
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: { _ in [jpegItem] },
+            moveToTrashAtURL: { url in
+                movedURLs.update { $0.append(url) }
+                return URL(fileURLWithPath: "/tmp/trash-\(url.lastPathComponent)")
+            },
+            restoreFromTrashAtURL: { source, destination in
+                restoredPairs.update { $0.append((source, destination)) }
+            },
+            loadImageAtURL: { _, _ in image },
+            loadPreviewAtURL: { _, _ in image }
+        )
+        await viewModel.open(url: rawURL)
+
+        viewModel.moveCurrentToTrash()
+
+        XCTAssertEqual(movedURLs.value, [jpegURL, rawURL])
+        XCTAssertNil(viewModel.navigationState)
+        XCTAssertTrue(viewModel.canUndo)
+
+        XCTAssertTrue(viewModel.undoEdit())
+        XCTAssertEqual(restoredPairs.value.map(\.1), [jpegURL, rawURL])
+        XCTAssertEqual(viewModel.navigationState?.currentItem, jpegItem)
+        XCTAssertTrue(viewModel.canRedo)
+
+        XCTAssertTrue(viewModel.redoEdit())
+        XCTAssertEqual(movedURLs.value, [jpegURL, rawURL, jpegURL, rawURL])
+        XCTAssertNil(viewModel.navigationState)
+        XCTAssertTrue(viewModel.canUndo)
+        XCTAssertFalse(viewModel.canRedo)
+    }
+
+    func testPairedTrashFailureRestoresAlreadyMovedFileAndKeepsCombinationVisible() async throws {
+        let jpegURL = URL(fileURLWithPath: "/tmp/paired-failure.JPG")
+        let rawURL = URL(fileURLWithPath: "/tmp/paired-failure.ARW")
+        let jpegItem = ImageItem(url: jpegURL, format: .jpeg, pairedRawURL: rawURL)
+        let image = try makeDecodedImage(width: 6, height: 4)
+        let trashedJPEGURL = URL(fileURLWithPath: "/tmp/trash-paired-failure.JPG")
+        let restoredPairs = ViewerLockedValue<[(URL, URL)]>([])
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: { _ in [jpegItem] },
+            moveToTrashAtURL: { url in
+                if url == rawURL { throw TestError.scanFailed }
+                return trashedJPEGURL
+            },
+            restoreFromTrashAtURL: { source, destination in
+                restoredPairs.update { $0.append((source, destination)) }
+            },
+            loadImageAtURL: { _, _ in image },
+            loadPreviewAtURL: { _, _ in image }
+        )
+        await viewModel.open(url: jpegURL)
+
+        viewModel.moveCurrentToTrash()
+
+        XCTAssertEqual(restoredPairs.value.map(\.0), [trashedJPEGURL])
+        XCTAssertEqual(restoredPairs.value.map(\.1), [jpegURL])
+        XCTAssertEqual(viewModel.navigationState?.currentItem, jpegItem)
+        XCTAssertFalse(viewModel.canUndo)
+        XCTAssertEqual(viewModel.errorMessage, "无法移动到废纸篓：paired-failure.ARW / paired-failure.JPG")
+    }
+
     func testRenameCurrentSuccessClearsPriorErrorMessage() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

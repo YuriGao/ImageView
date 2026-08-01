@@ -23,6 +23,7 @@
 "menu.file.openRecent" = "打开最近使用";
 "menu.file.rename" = "重命名…";
 "menu.file.reveal" = "在访达中显示";
+"menu.file.copyImage" = "复制图像";
 "menu.file.copyPath" = "复制路径";
 "menu.file.moveToTrash" = "移到废纸篓";
 "menu.file.close" = "关闭";
@@ -44,6 +45,17 @@
 "viewer.zoom.custom.field" = "倍率百分比";
 "viewer.zoom.custom.apply" = "应用";
 "viewer.zoom.custom.cancel" = "取消";
+"viewer.contextMenu.zoom" = "缩放";
+"viewer.contextMenu.flip" = "翻转";
+"viewer.contextMenu.showImage" = "显示此图片";
+"viewer.contextMenu.showSingleImage" = "在单图模式中显示";
+"folderBrowser.contextMenu.open" = "打开";
+"folderBrowser.contextMenu.move" = "移动到文件夹…";
+"folderBrowser.contextMenu.copyPaths" = "复制 %d 个文件路径";
+"folderBrowser.contextMenu.revealItems" = "在访达中显示 %d 个项目";
+"folderBrowser.contextMenu.moveItems" = "移动 %d 个项目到文件夹…";
+"folderBrowser.contextMenu.renameItems" = "批量重命名 %d 个项目…";
+"folderBrowser.contextMenu.trashItems" = "将 %d 个项目移到废纸篓";
 "menu.view.showFilmstrip" = "显示胶片预览";
 "menu.view.continuousReading" = "连续阅读";
 "menu.view.showInfo" = "显示信息";

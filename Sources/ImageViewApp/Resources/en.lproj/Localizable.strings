@@ -23,6 +23,7 @@
 "menu.file.openRecent" = "Open Recent";
 "menu.file.rename" = "Rename…";
 "menu.file.reveal" = "Reveal in Finder";
+"menu.file.copyImage" = "Copy Image";
 "menu.file.copyPath" = "Copy Path";
 "menu.file.moveToTrash" = "Move to Trash";
 "menu.file.close" = "Close";
@@ -44,6 +45,17 @@
 "viewer.zoom.custom.field" = "Zoom percentage";
 "viewer.zoom.custom.apply" = "Apply";
 "viewer.zoom.custom.cancel" = "Cancel";
+"viewer.contextMenu.zoom" = "Zoom";
+"viewer.contextMenu.flip" = "Flip";
+"viewer.contextMenu.showImage" = "Show This Image";
+"viewer.contextMenu.showSingleImage" = "Show in Single Image View";
+"folderBrowser.contextMenu.open" = "Open";
+"folderBrowser.contextMenu.move" = "Move to Folder…";
+"folderBrowser.contextMenu.copyPaths" = "Copy Paths for %d Items";
+"folderBrowser.contextMenu.revealItems" = "Reveal %d Items in Finder";
+"folderBrowser.contextMenu.moveItems" = "Move %d Items to Folder…";
+"folderBrowser.contextMenu.renameItems" = "Batch Rename %d Items…";
+"folderBrowser.contextMenu.trashItems" = "Move %d Items to Trash";
 "menu.view.showFilmstrip" = "Show Filmstrip";
 "menu.view.continuousReading" = "Continuous Reading";
 "menu.view.showInfo" = "Show Info";

@@ -19,6 +19,9 @@ final class ContinuousReadingView: NSView {
     private var isApplyingPages = false
 
     var onFocusedItemChanged: ((ImageItem.ID) -> Void)?
+    var onContextMenuRequested: ((ContinuousReadingPage) -> NSMenu?)? {
+        didSet { document.contextMenuProvider = onContextMenuRequested }
+    }
 
     var testingPageCount: Int { document.pages.count }
     var testingDecodedPageCount: Int { document.pages.filter { $0.image != nil }.count }
@@ -89,6 +92,19 @@ final class ContinuousReadingView: NSView {
         publishFocusedItemIfNeeded()
     }
 
+    func testingPage(at point: CGPoint) -> ContinuousReadingPage? {
+        document.page(at: point)
+    }
+
+    func testingFrame(for itemID: ImageItem.ID) -> CGRect? {
+        document.frame(for: itemID)
+    }
+
+    func testingContextMenu(at point: CGPoint) -> NSMenu? {
+        guard let page = document.page(at: point) else { return nil }
+        return onContextMenuRequested?(page)
+    }
+
     private func scroll(toDocumentY y: CGFloat) {
         let maximumY = max(0, document.bounds.height - scrollView.contentSize.height)
         scrollView.contentView.scroll(to: CGPoint(x: 0, y: min(max(0, y), maximumY)))
@@ -123,11 +139,18 @@ private final class ContinuousReadingClipView: NSClipView {
 }
 
 private final class ContinuousReadingDocumentView: NSView {
+    var contextMenuProvider: ((ContinuousReadingPage) -> NSMenu?)?
     var pages: [ContinuousReadingPage] = [] {
         didSet { needsDisplay = true }
     }
 
     override var isFlipped: Bool { true }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let point = convert(event.locationInWindow, from: nil)
+        guard let page = page(at: point) else { return nil }
+        return contextMenuProvider?(page)
+    }
 
     func requiredHeight(for width: CGFloat) -> CGFloat {
         pageFrames(for: width).last?.maxY ?? 0
@@ -141,6 +164,12 @@ private final class ContinuousReadingDocumentView: NSView {
         zip(pages, pageFrames(for: bounds.width))
             .min { abs($0.1.midY - y) < abs($1.1.midY - y) }?
             .0.item.id
+    }
+
+    func page(at point: CGPoint) -> ContinuousReadingPage? {
+        zip(pages, pageFrames(for: bounds.width))
+            .first { $0.1.contains(point) }?
+            .0
     }
 
     override func draw(_ dirtyRect: NSRect) {

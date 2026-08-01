@@ -20,6 +20,7 @@ final class ImageCanvasView: NSView {
     var onNext: (() -> Void)?
     var onPrevious: (() -> Void)?
     var onTransformChanged: ((CGFloat) -> Void)?
+    var contextMenuProvider: (() -> NSMenu?)?
     private var lastDragLocation: CGPoint?
     private var trackpadScrollAxis: TrackpadScrollAxis?
     private var accumulatedTrackpadDeltaX: CGFloat = 0
@@ -93,6 +94,10 @@ final class ImageCanvasView: NSView {
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        contextMenuProvider?()
+    }
 
     /// The rendered size of one image pixel in screen logical points.
     var pixelScale: CGFloat? {

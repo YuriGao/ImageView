@@ -394,6 +394,59 @@ final class FolderBrowserViewTests: XCTestCase {
         XCTAssertTrue(view.testingBatchActionButtonsDisabled)
     }
 
+    func testRightClickUnselectedItemReplacesSelectionAndPublishesTarget() {
+        let view = FolderBrowserView(thumbnailProvider: .stub)
+        let items = (0..<3).map {
+            ImageItem(url: URL(fileURLWithPath: "/tmp/\($0).png"), format: .png)
+        }
+        var publishedSelection: Set<ImageItem.ID> = []
+        var contextItems: [ImageItem] = []
+        view.onSelectionChanged = { publishedSelection = $0 }
+        view.onContextMenuRequested = {
+            contextItems = $0
+            return NSMenu(title: "Context")
+        }
+        view.apply(items: items, selectedIDs: [items[0].id, items[1].id])
+
+        XCTAssertNotNil(view.testingContextMenu(onItemAt: 2))
+        XCTAssertEqual(view.testingSelectedIDs, [items[2].id])
+        XCTAssertEqual(publishedSelection, [items[2].id])
+        XCTAssertEqual(contextItems, [items[2]])
+    }
+
+    func testRightClickSelectedItemPreservesMultiSelection() {
+        let view = FolderBrowserView(thumbnailProvider: .stub)
+        let items = (0..<3).map {
+            ImageItem(url: URL(fileURLWithPath: "/tmp/\($0).png"), format: .png)
+        }
+        var selectionCallbackCount = 0
+        var contextItems: [ImageItem] = []
+        view.onSelectionChanged = { _ in selectionCallbackCount += 1 }
+        view.onContextMenuRequested = {
+            contextItems = $0
+            return NSMenu(title: "Context")
+        }
+        view.apply(items: items, selectedIDs: [items[0].id, items[1].id])
+
+        XCTAssertNotNil(view.testingContextMenu(onItemAt: 1))
+        XCTAssertEqual(view.testingSelectedIDs, [items[0].id, items[1].id])
+        XCTAssertEqual(selectionCallbackCount, 0)
+        XCTAssertEqual(contextItems, [items[0], items[1]])
+    }
+
+    func testContextMenuIgnoresBlankSpaceAndOperatingState() {
+        let view = FolderBrowserView(thumbnailProvider: .stub)
+        let item = ImageItem(url: URL(fileURLWithPath: "/tmp/a.png"), format: .png)
+        view.onContextMenuRequested = { _ in NSMenu(title: "Context") }
+        view.apply(items: [item], selectedIDs: [item.id])
+
+        XCTAssertNil(view.testingContextMenuOnBlankSpace())
+        XCTAssertEqual(view.testingSelectedIDs, [item.id])
+
+        view.applyOperationStatus(message: nil, failures: [], isOperating: true)
+        XCTAssertNil(view.testingContextMenu(onItemAt: 0))
+    }
+
     func testProgressDisplaysProcessedTotalAndCancelCallback() {
         let view = FolderBrowserView(thumbnailProvider: .stub)
         var cancelled = false

@@ -21,11 +21,15 @@ private enum ImageLoadEvent: Sendable {
     case full(VersionedLoadedImage)
 }
 
+private struct TrashedFile {
+    let originalURL: URL
+    var trashedURL: URL
+}
+
 private struct TrashOperation {
     let navigationStateBefore: NavigationState
     let navigationStateAfter: NavigationState?
-    let originalURL: URL
-    var trashedURL: URL
+    var files: [TrashedFile]
 }
 
 private func detachedDecode(
@@ -474,16 +478,15 @@ final class ViewerViewModel: ObservableObject {
 
     func moveCurrentToTrash() {
         guard let navigationStateBefore = navigationState,
-              let url = navigationStateBefore.currentItem?.url else { return }
+              let item = navigationStateBefore.currentItem else { return }
         do {
-            let trashedURL = try moveToTrashAtURL(url)
+            let files = try moveFilesToTrash(originalURLs: physicalFileURLs(for: item))
             navigationState?.removeCurrent()
             let navigationStateAfter = navigationState?.currentItem == nil ? nil : navigationState
             trashUndoOperation = TrashOperation(
                 navigationStateBefore: navigationStateBefore,
                 navigationStateAfter: navigationStateAfter,
-                originalURL: url,
-                trashedURL: trashedURL
+                files: files
             )
             trashRedoOperation = nil
             if navigationState?.currentItem == nil {
@@ -503,7 +506,7 @@ final class ViewerViewModel: ObservableObject {
             updateDisplayTitle()
             startDisplayCurrentAndPreload()
         } catch {
-            errorMessage = "无法移动到废纸篓：\(url.lastPathComponent)"
+            errorMessage = "无法移动到废纸篓：\(item.displayFilename)"
         }
     }
 
@@ -620,9 +623,9 @@ final class ViewerViewModel: ObservableObject {
             redoOperations.append(operation)
             return rebuildEditedImageFromHistory()
         }
-        guard let operation = trashUndoOperation else { return false }
+        guard var operation = trashUndoOperation else { return false }
         do {
-            try restoreFromTrashAtURL(operation.trashedURL, operation.originalURL)
+            try restoreFilesFromTrash(&operation.files)
             trashUndoOperation = nil
             trashRedoOperation = operation
             displayNavigationState(operation.navigationStateBefore)
@@ -641,7 +644,9 @@ final class ViewerViewModel: ObservableObject {
         }
         guard var operation = trashRedoOperation else { return false }
         do {
-            operation.trashedURL = try moveToTrashAtURL(operation.originalURL)
+            operation.files = try moveFilesToTrash(
+                originalURLs: operation.files.map(\.originalURL)
+            )
             trashRedoOperation = nil
             trashUndoOperation = operation
             displayNavigationState(operation.navigationStateAfter)
@@ -938,6 +943,52 @@ final class ViewerViewModel: ObservableObject {
     private func clearEditHistory() {
         pendingOperations.removeAll()
         redoOperations.removeAll()
+    }
+
+    private func physicalFileURLs(for item: ImageItem) -> [URL] {
+        var urls = [item.url]
+        if let pairedRawURL = item.pairedRawURL,
+           pairedRawURL.standardizedFileURL != item.url.standardizedFileURL {
+            urls.append(pairedRawURL)
+        }
+        return urls
+    }
+
+    private func moveFilesToTrash(originalURLs: [URL]) throws -> [TrashedFile] {
+        var movedFiles: [TrashedFile] = []
+        do {
+            for originalURL in originalURLs {
+                movedFiles.append(
+                    TrashedFile(
+                        originalURL: originalURL,
+                        trashedURL: try moveToTrashAtURL(originalURL)
+                    )
+                )
+            }
+            return movedFiles
+        } catch {
+            for file in movedFiles.reversed() {
+                try? restoreFromTrashAtURL(file.trashedURL, file.originalURL)
+            }
+            throw error
+        }
+    }
+
+    private func restoreFilesFromTrash(_ files: inout [TrashedFile]) throws {
+        var restoredIndices: [Int] = []
+        do {
+            for index in files.indices {
+                try restoreFromTrashAtURL(files[index].trashedURL, files[index].originalURL)
+                restoredIndices.append(index)
+            }
+        } catch {
+            for index in restoredIndices.reversed() {
+                if let trashedURL = try? moveToTrashAtURL(files[index].originalURL) {
+                    files[index].trashedURL = trashedURL
+                }
+            }
+            throw error
+        }
     }
 
     private func displayNavigationState(_ state: NavigationState?) {

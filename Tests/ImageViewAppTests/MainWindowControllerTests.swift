@@ -148,6 +148,10 @@ final class MainWindowControllerTests: XCTestCase {
             MainWindowController.menuCommand(for: #selector(MainWindowController.actualSize(_:))),
             .canvasSizing
         )
+        XCTAssertEqual(
+            MainWindowController.menuCommand(for: #selector(MainWindowController.copyCurrentImage(_:))),
+            .copyImage
+        )
     }
 
     func testEscapeOnlyEndsEditingWhenDismissibleEditingStateExists() {
@@ -254,6 +258,24 @@ final class MainWindowControllerTests: XCTestCase {
                 hasUnsavedEdits: false
             )
         )
+        XCTAssertTrue(
+            MainWindowController.isMenuCommandEnabled(
+                .copyImage,
+                hasCurrentItem: true,
+                hasCurrentImage: true,
+                canEditCurrentImage: false,
+                hasUnsavedEdits: false
+            )
+        )
+        XCTAssertFalse(
+            MainWindowController.isMenuCommandEnabled(
+                .copyImage,
+                hasCurrentItem: true,
+                hasCurrentImage: false,
+                canEditCurrentImage: false,
+                hasUnsavedEdits: false
+            )
+        )
         XCTAssertFalse(
             MainWindowController.isMenuCommandEnabled(
                 .startCropping,
@@ -340,6 +362,7 @@ final class MainWindowControllerTests: XCTestCase {
     func testFolderBrowserModeDisablesViewerOnlyMenuCommands() {
         let viewerOnlyCommands: [MainWindowController.MenuCommand] = [
             .fileOperationRequiringCurrentItem,
+            .copyImage,
             .navigation,
             .canvasSizing,
             .startCropping,
@@ -388,6 +411,119 @@ final class MainWindowControllerTests: XCTestCase {
         for item in [rename, reveal, trash, rotate, crop, zoom] {
             XCTAssertFalse(controller.validateMenuItem(item), "\(item.title) should not target the hidden viewer")
         }
+    }
+
+    func testImageContextMenuContainsViewerActionsAndShowsSaveCommandsOnlyForUnsavedEdits() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let imageURL = root.appendingPathComponent("context-menu.png")
+        try writeTestPNG(to: imageURL)
+        let controller = MainWindowController(settings: AppSettings(defaults: makeIsolatedDefaults()))
+
+        XCTAssertNil(controller.imageContextMenuForTesting)
+        controller.open(url: imageURL)
+        for _ in 0..<100 where !controller.canEditCurrentImageForTesting {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        let initialMenu = try XCTUnwrap(controller.imageContextMenuForTesting)
+        XCTAssertNotNil(menuItem(in: initialMenu, action: #selector(MainWindowController.copyCurrentImage(_:))))
+        XCTAssertNotNil(menuItem(in: initialMenu, action: #selector(MainWindowController.copyCurrentImagePath(_:))))
+        XCTAssertNotNil(menuItem(in: initialMenu, action: #selector(MainWindowController.revealCurrentImageInFinder(_:))))
+        XCTAssertNotNil(menuItem(in: initialMenu, action: #selector(MainWindowController.actualSize(_:))))
+        XCTAssertNotNil(menuItem(in: initialMenu, action: #selector(MainWindowController.rotateCounterClockwise(_:))))
+        XCTAssertNotNil(menuItem(in: initialMenu, action: #selector(MainWindowController.mirrorVertical(_:))))
+        XCTAssertNotNil(menuItem(in: initialMenu, action: #selector(MainWindowController.toggleInspector(_:))))
+        XCTAssertNotNil(menuItem(in: initialMenu, action: #selector(MainWindowController.moveCurrentImageToTrash(_:))))
+        XCTAssertNil(menuItem(in: initialMenu, action: #selector(MainWindowController.saveEdits(_:))))
+        XCTAssertEqual(
+            menuItem(in: initialMenu, action: #selector(MainWindowController.zoomToFit(_:)))?.state,
+            .on
+        )
+        let currentFilmstripMenu = controller.filmstripContextMenuForTesting(
+            ImageItem(url: imageURL, format: .png)
+        )
+        XCTAssertFalse(try XCTUnwrap(currentFilmstripMenu.items.first).isEnabled)
+
+        controller.rotateClockwise(nil)
+
+        let editedMenu = try XCTUnwrap(controller.imageContextMenuForTesting)
+        XCTAssertNotNil(menuItem(in: editedMenu, action: #selector(MainWindowController.saveEdits(_:))))
+        XCTAssertNotNil(menuItem(in: editedMenu, action: #selector(MainWindowController.saveEditsAs(_:))))
+        XCTAssertNotNil(menuItem(in: editedMenu, action: #selector(MainWindowController.discardEdits(_:))))
+    }
+
+    func testCopyImageWritesBitmapToPasteboard() throws {
+        let representation = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 3,
+            pixelsHigh: 2,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ))
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("ImageViewTests.\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+
+        XCTAssertTrue(MainWindowController.writeImage(try XCTUnwrap(representation.cgImage), to: pasteboard))
+        XCTAssertNotNil(pasteboard.availableType(from: [.tiff]))
+    }
+
+    func testPhaseTwoContextMenusExposeTargetSpecificCommands() throws {
+        let controller = MainWindowController(settings: AppSettings(defaults: makeIsolatedDefaults()))
+        let first = ImageItem(url: URL(fileURLWithPath: "/tmp/a.png"), format: .png)
+        let second = ImageItem(url: URL(fileURLWithPath: "/tmp/b.png"), format: .png)
+
+        let filmstripMenu = controller.filmstripContextMenuForTesting(first)
+        XCTAssertTrue(filmstripMenu.items.contains { $0.title == AppStrings.text("viewer.contextMenu.showImage") })
+        XCTAssertTrue(filmstripMenu.items.contains { $0.title == AppStrings.text("menu.file.copyPath") })
+        XCTAssertTrue(filmstripMenu.items.contains { $0.title == AppStrings.text("menu.file.moveToTrash") })
+
+        let continuousMenu = controller.continuousReadingContextMenuForTesting(
+            ContinuousReadingPage(item: first, image: nil)
+        )
+        XCTAssertEqual(
+            continuousMenu.items.first?.title,
+            AppStrings.text("viewer.contextMenu.showSingleImage")
+        )
+        let copyImage = try XCTUnwrap(
+            continuousMenu.items.first { $0.title == AppStrings.text("menu.file.copyImage") }
+        )
+        XCTAssertFalse(copyImage.isEnabled)
+
+        let singleFolderMenu = try XCTUnwrap(controller.folderBrowserContextMenuForTesting([first]))
+        XCTAssertEqual(singleFolderMenu.items.first?.title, AppStrings.text("folderBrowser.contextMenu.open"))
+        let multiFolderMenu = try XCTUnwrap(controller.folderBrowserContextMenuForTesting([first, second]))
+        XCTAssertFalse(multiFolderMenu.items.contains { $0.title == AppStrings.text("folderBrowser.contextMenu.open") })
+        XCTAssertTrue(multiFolderMenu.items.contains {
+            $0.title == String(format: AppStrings.text("folderBrowser.contextMenu.copyPaths"), 2)
+        })
+        XCTAssertTrue(multiFolderMenu.items.contains {
+            $0.title == String(format: AppStrings.text("folderBrowser.contextMenu.trashItems"), 2)
+        })
+        XCTAssertTrue(multiFolderMenu.items.filter { !$0.isSeparatorItem }.allSatisfy {
+            $0.target != nil && $0.representedObject != nil
+        })
+    }
+
+    func testCopyPathsWritesOneAbsolutePathPerLine() {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("ImageViewTests.\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        let urls = [
+            URL(fileURLWithPath: "/tmp/first image.png"),
+            URL(fileURLWithPath: "/tmp/second.png")
+        ]
+
+        XCTAssertTrue(MainWindowController.writePaths(urls, to: pasteboard))
+        XCTAssertEqual(
+            pasteboard.string(forType: .string),
+            "/tmp/first image.png\n/tmp/second.png"
+        )
     }
 
     func testFullImageLoadProducesOneConciseAccessibilityAnnouncement() async throws {
@@ -2143,6 +2279,17 @@ final class MainWindowControllerTests: XCTestCase {
             return popUp
         }
         return view.subviews.lazy.compactMap { self.findTypeFilterPopUp(in: $0) }.first
+    }
+
+    private func menuItem(in menu: NSMenu, action: Selector) -> NSMenuItem? {
+        for item in menu.items {
+            if item.action == action { return item }
+            if let submenu = item.submenu,
+               let match = menuItem(in: submenu, action: action) {
+                return match
+            }
+        }
+        return nil
     }
 
     private func writeTestPNG(to url: URL) throws {

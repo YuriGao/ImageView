@@ -16,6 +16,7 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
     var onCancelOperation: (() -> Void)?
     var onUndoLastOperation: (() -> Void)?
     var onShowOperationDetails: ((String) -> Void)?
+    var onContextMenuRequested: (([ImageItem]) -> NSMenu?)?
     var onAccessibilityAnnouncementForTesting: ((String) -> Void)?
 
     private let thumbnailProvider: ThumbnailProvider
@@ -128,6 +129,14 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
 
     func testingPerformDoubleClickOnBlankSpace() {
         openItem(at: nil)
+    }
+
+    func testingContextMenu(onItemAt index: Int) -> NSMenu? {
+        contextMenu(at: IndexPath(item: index, section: 0))
+    }
+
+    func testingContextMenuOnBlankSpace() -> NSMenu? {
+        contextMenu(at: nil)
     }
 
     init(thumbnailProvider: ThumbnailProvider = ThumbnailProvider()) {
@@ -452,6 +461,11 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
 
     private func buildView() {
         translatesAutoresizingMaskIntoConstraints = false
+        collectionView.contextMenuProvider = { [weak self] event in
+            guard let self else { return nil }
+            let location = self.collectionView.convert(event.locationInWindow, from: nil)
+            return self.contextMenu(at: self.collectionView.indexPathForItem(at: location))
+        }
 
         searchField.placeholderString = AppStrings.text("folderBrowser.searchPlaceholder")
         searchField.target = self
@@ -775,6 +789,24 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
         onOpenItem?(item)
     }
 
+    private func contextMenu(at indexPath: IndexPath?) -> NSMenu? {
+        guard currentPresentation == .content,
+              !currentIsOperating,
+              let indexPath,
+              item(at: indexPath) != nil else {
+            return nil
+        }
+
+        if !collectionView.selectionIndexPaths.contains(indexPath) {
+            collectionView.selectionIndexPaths = [indexPath]
+            onSelectionChanged?(selectedIDs(from: collectionView.selectionIndexPaths))
+        }
+        let selectedItems = collectionView.selectionIndexPaths
+            .sorted()
+            .compactMap(item(at:))
+        return onContextMenuRequested?(selectedItems)
+    }
+
     private func openFirstSelectedItem() {
         guard let indexPath = collectionView.selectionIndexPaths.sorted().first,
               let item = item(at: indexPath) else {
@@ -937,6 +969,7 @@ private final class ReturnOpeningCollectionView: NSCollectionView {
     var openSelectedItem: (() -> Void)?
     var selectAllItems: (() -> Void)?
     var deleteSelectedItems: (() -> Void)?
+    var contextMenuProvider: ((NSEvent) -> NSMenu?)?
     private(set) var reloadCount = 0
 
     override func reloadData() {
@@ -958,5 +991,9 @@ private final class ReturnOpeningCollectionView: NSCollectionView {
         } else {
             super.keyDown(with: event)
         }
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        contextMenuProvider?(event)
     }
 }

@@ -5,6 +5,26 @@ import ImageViewCore
 
 @MainActor
 final class ImageCanvasViewTests: XCTestCase {
+    func testRightClickMenuUsesContextMenuProvider() throws {
+        let canvas = ImageCanvasView()
+        let expectedMenu = NSMenu(title: "Image Actions")
+        expectedMenu.addItem(withTitle: "Copy Image", action: nil, keyEquivalent: "")
+        canvas.contextMenuProvider = { expectedMenu }
+        let event = try XCTUnwrap(NSEvent.mouseEvent(
+            with: .rightMouseDown,
+            location: .zero,
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            eventNumber: 1,
+            clickCount: 1,
+            pressure: 1
+        ))
+
+        XCTAssertTrue(canvas.menu(for: event) === expectedMenu)
+    }
+
     func testZoomAtCanvasCenterKeepsZeroOffset() {
         let canvas = ImageCanvasView(frame: CGRect(x: 0, y: 0, width: 400, height: 300))
         canvas.image = makeDecodedImage(width: 400, height: 300)
