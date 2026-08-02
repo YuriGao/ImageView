@@ -5,6 +5,7 @@ import ImageViewCore
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let openRecentMenuItemIdentifier = NSUserInterfaceItemIdentifier("ImageView.openRecent")
     private static let appearanceMenuItemIdentifierPrefix = "ImageView.appearance."
+    private static let checkForUpdatesMenuItemIdentifier = NSUserInterfaceItemIdentifier("ImageView.checkForUpdates")
     private let settings: AppSettings
     private let defaultApplicationService: DefaultApplicationServicing
     private var imageWindowControllers: [MainWindowController] = []
@@ -24,9 +25,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let noteRecentDocument: (URL) -> Void
     private let recentDocumentURLs: () -> [URL]
     private let clearRecentDocuments: () -> Void
+    private let performUpdateCheck: @Sendable (String) async throws -> UpdateCheckResult
+    private let currentApplicationVersion: () -> String
+    private let openExternalURL: (URL) -> Void
     private weak var installedMainMenu: NSMenu?
     private var openRecentMenu: NSMenu?
     private var appearanceMenuItems: [AppAppearance: NSMenuItem] = [:]
+    private weak var checkForUpdatesMenuItem: NSMenuItem?
+    private var updateCheckTask: Task<Void, Never>?
 
     init(
         settings: AppSettings = .shared,
@@ -49,7 +55,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         noteRecentDocument: @escaping (URL) -> Void = { NSDocumentController.shared.noteNewRecentDocumentURL($0) },
         recentDocumentURLs: @escaping () -> [URL] = { NSDocumentController.shared.recentDocumentURLs },
         clearRecentDocuments: @escaping () -> Void = { NSDocumentController.shared.clearRecentDocuments(nil) },
-        initialURLs: [URL] = []
+        initialURLs: [URL] = [],
+        performUpdateCheck: @escaping @Sendable (String) async throws -> UpdateCheckResult = {
+            try await GitHubReleaseUpdateService().check(currentVersion: $0)
+        },
+        currentApplicationVersion: @escaping () -> String = {
+            Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
+        },
+        openExternalURL: @escaping (URL) -> Void = { NSWorkspace.shared.open($0) }
     ) {
         self.settings = settings
         self.defaultApplicationService = defaultApplicationService
@@ -63,6 +76,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.noteRecentDocument = noteRecentDocument
         self.recentDocumentURLs = recentDocumentURLs
         self.clearRecentDocuments = clearRecentDocuments
+        self.performUpdateCheck = performUpdateCheck
+        self.currentApplicationVersion = currentApplicationVersion
+        self.openExternalURL = openExternalURL
         self.pendingLaunchURLs = initialURLs
         super.init()
     }
@@ -213,6 +229,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(appMenuItem)
         let appMenu = NSMenu(title: "ImageView")
         appMenuItem.submenu = appMenu
+        let checkForUpdatesMenuItem = NSMenuItem(
+            title: text("menu.app.checkForUpdates"),
+            action: #selector(checkForUpdates(_:)),
+            keyEquivalent: ""
+        )
+        checkForUpdatesMenuItem.identifier = Self.checkForUpdatesMenuItemIdentifier
+        checkForUpdatesMenuItem.target = self
+        appMenu.addItem(checkForUpdatesMenuItem)
+        appMenu.addItem(.separator())
         let preferencesMenuItem = NSMenuItem(title: text("menu.app.settings"), action: #selector(showPreferences(_:)), keyEquivalent: ",")
         preferencesMenuItem.target = self
         appMenu.addItem(preferencesMenuItem)
@@ -406,6 +431,75 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         helpWindowController?.window?.makeKeyAndOrderFront(sender)
     }
 
+    @objc private func checkForUpdates(_ sender: Any?) {
+        guard updateCheckTask == nil else { return }
+        let menuItem = (sender as? NSMenuItem) ?? checkForUpdatesMenuItem
+        menuItem?.isEnabled = false
+        menuItem?.title = AppStrings.text("update.checking")
+        let currentVersion = currentApplicationVersion()
+        updateCheckTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                menuItem?.isEnabled = true
+                menuItem?.title = AppStrings.text("menu.app.checkForUpdates")
+                updateCheckTask = nil
+            }
+            do {
+                presentUpdateResult(try await performUpdateCheck(currentVersion))
+            } catch {
+                presentUpdateError()
+            }
+        }
+    }
+
+    private func presentUpdateResult(_ result: UpdateCheckResult) {
+        let alert = NSAlert()
+        switch result {
+        case let .updateAvailable(release, currentVersion):
+            alert.alertStyle = .informational
+            alert.messageText = String(
+                format: AppStrings.text("update.available.title"),
+                release.tagName
+            )
+            let versionSummary = String(
+                format: AppStrings.text("update.available.message"),
+                currentVersion,
+                release.tagName
+            )
+            let fullNotes = release.body?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let notes = String(fullNotes.prefix(2_000))
+            alert.informativeText = notes.isEmpty ? versionSummary : "\(versionSummary)\n\n\(notes)"
+            alert.addButton(withTitle: AppStrings.text("update.download"))
+            alert.addButton(withTitle: AppStrings.text("update.later"))
+            if runUpdateAlert(alert) == .alertFirstButtonReturn {
+                openExternalURL(release.downloadURL)
+            }
+        case let .upToDate(currentVersion):
+            alert.alertStyle = .informational
+            alert.messageText = AppStrings.text("update.current.title")
+            alert.informativeText = String(
+                format: AppStrings.text("update.current.message"),
+                currentVersion
+            )
+            alert.addButton(withTitle: AppStrings.text("update.ok"))
+            runUpdateAlert(alert)
+        }
+    }
+
+    private func presentUpdateError() {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = AppStrings.text("update.error.title")
+        alert.informativeText = AppStrings.text("update.error.message")
+        alert.addButton(withTitle: AppStrings.text("update.ok"))
+        runUpdateAlert(alert)
+    }
+
+    @discardableResult
+    private func runUpdateAlert(_ alert: NSAlert) -> NSApplication.ModalResponse {
+        alert.runModal()
+    }
+
     static func appearanceName(for appearance: AppAppearance) -> NSAppearance.Name? {
         switch appearance {
         case .system: nil
@@ -501,6 +595,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menuItem(with: Self.appearanceMenuItemIdentifier(for: appearance), in: menu)
                 .map { (appearance, $0) }
         })
+        checkForUpdatesMenuItem = menuItem(with: Self.checkForUpdatesMenuItemIdentifier, in: menu)
         rebuildOpenRecentMenu()
         updateAppearanceMenuState()
     }

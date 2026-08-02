@@ -24,7 +24,7 @@ final class AppStringsTests: XCTestCase {
     func testEveryMenuLabelHasChineseAndEnglishTranslations() {
         let menuKeys = [
             "menu.file", "menu.view", "menu.image", "menu.window", "menu.help",
-            "menu.app.settings", "menu.app.quit",
+            "menu.app.settings", "menu.app.checkForUpdates", "menu.app.quit",
             "menu.file.open", "menu.file.browseFolder", "menu.file.openRecent", "menu.file.rename", "menu.file.reveal", "menu.file.copyPath", "menu.file.moveToTrash", "menu.file.close", "menu.file.noRecentImages",
             "menu.view.previousImage", "menu.view.nextImage", "menu.view.actualSize", "menu.view.zoomToFit", "menu.view.showFilmstrip", "menu.view.showInfo", "menu.view.appearance", "menu.view.appearance.system", "menu.view.appearance.light", "menu.view.appearance.dark", "menu.view.enterFullScreen",
             "menu.image.rotateClockwise", "menu.image.rotateCounterclockwise", "menu.image.flipHorizontal", "menu.image.flipVertical", "menu.image.crop", "menu.image.saveEdits", "menu.image.saveAs", "menu.image.discardEdits",
@@ -33,6 +33,13 @@ final class AppStringsTests: XCTestCase {
         ]
 
         for key in menuKeys {
+            XCTAssertNotEqual(AppStrings.text(key, preferredLanguages: ["en"]), key)
+            XCTAssertNotEqual(AppStrings.text(key, preferredLanguages: ["zh-Hans"]), key)
+        }
+    }
+
+    func testEveryUpdateLabelHasChineseAndEnglishTranslations() {
+        for key in AppStrings.updateKeys {
             XCTAssertNotEqual(AppStrings.text(key, preferredLanguages: ["en"]), key)
             XCTAssertNotEqual(AppStrings.text(key, preferredLanguages: ["zh-Hans"]), key)
         }

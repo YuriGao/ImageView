@@ -5,12 +5,18 @@ enum AppStrings {
 
     static let menuKeys = [
         "menu.file", "menu.view", "menu.image", "menu.window", "menu.help",
-        "menu.app.settings", "menu.app.quit",
+        "menu.app.settings", "menu.app.checkForUpdates", "menu.app.quit",
         "menu.file.open", "menu.file.browseFolder", "menu.file.openRecent", "menu.file.rename", "menu.file.reveal", "menu.file.copyImage", "menu.file.copyPath", "menu.file.moveToTrash", "menu.file.close", "menu.file.noRecentImages",
         "menu.view.previousImage", "menu.view.nextImage", "menu.view.actualSize", "menu.view.zoomToFit", "menu.view.zoomToFitWidth", "menu.view.showFilmstrip", "menu.view.continuousReading", "menu.view.showInfo", "menu.view.appearance", "menu.view.appearance.system", "menu.view.appearance.light", "menu.view.appearance.dark", "menu.view.enterFullScreen",
         "menu.image.rotateClockwise", "menu.image.rotateCounterclockwise", "menu.image.flipHorizontal", "menu.image.flipVertical", "menu.image.crop", "menu.image.saveEdits", "menu.image.saveAs", "menu.image.discardEdits",
         "menu.window.minimize", "menu.window.zoom", "menu.window.bringAllToFront",
         "menu.help.imageView"
+    ]
+
+    static let updateKeys = [
+        "update.checking", "update.available.title", "update.available.message",
+        "update.download", "update.later", "update.current.title",
+        "update.current.message", "update.error.title", "update.error.message", "update.ok"
     ]
 
     static let settingsKeys = [

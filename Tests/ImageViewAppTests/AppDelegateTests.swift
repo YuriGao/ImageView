@@ -424,6 +424,7 @@ final class AppDelegateTests: XCTestCase {
         XCTAssertNotNil(menu.items[1].submenu?.item(withTitle: "Browse Folder…"))
         XCTAssertNotNil(menu.items[3].submenu?.item(withTitle: "Rotate Clockwise"))
         XCTAssertNotNil(menu.items[3].submenu?.item(withTitle: "Crop"))
+        XCTAssertTrue(menu.items[0].submenu?.item(withTitle: "Check for Updates…")?.target === delegate)
     }
 
     func testMainMenuLocalizesSubmenuItemsForSimplifiedChinese() {
