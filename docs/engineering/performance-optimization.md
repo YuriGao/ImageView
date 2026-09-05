@@ -18,3 +18,9 @@ Validation and measured results will be recorded alongside each completed change
 - Histories compose consecutive rotations/reflections into one bitmap draw, retaining crop boundaries. Failed replay keeps undo/redo history intact.
 - Metadata reads run on a separate actor and reuse a bounded cache keyed by file version; dimensions update immediately.
 - Validation: 484 tests, 480 passed and 4 optional RAW tests skipped. Added pixel equivalence across 64 transform combinations, identity allocation avoidance, background responsiveness/stale-result protection and failed-undo history preservation.
+
+## 2. Shared-load cancellation and decode priority
+
+- Cache requests now track consumers individually. Cancellation returns promptly, cancels the underlying request only after its last consumer leaves, and cannot remove/repopulate a replacement request.
+- Visible requests promote an existing queued prefetch using a shared operation priority token; background neighbors keep low queue priority.
+- Validation: 488 tests, 484 passed and 4 optional RAW tests skipped. Added last/shared-consumer cancellation, invalidation/replacement races and queued-priority ordering coverage.

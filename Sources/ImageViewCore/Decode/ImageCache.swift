@@ -20,7 +20,13 @@ public actor ImageCache {
     private var entries: [URL: Entry] = [:]
     private var totalCost: Int = 0
     private var tick: UInt64 = 0
-    private var inFlight: [RequestKey: Task<DecodedImage, Error>] = [:]
+    private struct Request {
+        let id: UUID
+        let task: Task<Void, Never>
+        let priority: ImageDecodePriority
+        var waiters: [UUID: CheckedContinuation<DecodedImage, Error>]
+    }
+    private var inFlight: [RequestKey: Request] = [:]
     private let costLimit: Int
 
     public init(costLimit: Int = ImageCache.defaultFullImageCostLimit) {
@@ -63,29 +69,69 @@ public actor ImageCache {
         matching version: CurrentFileVersion,
         loader: @escaping @Sendable () async throws -> DecodedImage
     ) async throws -> DecodedImage {
-        if let cached = image(for: url, matching: version) {
-            return cached
-        }
-
-        let key = RequestKey(url: url.standardizedFileURL, version: version)
-        if let task = inFlight[key] {
-            return try await task.value
-        }
-
-        let task = Task<DecodedImage, Error> {
+        try await loadImage(for: url, matching: version, priority: Task.currentPriority) { _ in
             try await loader()
         }
-        inFlight[key] = task
+    }
 
-        do {
-            let decoded = try await task.value
-            inFlight.removeValue(forKey: key)
-            insert(decoded, for: url, version: version)
-            return decoded
-        } catch {
-            inFlight.removeValue(forKey: key)
-            throw error
+    public func loadImage(
+        for url: URL,
+        matching version: CurrentFileVersion,
+        priority: TaskPriority,
+        loader: @escaping @Sendable (ImageDecodePriority) async throws -> DecodedImage
+    ) async throws -> DecodedImage {
+        try Task.checkCancellation()
+        if let cached = image(for: url, matching: version) { return cached }
+        let key = RequestKey(url: url.standardizedFileURL, version: version)
+        let waiterID = UUID()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                guard !Task.isCancelled else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                if var request = inFlight[key] {
+                    if priority >= .medium { request.priority.promote() }
+                    request.waiters[waiterID] = continuation
+                    inFlight[key] = request
+                    return
+                }
+                let requestID = UUID()
+                let decodePriority = ImageDecodePriority(interactive: priority >= .medium)
+                let task = Task(priority: priority) {
+                    let result: Result<DecodedImage, Error>
+                    do {
+                        try Task.checkCancellation()
+                        let decoded = try await loader(decodePriority)
+                        try Task.checkCancellation()
+                        result = .success(decoded)
+                    } catch { result = .failure(error) }
+                    self.complete(key, requestID: requestID, result: result)
+                }
+                inFlight[key] = Request(id: requestID, task: task, priority: decodePriority, waiters: [waiterID: continuation])
+            }
+        } onCancel: {
+            Task { await self.cancelWaiter(waiterID, for: key) }
         }
+    }
+
+    private func cancelWaiter(_ waiterID: UUID, for key: RequestKey) {
+        guard var request = inFlight[key], let waiter = request.waiters.removeValue(forKey: waiterID) else { return }
+        if request.waiters.isEmpty {
+            inFlight.removeValue(forKey: key)
+            request.task.cancel()
+        } else {
+            inFlight[key] = request
+        }
+        waiter.resume(throwing: CancellationError())
+    }
+
+    private func complete(_ key: RequestKey, requestID: UUID, result: Result<DecodedImage, Error>) {
+        // Invalidated work may finish after a replacement request for the same key.
+        guard let request = inFlight[key], request.id == requestID else { return }
+        inFlight.removeValue(forKey: key)
+        if case .success(let decoded) = result { insert(decoded, for: key.url, version: key.version) }
+        for waiter in request.waiters.values { waiter.resume(with: result) }
     }
 
     public func removeImage(for url: URL) {
@@ -93,14 +139,19 @@ public actor ImageCache {
         if let entry = entries.removeValue(forKey: standardizedURL) {
             totalCost -= entry.cost
         }
-        let matchingKeys = inFlight.keys.filter { $0.url == standardizedURL }
-        for key in matchingKeys {
-            inFlight.removeValue(forKey: key)?.cancel()
+        for key in inFlight.keys.filter({ $0.url == standardizedURL }) {
+            guard let request = inFlight.removeValue(forKey: key) else { continue }
+            request.task.cancel()
+            for waiter in request.waiters.values { waiter.resume(throwing: CancellationError()) }
         }
     }
 
     public func currentCost() -> Int {
         totalCost
+    }
+
+    func consumerCount(for url: URL) -> Int {
+        inFlight.filter { $0.key.url == url.standardizedFileURL }.values.reduce(0) { $0 + $1.waiters.count }
     }
 
     public func inFlightRequestCount() -> Int {

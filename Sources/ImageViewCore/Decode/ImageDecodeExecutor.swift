@@ -5,6 +5,7 @@ public final class ImageDecodeExecutor: @unchecked Sendable {
     public static let shared = ImageDecodeExecutor(maxConcurrentDecodeCount: maximumConcurrentDecodeCount)
 
     private let queue: OperationQueue
+    var operationCount: Int { queue.operationCount }
 
     public init(maxConcurrentDecodeCount: Int) {
         queue = OperationQueue()
@@ -14,6 +15,7 @@ public final class ImageDecodeExecutor: @unchecked Sendable {
     }
 
     public func decode(
+        priority: ImageDecodePriority = ImageDecodePriority(),
         _ operation: @escaping @Sendable () throws -> DecodedImage
     ) async throws -> DecodedImage {
         let request = DecodeExecutionRequest()
@@ -25,6 +27,7 @@ public final class ImageDecodeExecutor: @unchecked Sendable {
                     request.execute(operation)
                 }
                 request.install(operation: work)
+                priority.register(work)
                 queue.addOperation(work)
             }
         } onCancel: {
@@ -104,5 +107,28 @@ private final class DecodeExecutionRequest: @unchecked Sendable {
         operation = nil
         lock.unlock()
         continuation?.resume(with: result)
+    }
+}
+
+/// A visible consumer can promote a queued prefetch without starting another decode.
+public final class ImageDecodePriority: @unchecked Sendable {
+    private let lock = NSLock()
+    private var interactive: Bool
+    private weak var operation: Operation?
+
+    public init(interactive: Bool = true) { self.interactive = interactive }
+
+    public func promote() {
+        lock.withLock {
+            interactive = true
+            operation?.queuePriority = .veryHigh
+        }
+    }
+
+    fileprivate func register(_ operation: Operation) {
+        lock.withLock {
+            self.operation = operation
+            operation.queuePriority = interactive ? .veryHigh : .low
+        }
     }
 }

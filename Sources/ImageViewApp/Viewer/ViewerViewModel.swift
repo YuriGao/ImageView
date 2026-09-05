@@ -243,12 +243,13 @@ final class ViewerViewModel: ObservableObject {
             let cache = cache
             self.loadImageAtURL = { url, format in
                 for attempt in 0..<2 {
+                    try Task.checkCancellation()
                     guard let beforeVersion = currentFileVersionAtURL(url) else {
                         throw ImageDecodeError.cannotCreateSource
                     }
                     do {
-                        let decoded = try await cache.loadImage(for: url, matching: beforeVersion) {
-                            let decoded = try await detachedDecode {
+                        let decoded = try await cache.loadImage(for: url, matching: beforeVersion, priority: Task.currentPriority) { priority in
+                            let decoded = try await ImageDecodeExecutor.shared.decode(priority: priority) {
                                 try resolvedDecodeImageAtURL(url, format)
                             }
                             guard let afterVersion = currentFileVersionAtURL(url),
@@ -266,6 +267,7 @@ final class ViewerViewModel: ObservableObject {
                         }
                         return VersionedLoadedImage(image: decoded, version: completedVersion)
                     } catch {
+                        try Task.checkCancellation()
                         if attempt == 0,
                            let currentVersion = currentFileVersionAtURL(url),
                            !currentVersion.hasSameContentIdentity(as: beforeVersion) {
