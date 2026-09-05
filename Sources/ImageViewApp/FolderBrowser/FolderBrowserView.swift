@@ -21,6 +21,7 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
 
     private let thumbnailProvider: ThumbnailProvider
     private var items: [ImageItem] = []
+    private var isApplyingItems = false
     private var itemIndexPathsByID: [ImageItem.ID: IndexPath] = [:]
 
     private let searchField = NSSearchField()
@@ -162,14 +163,52 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
 
     func applyItems(_ newItems: [ImageItem]) {
         guard items != newItems else { return }
+        let oldItems = items
+        let selectedIDs = selectedIDs(from: collectionView.selectionIndexPaths)
+        let oldIDs = Set(oldItems.map(\.id))
+        let newIDs = Set(newItems.map(\.id))
+        let retainedOrderIsUnchanged = oldItems.filter { newIDs.contains($0.id) }.map(\.id)
+            == newItems.filter { oldIDs.contains($0.id) }.map(\.id)
         items = newItems
         itemIndexPathsByID = Dictionary(
-            uniqueKeysWithValues: newItems.enumerated().map { index, item in
-                (item.id, IndexPath(item: index, section: 0))
-            }
+            uniqueKeysWithValues: newItems.enumerated().map { ($0.element.id, IndexPath(item: $0.offset, section: 0)) }
         )
-        collectionView.reloadData()
+        isApplyingItems = true
+        defer { isApplyingItems = false }
+        if oldItems.isEmpty || newItems.isEmpty || !retainedOrderIsUnchanged {
+            // Initial population and a wholesale sort use one reload. Filter changes
+            // preserve unaffected content and reuse decoded thumbnail cache entries.
+            collectionView.reloadData()
+        } else {
+            let deleted = Set(oldItems.enumerated().compactMap { newIDs.contains($0.element.id) ? nil : IndexPath(item: $0.offset, section: 0) })
+            let inserted = Set(newItems.enumerated().compactMap { oldIDs.contains($0.element.id) ? nil : IndexPath(item: $0.offset, section: 0) })
+            if !deleted.isEmpty || !inserted.isEmpty {
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0
+                    collectionView.performBatchUpdates {
+                        collectionView.deleteItems(at: deleted)
+                        collectionView.insertItems(at: inserted)
+                    } completionHandler: { [weak self] _ in
+                        self?.updateVisibleCellContent()
+                    }
+                }
+            }
+            updateVisibleCellContent()
+        }
+        applySelection(selectedIDs.intersection(newIDs))
         updateBatchActionAvailability()
+    }
+
+    private func updateVisibleCellContent() {
+        for indexPath in collectionView.indexPathsForVisibleItems() {
+            guard let item = item(at: indexPath),
+                  let cell = collectionView.item(at: indexPath) as? FolderBrowserCellView else { continue }
+            if (cell.representedObject as? ImageItem) != item {
+                cell.configure(with: item, thumbnailProvider: thumbnailProvider, position: indexPath.item + 1, total: items.count)
+            } else {
+                cell.updatePosition(indexPath.item + 1, total: items.count)
+            }
+        }
     }
 
     func applySelection(_ selectedIDs: Set<ImageItem.ID>) {
@@ -204,7 +243,7 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
     }
 
     func applySearchText(_ searchText: String) {
-        searchField.stringValue = searchText
+        if searchField.stringValue != searchText { searchField.stringValue = searchText }
     }
 
     func applyTypeFilter(_ allowedFormats: Set<SupportedImageFormat>) {
@@ -452,11 +491,11 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
     }
 
     func collectionView(_ collectionView: NSCollectionView, didSelectItemsAt indexPaths: Set<IndexPath>) {
-        onSelectionChanged?(selectedIDs(from: collectionView.selectionIndexPaths))
+        if !isApplyingItems { onSelectionChanged?(selectedIDs(from: collectionView.selectionIndexPaths)) }
     }
 
     func collectionView(_ collectionView: NSCollectionView, didDeselectItemsAt indexPaths: Set<IndexPath>) {
-        onSelectionChanged?(selectedIDs(from: collectionView.selectionIndexPaths))
+        if !isApplyingItems { onSelectionChanged?(selectedIDs(from: collectionView.selectionIndexPaths)) }
     }
 
     private func buildView() {
@@ -799,7 +838,7 @@ final class FolderBrowserView: NSView, NSCollectionViewDataSource, NSCollectionV
 
         if !collectionView.selectionIndexPaths.contains(indexPath) {
             collectionView.selectionIndexPaths = [indexPath]
-            onSelectionChanged?(selectedIDs(from: collectionView.selectionIndexPaths))
+            if !isApplyingItems { onSelectionChanged?(selectedIDs(from: collectionView.selectionIndexPaths)) }
         }
         let selectedItems = collectionView.selectionIndexPaths
             .sorted()

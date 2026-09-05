@@ -3,6 +3,25 @@ import XCTest
 @testable import ImageViewCore
 
 final class FolderSessionTests: XCTestCase {
+    func testRepeatedSearchKeepsSortOrderAndRefreshesIndexAfterRename() {
+        let folder = URL(fileURLWithPath: "/tmp/search")
+        let first = ImageItem(url: folder.appendingPathComponent("CAFÉ-2.png"), format: .png, fileSize: 10)
+        let second = ImageItem(url: folder.appendingPathComponent("cafe-10.png"), format: .png, fileSize: 30)
+        var session = FolderSession(folderURL: folder, items: [second, first])
+        for query in ["c", "ca", " café ", "CAFE"] {
+            session.filter.searchText = query
+            XCTAssertEqual(session.visibleItems.map(\.id), [first.id, second.id])
+        }
+        session.sortMode = .fileSizeDescending
+        session.filter.searchText = "cafe"
+        XCTAssertEqual(session.visibleItems.map(\.id), [second.id, first.id])
+        let renamed = ImageItem(url: folder.appendingPathComponent("other.png"), format: .png)
+        session.replaceItems([renamed, second])
+        XCTAssertEqual(session.visibleItems, [second])
+        session.filter.searchText = "other"
+        XCTAssertEqual(session.visibleItems, [renamed])
+    }
+
     func testVisibleItemsAppliesSearchFormatFilterAndNameSort() {
         let folder = URL(fileURLWithPath: "/tmp/folder", isDirectory: true)
         let items = [

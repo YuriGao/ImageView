@@ -36,3 +36,10 @@ Validation and measured results will be recorded alongside each completed change
 - Known aspect ratios survive bitmap eviction. Geometry is cached by page order/dimensions and viewport width; first-time unknown dimensions still refine their placeholder when discovered.
 - Page ID lookup is indexed, focused-page and visible-range lookup use binary search, and drawing visits only the visible range. Cancelled page-window loads stop requesting neighbors.
 - Validation: 493 tests, 489 passed and 4 optional RAW tests skipped. Added bitmap eviction geometry preservation and 1,000 repeated geometry/visibility lookups in a 10,000-page directory without rebuilding layout.
+
+## 5. Folder search and grid updates
+
+- FolderSession caches sorted items and folded filename search keys. Search/format changes filter the sorted list without sorting it again; item and sort changes rebuild the appropriate caches.
+- Grid filters apply insert/delete batches, preserve selection by ID and refresh accessibility positions. AppKit may replace cell objects; cached thumbnails are reused without another decode. Initial population, empty results and wholesale sort changes use one reload.
+- Validation: 32 targeted folder tests passed, including accent/case handling, rename index invalidation, selection preservation, incremental item counts and no repeated decode for retained thumbnails.
+- Same local optimized-build synthetic benchmark, 10,000 items: five queries took 4.12–5.98 ms each versus 9.87–11.72 ms before changes (roughly halved). This measures model filtering, not end-to-end UI frame time.

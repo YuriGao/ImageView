@@ -3,17 +3,19 @@ import Foundation
 public struct FolderSession: Equatable, Sendable {
     public var folderURL: URL
     public var items: [ImageItem] {
-        didSet { rebuildVisibleItems() }
+        didSet { rebuildSearchIndexAndSort(); rebuildVisibleItems() }
     }
     public var filter: FolderFilter {
-        didSet { rebuildVisibleItems() }
+        didSet { if filter != oldValue { rebuildVisibleItems() } }
     }
     public var sortMode: FolderSortMode {
-        didSet { rebuildVisibleItems() }
+        didSet { if sortMode != oldValue { sortedItems = items.sorted(by: sortMode.areInIncreasingOrder); rebuildVisibleItems() } }
     }
     public var selectedItemIDs: [ImageItem.ID]
     public var lastOpenedItemID: ImageItem.ID?
     public private(set) var visibleItems: [ImageItem]
+    private var sortedItems: [ImageItem] = []
+    private var searchableNames: [ImageItem.ID: String] = [:]
 
     public init(
         folderURL: URL,
@@ -30,6 +32,7 @@ public struct FolderSession: Equatable, Sendable {
         self.selectedItemIDs = selectedItemIDs
         self.lastOpenedItemID = lastOpenedItemID
         self.visibleItems = []
+        rebuildSearchIndexAndSort()
         rebuildVisibleItems()
     }
 
@@ -57,27 +60,21 @@ public struct FolderSession: Equatable, Sendable {
         }
     }
 
-    private func matchesFilter(_ item: ImageItem) -> Bool {
-        let formatMatches = filter.allowedFormats.contains(item.format)
-        guard formatMatches else {
-            return false
-        }
+    private static func searchKey(_ text: String) -> String {
+        text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+    }
 
-        let searchText = filter.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !searchText.isEmpty else {
-            return true
-        }
-
-        return item.displayFilename.range(
-            of: searchText,
-            options: [.caseInsensitive, .diacriticInsensitive]
-        ) != nil
+    private mutating func rebuildSearchIndexAndSort() {
+        searchableNames = Dictionary(uniqueKeysWithValues: items.map { ($0.id, Self.searchKey($0.displayFilename)) })
+        sortedItems = items.sorted(by: sortMode.areInIncreasingOrder)
     }
 
     private mutating func rebuildVisibleItems() {
-        visibleItems = items
-            .filter(matchesFilter)
-            .sorted(by: sortMode.areInIncreasingOrder)
+        let needle = Self.searchKey(filter.searchText.trimmingCharacters(in: .whitespacesAndNewlines))
+        visibleItems = sortedItems.filter {
+            filter.allowedFormats.contains($0.format)
+                && (needle.isEmpty || searchableNames[$0.id]?.contains(needle) == true)
+        }
         let visibleIDs = Set(visibleItems.map(\.id))
         selectedItemIDs = selectedItemIDs.filter { visibleIDs.contains($0) }
     }
