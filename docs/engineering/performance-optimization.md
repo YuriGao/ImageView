@@ -43,3 +43,9 @@ Validation and measured results will be recorded alongside each completed change
 - Grid filters apply insert/delete batches, preserve selection by ID and refresh accessibility positions. AppKit may replace cell objects; cached thumbnails are reused without another decode. Initial population, empty results and wholesale sort changes use one reload.
 - Validation: 32 targeted folder tests passed, including accent/case handling, rename index invalidation, selection preservation, incremental item counts and no repeated decode for retained thumbnails.
 - Same local optimized-build synthetic benchmark, 10,000 items: five queries took 4.12–5.98 ms each versus 9.87–11.72 ms before changes (roughly halved). This measures model filtering, not end-to-end UI frame time.
+
+## 6. Continuous integration and optimized checks
+
+- Pushes and PRs run the full suite plus an optimized build of interactive/cache/layout regressions. Release packaging depends on successful tests and keeps write permissions only on the packaging job.
+- Existing DEBUG-only UI test hooks also support the explicit TESTING flag so optimized tests compile without enabling general DEBUG behavior in release builds.
+- Validation: actionlint passed; 121 optimized interactive/performance tests passed. Remote workflow execution will be checked after pushing.

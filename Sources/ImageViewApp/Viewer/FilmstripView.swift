@@ -163,7 +163,7 @@ final class FilmstripView: NSScrollView {
         updateCenteredLayout()
     }
 
-    #if DEBUG
+    #if DEBUG || TESTING
     func debugButtons() -> [NSButton] {
         stack.arrangedSubviews.compactMap { $0 as? NSButton }
     }
