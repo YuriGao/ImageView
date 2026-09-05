@@ -55,3 +55,8 @@ Validation and measured results will be recorded alongside each completed change
 - File/edit actions, menus and presentation logic now live in three focused MainWindowController extensions. The primary controller file shrank from 3,155 to 2,000 lines without changing menu selectors.
 - Filmstrip/page-control auto-hide share a cancellation-aware scheduler with generation guards for stale animation completions.
 - Viewer errors, processing accessibility text and edited titles use English/Simplified Chinese resources. Localization tests explicitly cover both languages rather than assuming the host language.
+
+## Final lifecycle audit
+
+- An atomic save owns its worker until completion even if its caller is cancelled. Busy/unsaved state remains active until that worker finishes, and application termination is deferred by rejecting quit while a window owns an image operation.
+- Full debug validation: 498 tests, 494 passed and 4 optional RAW tests skipped. Added save-cancellation ownership and quit-during-operation coverage.

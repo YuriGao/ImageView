@@ -94,6 +94,8 @@ final class ViewerViewModel: ObservableObject {
     private var metadataTask: Task<Void, Never>?
     private var metadataGeneration: UInt64 = 0
     typealias EditImage = @Sendable ([EditOperation], DecodedImage) throws -> DecodedImage
+    typealias SaveImage = @Sendable (DecodedImage, URL, SupportedImageFormat, URL) throws -> Void
+    private let saveImage: SaveImage
     private let editImage: EditImage
     private static let editingExecutor = ImageDecodeExecutor(maxConcurrentDecodeCount: 1)
     private let fileActions = FileActions()
@@ -165,6 +167,9 @@ final class ViewerViewModel: ObservableObject {
         editImage: @escaping EditImage = { operations, image in
             let output = try ImageEditingService().apply(operations, to: image.cgImage)
             return DecodedImage(cgImage: output, pixelSize: CGSize(width: output.width, height: output.height), isAnimated: false)
+        },
+        saveImage: @escaping SaveImage = { image, target, format, source in
+            try ImageEditingService().save(image.cgImage, to: target, format: format, metadataSourceURL: source)
         }
     ) {
         let resolvedDecodeImageAtURL: @Sendable (URL, SupportedImageFormat) throws -> DecodedImage =
@@ -179,6 +184,7 @@ final class ViewerViewModel: ObservableObject {
         self.fullResolutionRequestDelay = fullResolutionRequestDelay
         self.cache = cache
         self.editImage = editImage
+        self.saveImage = saveImage
         self.shouldLoadPreviewAtURL = shouldLoadPreviewAtURL ?? { url in
             loadPreviewAtURL != nil || ImageDecodeService.requiresDownsampledPreview(url: url, maxPixelSize: 2_048)
         }
@@ -685,7 +691,7 @@ final class ViewerViewModel: ObservableObject {
 
     @discardableResult
     func saveCurrentEdits(to targetURL: URL, format: SupportedImageFormat) async -> Bool {
-        guard canEditCurrentImage,
+        guard !Task.isCancelled, canEditCurrentImage,
               let item = navigationState?.currentItem,
               let image = currentImage else { return false }
         isProcessingImage = true
@@ -694,13 +700,21 @@ final class ViewerViewModel: ObservableObject {
         do {
             // Saving is allowed to finish atomically once started. UI transitions wait
             // for this result; the generation guard also protects programmatic opens.
-            let decoded = try await Self.editingExecutor.decode {
-                try ImageEditingService().save(image.cgImage, to: targetURL, format: format, metadataSourceURL: item.url)
-                return DecodedImage(cgImage: image.cgImage, pixelSize: image.pixelSize, isAnimated: false)
+            let saveImage = self.saveImage
+            let readVersion = currentFileVersionAtURL
+            let save = Task {
+                try await Self.editingExecutor.execute {
+                    try saveImage(image, targetURL, format, item.url)
+                    guard let version = readVersion(targetURL) else { throw ImageDecodeError.cannotCreateSource }
+                    let decoded = DecodedImage(cgImage: image.cgImage, pixelSize: image.pixelSize, isAnimated: false)
+                    return VersionedLoadedImage(image: decoded, version: version)
+                }
             }
-            guard let writtenVersion = currentFileVersionAtURL(targetURL) else {
-                throw ImageDecodeError.cannotCreateSource
-            }
+            // This owned save task is intentionally not cancelled with its waiter:
+            // an atomic file replacement must finish before the UI becomes idle.
+            let saved = try await save.value
+            let decoded = saved.image
+            guard let writtenVersion = saved.version else { throw ImageDecodeError.cannotCreateSource }
             await cache.insert(decoded, for: targetURL, version: writtenVersion)
             guard generation == displayRequestGeneration else { return false }
             navigationState?.replaceCurrentURL(targetURL, format: format)

@@ -45,6 +45,7 @@ final class MainWindowController: NSWindowController {
     var onOpenRecentRequested: ((URL) -> Void)?
     var onClearRecentRequested: (() -> Void)?
     private(set) var hasAssignedOpenRequest = false
+    var isProcessingImageOperation: Bool { imageOperationTask != nil || viewModel.isProcessingImage }
     var onWindowDidBecomeKey: ((MainWindowController) -> Void)?
     var onWindowDidClose: ((MainWindowController) -> Void)?
     enum MenuCommand: Equatable {

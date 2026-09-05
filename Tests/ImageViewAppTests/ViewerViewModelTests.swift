@@ -8,6 +8,36 @@ import XCTest
 
 @MainActor
 final class ViewerViewModelTests: XCTestCase {
+    func testCancellingSaveWaiterKeepsBusyStateUntilAtomicSaveCompletes() async throws {
+        let image = try makeDecodedImage(width: 6, height: 4)
+        let started = expectation(description: "save started")
+        let gate = DispatchSemaphore(value: 0)
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: { _ in [] },
+            decodeImageAtURL: { _, _ in image },
+            currentFileVersionAtURL: { _ in FileVersionSequence.initial },
+            saveImage: { _, _, _, _ in
+                XCTAssertFalse(Thread.isMainThread)
+                started.fulfill()
+                _ = gate.wait(timeout: .now() + 3)
+            }
+        )
+        await viewModel.open(url: URL(fileURLWithPath: "/tmp/owned-save.png"))
+        await viewModel.applyEdit(.rotateClockwise)
+        let save = Task { await viewModel.saveCurrentEdits() }
+        await fulfillment(of: [started], timeout: 2)
+        save.cancel()
+        await Task.yield()
+        XCTAssertTrue(viewModel.isProcessingImage)
+        XCTAssertTrue(viewModel.hasUnsavedEdits)
+        XCTAssertFalse(viewModel.discardCurrentEdits())
+        gate.signal()
+        let succeeded = await save.value
+        XCTAssertTrue(succeeded)
+        XCTAssertFalse(viewModel.isProcessingImage)
+        XCTAssertFalse(viewModel.hasUnsavedEdits)
+    }
+
     func testEditingLeavesMainActorResponsiveAndRejectsStaleResult() async throws {
         let image = try makeDecodedImage(width: 6, height: 4)
         let started = expectation(description: "background edit started")

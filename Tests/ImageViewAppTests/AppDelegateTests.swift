@@ -5,6 +5,20 @@ import ImageViewCore
 
 @MainActor
 final class AppDelegateTests: XCTestCase {
+    func testApplicationCannotQuitWhileWindowOwnsAnImageOperation() async throws {
+        let harness = WindowHarness()
+        let delegate = harness.makeDelegate()
+        delegate.finishLaunchingForTesting()
+        let controller = try XCTUnwrap(delegate.imageWindowControllersForTesting.first)
+        let operation = Task { try? await Task.sleep(for: .seconds(10)) }
+        controller.imageOperationTask = Task { _ = await operation.value }
+        XCTAssertEqual(delegate.applicationShouldTerminate(NSApplication.shared), .terminateCancel)
+        operation.cancel()
+        await controller.waitForImageOperationForTesting()
+        controller.imageOperationTask = nil
+        XCTAssertEqual(delegate.applicationShouldTerminate(NSApplication.shared), .terminateNow)
+    }
+
     func testOpenPanelAllowsOnlySupportedImageFormats() {
         let panel = NSOpenPanel()
 
