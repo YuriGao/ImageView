@@ -83,7 +83,6 @@ final class ViewerViewModel: ObservableObject {
     }
 
     private let scanContainingDirectory: @Sendable (URL) async throws -> [ImageItem]
-    private let decodeImageAtURL: @Sendable (URL, SupportedImageFormat) throws -> DecodedImage
     private let loadImageAtURL: @Sendable (URL, SupportedImageFormat) async throws -> VersionedLoadedImage
     private let loadFullResolutionAtURL: @Sendable (URL, SupportedImageFormat) async throws -> VersionedLoadedImage
     private let loadPreviewAtURL: @Sendable (URL, SupportedImageFormat) async throws -> DecodedImage
@@ -174,7 +173,6 @@ final class ViewerViewModel: ObservableObject {
                 return try decoder.decode(url: $0, format: $1, purpose: .full)
             }
         self.scanContainingDirectory = scanContainingDirectory
-        self.decodeImageAtURL = resolvedDecodeImageAtURL
         self.moveToTrashAtURL = moveToTrashAtURL
         self.restoreFromTrashAtURL = restoreFromTrashAtURL
         self.currentFileVersionAtURL = currentFileVersionAtURL
@@ -323,7 +321,7 @@ final class ViewerViewModel: ObservableObject {
             currentMetadata = nil
             persistedCurrentImage = nil
             loadPhase = .failed
-            errorMessage = "不支持的图片格式：\(url.pathExtension)"
+            errorMessage = String(format: AppStrings.text("viewer.error.unsupportedFormat"), url.pathExtension)
             updateDisplayTitle()
             return
         }
@@ -448,7 +446,7 @@ final class ViewerViewModel: ObservableObject {
             persistedCurrentImage = nil
             displayedFileVersion = nil
             loadPhase = .failed
-            errorMessage = "图片损坏或无法解码：\(url.lastPathComponent)"
+            errorMessage = String(format: AppStrings.text("viewer.error.decode"), url.lastPathComponent)
             updateDisplayTitle()
         }
     }
@@ -518,7 +516,7 @@ final class ViewerViewModel: ObservableObject {
             updateDisplayTitle()
             startDisplayCurrentAndPreload()
         } catch {
-            errorMessage = "无法移动到废纸篓：\(item.displayFilename)"
+            errorMessage = String(format: AppStrings.text("viewer.error.trash"), item.displayFilename)
         }
     }
 
@@ -534,7 +532,7 @@ final class ViewerViewModel: ObservableObject {
             errorMessage = nil
             updateDisplayTitle()
         } catch {
-            errorMessage = "无法重命名：\(item.url.lastPathComponent)"
+            errorMessage = String(format: AppStrings.text("viewer.error.rename"), item.url.lastPathComponent)
         }
     }
 
@@ -627,7 +625,7 @@ final class ViewerViewModel: ObservableObject {
             updateDisplayTitle()
         } catch {
             guard generation == displayRequestGeneration else { return }
-            errorMessage = "无法应用编辑"
+            errorMessage = AppStrings.text("viewer.error.edit")
         }
     }
 
@@ -717,7 +715,7 @@ final class ViewerViewModel: ObservableObject {
             return true
         } catch {
             guard generation == displayRequestGeneration else { return false }
-            errorMessage = "无法保存该格式的编辑结果"
+            errorMessage = AppStrings.text("viewer.error.save")
             return false
         }
     }
@@ -743,7 +741,7 @@ final class ViewerViewModel: ObservableObject {
             updateDisplayTitle()
             return true
         } catch {
-            errorMessage = "无法还原原始图片"
+            errorMessage = AppStrings.text("viewer.error.restore")
             return false
         }
     }
@@ -877,7 +875,7 @@ final class ViewerViewModel: ObservableObject {
         }
         guard currentVersion != displayedFileVersion else { return }
         guard !hasUnsavedEdits else {
-            errorMessage = "图片已在外部修改：\(item.url.lastPathComponent)"
+            errorMessage = String(format: AppStrings.text("viewer.error.externalChange"), item.url.lastPathComponent)
             return
         }
 
@@ -899,7 +897,7 @@ final class ViewerViewModel: ObservableObject {
         } catch {
             guard generation == displayRequestGeneration else { return }
             loadPhase = .failed
-            errorMessage = "图片已在外部修改且无法解码：\(item.url.lastPathComponent)"
+            errorMessage = String(format: AppStrings.text("viewer.error.externalDecode"), item.url.lastPathComponent)
         }
     }
 
@@ -926,7 +924,7 @@ final class ViewerViewModel: ObservableObject {
             persistedCurrentImage = nil
             displayedFileVersion = nil
             loadPhase = .failed
-            errorMessage = "图片损坏或无法解码：\(item.url.lastPathComponent)"
+            errorMessage = String(format: AppStrings.text("viewer.error.decode"), item.url.lastPathComponent)
             updateDisplayTitle()
         }
     }
@@ -1064,7 +1062,7 @@ final class ViewerViewModel: ObservableObject {
     private func removeExternallyUnavailableCurrentItem(_ item: ImageItem) {
         navigationState?.removeCurrent()
         displayedFileVersion = nil
-        errorMessage = "文件已在外部移除：\(item.url.lastPathComponent)"
+        errorMessage = String(format: AppStrings.text("viewer.error.externalRemoval"), item.url.lastPathComponent)
 
         guard navigationState?.currentItem != nil else {
             navigationState = nil
@@ -1140,8 +1138,8 @@ final class ViewerViewModel: ObservableObject {
         displayTitle = Self.displayTitle(filename: filename, hasUnsavedEdits: hasUnsavedEdits)
     }
 
-    static func displayTitle(filename: String, hasUnsavedEdits: Bool) -> String {
-        hasUnsavedEdits ? "\(filename) - Edited" : filename
+    static func displayTitle(filename: String, hasUnsavedEdits: Bool, preferredLanguages: [String] = Locale.preferredLanguages) -> String {
+        hasUnsavedEdits ? String(format: AppStrings.text("viewer.title.edited", preferredLanguages: preferredLanguages), filename) : filename
     }
 
     private func updateMetadata(url: URL, format: SupportedImageFormat, image: DecodedImage) {
@@ -1173,11 +1171,6 @@ final class ViewerViewModel: ObservableObject {
             return persistedCurrentImage
         }
 
-        guard let item = navigationState?.currentItem else {
-            throw ImageDecodeError.cannotDecodeImage
-        }
-
-        _ = item
         throw ImageDecodeError.cannotDecodeImage
     }
 }

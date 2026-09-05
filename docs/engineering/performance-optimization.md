@@ -49,3 +49,9 @@ Validation and measured results will be recorded alongside each completed change
 - Pushes and PRs run the full suite plus an optimized build of interactive/cache/layout regressions. Release packaging depends on successful tests and keeps write permissions only on the packaging job.
 - Existing DEBUG-only UI test hooks also support the explicit TESTING flag so optimized tests compile without enabling general DEBUG behavior in release builds.
 - Validation: actionlint passed; 121 optimized interactive/performance tests passed. Remote workflow execution will be checked after pushing.
+
+## 7. Window responsibilities and localization
+
+- File/edit actions, menus and presentation logic now live in three focused MainWindowController extensions. The primary controller file shrank from 3,155 to 2,000 lines without changing menu selectors.
+- Filmstrip/page-control auto-hide share a cancellation-aware scheduler with generation guards for stale animation completions.
+- Viewer errors, processing accessibility text and edited titles use English/Simplified Chinese resources. Localization tests explicitly cover both languages rather than assuming the host language.
