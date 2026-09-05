@@ -30,3 +30,9 @@ Validation and measured results will be recorded alongside each completed change
 - AnimationPlayer owns monotonic playback deadlines and at most two upcoming frames. Frame reads use a process-wide executor limited to two workers; shared frame sources serialize their ImageIO access.
 - Look-ahead is limited to 64 MiB, allowing one oversized upcoming frame when required for playback. Replacing an image cancels prefetch and ignores late results.
 - Validation: 491 tests, 487 passed and 4 optional RAW tests skipped. Added off-main frame reads, buffer bounds over repeated advancement, stale source replacement and timing compensation tests.
+
+## 4. Continuous-reading geometry
+
+- Known aspect ratios survive bitmap eviction. Geometry is cached by page order/dimensions and viewport width; first-time unknown dimensions still refine their placeholder when discovered.
+- Page ID lookup is indexed, focused-page and visible-range lookup use binary search, and drawing visits only the visible range. Cancelled page-window loads stop requesting neighbors.
+- Validation: 493 tests, 489 passed and 4 optional RAW tests skipped. Added bitmap eviction geometry preservation and 1,000 repeated geometry/visibility lookups in a 10,000-page directory without rebuilding layout.

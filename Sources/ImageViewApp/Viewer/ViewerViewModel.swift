@@ -828,6 +828,7 @@ final class ViewerViewModel: ObservableObject {
         guard let state = navigationState,
               let current = state.currentItem,
               let currentIndex = state.currentIndex else { return [] }
+        let generation = displayRequestGeneration
         let focusedIndex = focusedItemID.flatMap { id in
             state.items.firstIndex { $0.id == id }
         } ?? currentIndex
@@ -844,7 +845,7 @@ final class ViewerViewModel: ObservableObject {
 
         for index in decodeOrder {
             let item = state.items[index]
-            guard navigationState?.currentItem?.id == current.id else { return [] }
+            guard !Task.isCancelled, generation == displayRequestGeneration, navigationState?.currentItem?.id == current.id else { return [] }
             let image: DecodedImage?
             if item.id == current.id, let currentImage {
                 image = currentImage
@@ -853,7 +854,7 @@ final class ViewerViewModel: ObservableObject {
             } else {
                 image = try? await display(url: item.url, format: item.format).image
             }
-            guard navigationState?.currentItem?.id == current.id else { return [] }
+            guard !Task.isCancelled, generation == displayRequestGeneration, navigationState?.currentItem?.id == current.id else { return [] }
             guard let image else { continue }
             let (nextCost, overflow) = decodedByteCost.addingReportingOverflow(image.decodedByteCost)
             let fitsBudget = !overflow && nextCost <= ContinuousReadingView.maximumDecodedByteCost
