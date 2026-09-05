@@ -267,3 +267,5 @@
 "editing.history.limitReached" = "Edit history is limited to 20 steps. Save or discard edits to continue.";
 "editing.history.rebuildFailed" = "Could not restore edit history";
 "batchRename.defaultBaseName" = "Image";
+
+"viewer.processing" = "Processing image";

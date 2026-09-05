@@ -23,23 +23,30 @@ public final class ImageEditingService {
     }
 
     public func apply(_ operations: [EditOperation], to image: CGImage) throws -> CGImage {
-        try operations.reduce(image) { current, operation in
+        var output = image
+        var transform = CGAffineTransform.identity
+        // Crops depend on the current pixel coordinate system and form a boundary.
+        // Between crops, the eight rotation/reflection states need only one draw.
+        for operation in operations {
             switch operation {
             case .rotateClockwise:
-                return try transform(current, radians: -.pi / 2, scaleX: 1, scaleY: 1)
+                transform = transform.concatenating(CGAffineTransform(a: 0, b: -1, c: 1, d: 0, tx: 0, ty: 0))
             case .rotateCounterClockwise:
-                return try transform(current, radians: .pi / 2, scaleX: 1, scaleY: 1)
+                transform = transform.concatenating(CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: 0, ty: 0))
             case .mirrorHorizontal:
-                return try transform(current, radians: 0, scaleX: -1, scaleY: 1)
+                transform = transform.concatenating(CGAffineTransform(scaleX: -1, y: 1))
             case .mirrorVertical:
-                return try transform(current, radians: 0, scaleX: 1, scaleY: -1)
+                transform = transform.concatenating(CGAffineTransform(scaleX: 1, y: -1))
             case .crop(let rect):
-                guard let cropped = current.cropping(to: rect.integral) else {
+                output = try self.transform(output, matrix: transform)
+                transform = .identity
+                guard let cropped = output.cropping(to: rect.integral) else {
                     throw ImageEditingError.cannotCreateImage
                 }
-                return cropped
+                output = cropped
             }
         }
+        return try self.transform(output, matrix: transform)
     }
 
     public func save(
@@ -58,8 +65,7 @@ public final class ImageEditingService {
 
         let temporaryURL = url
             .deletingLastPathComponent()
-            .appendingPathComponent(".\(url.lastPathComponent).imageview-tmp")
-        try? FileManager.default.removeItem(at: temporaryURL)
+            .appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString).imageview-tmp")
         defer { try? FileManager.default.removeItem(at: temporaryURL) }
 
         guard let destination = CGImageDestinationCreateWithURL(
@@ -185,8 +191,9 @@ public final class ImageEditingService {
         }
     }
 
-    private func transform(_ image: CGImage, radians: CGFloat, scaleX: CGFloat, scaleY: CGFloat) throws -> CGImage {
-        let rotated = abs(radians) == .pi / 2
+    private func transform(_ image: CGImage, matrix: CGAffineTransform) throws -> CGImage {
+        guard !matrix.isIdentity else { return image }
+        let rotated = matrix.a == 0
         let width = rotated ? image.height : image.width
         let height = rotated ? image.width : image.height
 
@@ -203,8 +210,7 @@ public final class ImageEditingService {
         }
 
         context.translateBy(x: CGFloat(width) / 2, y: CGFloat(height) / 2)
-        context.rotate(by: radians)
-        context.scaleBy(x: scaleX, y: scaleY)
+        context.concatenate(matrix)
         context.draw(
             image,
             in: CGRect(

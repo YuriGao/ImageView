@@ -267,3 +267,5 @@
 "editing.history.limitReached" = "最多保留 20 步编辑；请先保存或放弃编辑。";
 "editing.history.rebuildFailed" = "无法还原编辑历史";
 "batchRename.defaultBaseName" = "图片";
+
+"viewer.processing" = "正在处理图片";

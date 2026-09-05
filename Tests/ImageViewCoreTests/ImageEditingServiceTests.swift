@@ -171,6 +171,26 @@ final class ImageEditingServiceTests: XCTestCase {
         XCTAssertEqual(roundTripped.pixelSize, CGSize(width: 2, height: 4))
     }
 
+    func testMergedTransformsMatchSequentialPixelResultsAcrossCropBoundaries() throws {
+        let image = try makeImage(rows: [[.red, .green, .blue], [.yellow, .magenta, .cyan]])
+        let transforms: [EditOperation] = [.rotateClockwise, .rotateCounterClockwise, .mirrorHorizontal, .mirrorVertical]
+        let service = ImageEditingService()
+        for first in transforms {
+            for second in transforms {
+                for third in transforms {
+                    let operations = [first, second, third]
+                    let sequential = try operations.reduce(image) { try service.apply([$1], to: $0) }
+                    XCTAssertEqual(try pixelRows(in: service.apply(operations, to: image)), try pixelRows(in: sequential))
+                    let crop = EditOperation.crop(CGRect(x: 0, y: 0, width: 1, height: 2))
+                    let cropped = try service.apply([crop], to: sequential)
+                    XCTAssertEqual(try pixelRows(in: service.apply(operations + [crop], to: image)), try pixelRows(in: cropped))
+                }
+            }
+        }
+        let identity = try service.apply(Array(repeating: .rotateClockwise, count: 20), to: image)
+        XCTAssertTrue(identity === image, "An identity history should not allocate another bitmap")
+    }
+
     private func makeImage(rows: [[Pixel]]) throws -> CGImage {
         guard let firstRow = rows.first, !firstRow.isEmpty else {
             throw TestError.invalidImageData

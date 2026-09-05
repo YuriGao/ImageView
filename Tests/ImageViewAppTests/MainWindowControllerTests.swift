@@ -459,6 +459,8 @@ final class MainWindowControllerTests: XCTestCase {
 
         controller.rotateClockwise(nil)
 
+        await controller.waitForImageOperationForTesting()
+
         let editedMenu = try XCTUnwrap(controller.imageContextMenuForTesting)
         XCTAssertNotNil(menuItem(in: editedMenu, action: #selector(MainWindowController.saveEdits(_:))))
         XCTAssertNotNil(menuItem(in: editedMenu, action: #selector(MainWindowController.saveEditsAs(_:))))
@@ -1564,6 +1566,7 @@ final class MainWindowControllerTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(10))
         }
         fixture.controller.rotateClockwise(nil)
+        await fixture.controller.waitForImageOperationForTesting()
         XCTAssertTrue(fixture.controller.hasUnsavedEditsForTesting)
         fixture.controller.goBackForTesting()
         fixture.controller.setUnsavedChangesChoiceForTesting(.cancel)
@@ -2264,6 +2267,7 @@ final class MainWindowControllerTests: XCTestCase {
                 try await Task.sleep(for: .milliseconds(10))
             }
             fixture.controller.rotateClockwise(nil)
+            await fixture.controller.waitForImageOperationForTesting()
             fixture.controller.goBackForTesting()
             fixture.controller.selectFolderBrowserItemsForTesting([fixture.items[0].id])
             fixture.controller.setUnsavedChangesChoiceForTesting(choice)
@@ -2288,6 +2292,7 @@ final class MainWindowControllerTests: XCTestCase {
             case .rename:
                 fixture.controller.triggerFolderBrowserRenameForTesting()
             }
+            await fixture.controller.waitForImageOperationForTesting()
             for _ in 0..<100 where choice != .cancel && operationCount.value == 0 {
                 await Task.yield()
             }

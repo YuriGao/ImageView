@@ -186,6 +186,17 @@ final class MainWindowController: NSWindowController {
         target: self,
         action: #selector(showZoomMenu(_:))
     )
+    private let imageProgressIndicator = NSProgressIndicator()
+    private var imageOperationTask: Task<Void, Never>? {
+        didSet {
+            if imageOperationTask != nil {
+                imageProgressIndicator.startAnimation(nil)
+            } else {
+                imageProgressIndicator.stopAnimation(nil)
+            }
+            updateTitleBarControlAvailability()
+        }
+    }
     private let bottomInfoButton = NSButton()
     private let filmstripOverlayView = FilmstripOverlayView()
     private let filmstripView = FilmstripView()
@@ -415,6 +426,16 @@ final class MainWindowController: NSWindowController {
         cropControlsView.translatesAutoresizingMaskIntoConstraints = false
         cropOverlay.isHidden = true
         cropControlsView.isHidden = true
+        imageProgressIndicator.style = .spinning
+        imageProgressIndicator.controlSize = .small
+        imageProgressIndicator.isDisplayedWhenStopped = false
+        imageProgressIndicator.setAccessibilityLabel(AppStrings.text("viewer.processing"))
+        imageProgressIndicator.translatesAutoresizingMaskIntoConstraints = false
+        rootView.addSubview(imageProgressIndicator)
+        NSLayoutConstraint.activate([
+            imageProgressIndicator.trailingAnchor.constraint(equalTo: canvas.trailingAnchor, constant: -16),
+            imageProgressIndicator.topAnchor.constraint(equalTo: canvas.topAnchor, constant: 16)
+        ])
         canvasTrailingConstraint = canvas.trailingAnchor.constraint(equalTo: rootView.trailingAnchor)
         titleBarHeightConstraint = titleBarView.heightAnchor.constraint(equalToConstant: Self.titleBarHeight)
         bottomBarHeightConstraint = bottomBarView.heightAnchor.constraint(equalToConstant: Self.bottomBarHeight)
@@ -902,7 +923,7 @@ final class MainWindowController: NSWindowController {
             NSSound.beep()
             return
         }
-        _ = viewModel.saveCurrentEdits()
+        runImageOperation { [viewModel] in _ = await viewModel.saveCurrentEdits() }
     }
 
     @objc func saveEditsAs(_ sender: Any?) {
@@ -921,10 +942,11 @@ final class MainWindowController: NSWindowController {
               let format = SupportedImageFormat(fileExtension: url.pathExtension) else {
             return
         }
-        _ = viewModel.saveCurrentEdits(to: url, format: format)
+        runImageOperation { [viewModel] in _ = await viewModel.saveCurrentEdits(to: url, format: format) }
     }
 
     @objc func discardEdits(_ sender: Any?) {
+        guard imageOperationTask == nil else { return }
         guard viewModel.currentImage != nil else {
             NSSound.beep()
             return
@@ -933,11 +955,11 @@ final class MainWindowController: NSWindowController {
     }
 
     @objc func undoEdit(_ sender: Any?) {
-        if !viewModel.undoEdit() { NSSound.beep() }
+        runImageOperation { [viewModel] in if !(await viewModel.undoEdit()) { NSSound.beep() } }
     }
 
     @objc func redoEdit(_ sender: Any?) {
-        if !viewModel.redoEdit() { NSSound.beep() }
+        runImageOperation { [viewModel] in if !(await viewModel.redoEdit()) { NSSound.beep() } }
     }
 
     @objc func toggleFilmstrip(_ sender: Any?) {
@@ -1616,7 +1638,7 @@ final class MainWindowController: NSWindowController {
     private func confirmUnsavedEditsForSelectedViewerIfNeeded(
         _ selectedItems: [ImageItem],
         transition: UnsavedChangesTransition,
-        perform action: () -> Void
+        perform action: @escaping () -> Void
     ) {
         let selectedURLs = Set(selectedItems.map { $0.url.standardizedFileURL })
         guard let viewerURL = viewModel.navigationState?.currentItem?.url.standardizedFileURL,
@@ -2970,27 +2992,40 @@ final class MainWindowController: NSWindowController {
             NSSound.beep()
             return
         }
-        viewModel.applyEdit(operation)
+        runImageOperation { [viewModel] in await viewModel.applyEdit(operation) }
     }
 
     private func confirmUnsavedEditsIfNeeded(
         for transition: UnsavedChangesTransition,
-        perform action: () -> Void
+        perform action: @escaping () -> Void
     ) {
+        guard imageOperationTask == nil, !viewModel.isProcessingImage else { NSSound.beep(); return }
         guard viewModel.hasUnsavedEdits else {
             action()
             return
         }
-
-        let choice = promptForUnsavedChanges(transition: transition)
-        let saveSucceeded = choice == .save ? viewModel.saveCurrentEdits() : false
-        let resolution = Self.resolveUnsavedChanges(choice: choice, saveSucceeded: saveSucceeded)
-
-        guard resolution == .proceed else { return }
-        if choice == .discard, !viewModel.discardCurrentEdits() {
-            return
+        switch promptForUnsavedChanges(transition: transition) {
+        case .save:
+            runImageOperation { [viewModel] in
+                if await viewModel.saveCurrentEdits() { action() }
+            }
+        case .discard:
+            if viewModel.discardCurrentEdits() { action() }
+        case .cancel:
+            break
         }
-        action()
+    }
+
+    private func runImageOperation(_ operation: @escaping @MainActor () async -> Void) {
+        guard imageOperationTask == nil, !viewModel.isProcessingImage else { NSSound.beep(); return }
+        imageOperationTask = Task { [weak self] in
+            await operation()
+            self?.imageOperationTask = nil
+        }
+    }
+
+    func waitForImageOperationForTesting() async {
+        await imageOperationTask?.value
     }
 
     private func promptForUnsavedChanges(transition: UnsavedChangesTransition) -> UnsavedChangesChoice {
@@ -3020,6 +3055,7 @@ final class MainWindowController: NSWindowController {
 
 extension MainWindowController: NSMenuItemValidation {
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if imageOperationTask != nil { return false }
         if menuItem.action == #selector(undoEdit(_:)) {
             menuItem.title = viewModel.undoMenuTitle
             return !isFolderBrowserMode && viewModel.canUndo
@@ -3117,17 +3153,22 @@ extension MainWindowController: NSWindowDelegate {
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         cancelCrop(nil)
+        guard imageOperationTask == nil, !viewModel.isProcessingImage else { return false }
         guard viewModel.hasUnsavedEdits else { return true }
-
-        let choice = promptForUnsavedChanges(transition: .closing)
-        let saveSucceeded = choice == .save ? viewModel.saveCurrentEdits() : false
-        let resolution = Self.resolveUnsavedChanges(choice: choice, saveSucceeded: saveSucceeded)
-
-        if choice == .discard, resolution == .proceed {
+        switch promptForUnsavedChanges(transition: .closing) {
+        case .save:
+            imageOperationTask = Task { [weak self] in
+                guard let self else { return }
+                let saved = await self.viewModel.saveCurrentEdits()
+                self.imageOperationTask = nil
+                if saved { sender.performClose(nil) }
+            }
+            return false
+        case .discard:
             return viewModel.discardCurrentEdits()
+        case .cancel:
+            return false
         }
-
-        return resolution == .proceed
     }
 }
 
