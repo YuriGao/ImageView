@@ -432,7 +432,7 @@ final class ImageCanvasViewTests: XCTestCase {
         XCTAssertFalse(canvas.isAnimating)
     }
 
-    func testAnimationRunsFromOnDemandFullResolutionFrameSource() {
+    func testAnimationRunsFromOnDemandFullResolutionFrameSource() async throws {
         let canvas = ImageCanvasView(frame: CGRect(x: 0, y: 0, width: 400, height: 300))
         let first = makeDecodedImage(width: 4, height: 3)
         let second = makeDecodedImage(width: 8, height: 6)
@@ -451,7 +451,9 @@ final class ImageCanvasViewTests: XCTestCase {
         XCTAssertEqual(canvas.currentAnimationFrameIndex, 0)
 
         canvas.advanceAnimationFrame()
-
+        for _ in 0..<200 where canvas.currentAnimationFrameIndex == 0 {
+            try await Task.sleep(for: .milliseconds(5))
+        }
         XCTAssertEqual(canvas.currentAnimationFrameIndex, 1)
     }
 

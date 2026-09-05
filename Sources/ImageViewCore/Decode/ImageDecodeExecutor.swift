@@ -18,7 +18,14 @@ public final class ImageDecodeExecutor: @unchecked Sendable {
         priority: ImageDecodePriority = ImageDecodePriority(),
         _ operation: @escaping @Sendable () throws -> DecodedImage
     ) async throws -> DecodedImage {
-        let request = DecodeExecutionRequest()
+        try await execute(priority: priority, operation)
+    }
+
+    public func execute<Value: Sendable>(
+        priority: ImageDecodePriority = ImageDecodePriority(),
+        _ operation: @escaping @Sendable () throws -> Value
+    ) async throws -> Value {
+        let request = DecodeExecutionRequest<Value>()
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 guard request.install(continuation: continuation) else { return }
@@ -36,13 +43,13 @@ public final class ImageDecodeExecutor: @unchecked Sendable {
     }
 }
 
-private final class DecodeExecutionRequest: @unchecked Sendable {
+private final class DecodeExecutionRequest<Value: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
-    private var continuation: CheckedContinuation<DecodedImage, Error>?
+    private var continuation: CheckedContinuation<Value, Error>?
     private var operation: Operation?
     private var completed = false
 
-    func install(continuation: CheckedContinuation<DecodedImage, Error>) -> Bool {
+    func install(continuation: CheckedContinuation<Value, Error>) -> Bool {
         lock.lock()
         guard !completed else {
             lock.unlock()
@@ -65,7 +72,7 @@ private final class DecodeExecutionRequest: @unchecked Sendable {
         lock.unlock()
     }
 
-    func execute(_ body: @escaping @Sendable () throws -> DecodedImage) {
+    func execute(_ body: @escaping @Sendable () throws -> Value) {
         lock.lock()
         let shouldRun = !completed
         lock.unlock()
@@ -95,7 +102,7 @@ private final class DecodeExecutionRequest: @unchecked Sendable {
         continuation?.resume(throwing: CancellationError())
     }
 
-    private func finish(_ result: Result<DecodedImage, Error>) {
+    private func finish(_ result: Result<Value, Error>) {
         lock.lock()
         guard !completed else {
             lock.unlock()

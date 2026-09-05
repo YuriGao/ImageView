@@ -16,6 +16,7 @@ public struct AnimatedFrame: @unchecked Sendable {
 public final class AnimatedFrameSource: @unchecked Sendable {
     public let frameCount: Int
     private let frameLoader: (Int) -> AnimatedFrame?
+    private let lock = NSLock()
 
     public init(frameCount: Int, frameLoader: @escaping (Int) -> AnimatedFrame?) {
         self.frameCount = max(0, frameCount)
@@ -24,7 +25,7 @@ public final class AnimatedFrameSource: @unchecked Sendable {
 
     public func frame(at index: Int) -> AnimatedFrame? {
         guard (0..<frameCount).contains(index) else { return nil }
-        return frameLoader(index)
+        return lock.withLock { frameLoader(index) }
     }
 }
 

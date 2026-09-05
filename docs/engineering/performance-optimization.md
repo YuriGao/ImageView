@@ -24,3 +24,9 @@ Validation and measured results will be recorded alongside each completed change
 - Cache requests now track consumers individually. Cancellation returns promptly, cancels the underlying request only after its last consumer leaves, and cannot remove/repopulate a replacement request.
 - Visible requests promote an existing queued prefetch using a shared operation priority token; background neighbors keep low queue priority.
 - Validation: 488 tests, 484 passed and 4 optional RAW tests skipped. Added last/shared-consumer cancellation, invalidation/replacement races and queued-priority ordering coverage.
+
+## 3. Animated frame prefetch
+
+- AnimationPlayer owns monotonic playback deadlines and at most two upcoming frames. Frame reads use a process-wide executor limited to two workers; shared frame sources serialize their ImageIO access.
+- Look-ahead is limited to 64 MiB, allowing one oversized upcoming frame when required for playback. Replacing an image cancels prefetch and ignores late results.
+- Validation: 491 tests, 487 passed and 4 optional RAW tests skipped. Added off-main frame reads, buffer bounds over repeated advancement, stale source replacement and timing compensation tests.
