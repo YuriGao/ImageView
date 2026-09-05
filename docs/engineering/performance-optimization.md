@@ -48,7 +48,7 @@ Validation and measured results will be recorded alongside each completed change
 
 - Pushes and PRs run the full suite plus an optimized build of interactive/cache/layout regressions. Release packaging depends on successful tests and keeps write permissions only on the packaging job.
 - Existing DEBUG-only UI test hooks also support the explicit TESTING flag so optimized tests compile without enabling general DEBUG behavior in release builds.
-- Validation: actionlint passed; 121 optimized interactive/performance tests passed. Remote workflow execution will be checked after pushing.
+- Validation: actionlint passed; 121 optimized interactive/performance tests passed. Remote validation is recorded by the pull request checks.
 
 ## 7. Window responsibilities and localization
 
@@ -60,3 +60,11 @@ Validation and measured results will be recorded alongside each completed change
 
 - An atomic save owns its worker until completion even if its caller is cancelled. Busy/unsaved state remains active until that worker finishes, and application termination is deferred by rejecting quit while a window owns an image operation.
 - Full debug validation: 498 tests, 494 passed and 4 optional RAW tests skipped. Added save-cancellation ownership and quit-during-operation coverage.
+
+## Final validation
+
+- Full debug and optimized release suites each executed 498 tests: 494 passed, 4 optional camera RAW fixture tests skipped, zero failures.
+- Release app bundle built successfully and passed `codesign --verify --deep --strict`.
+- `actionlint` passed for the updated workflow.
+- [2026-09-06 memory benchmark](../assets/performance/memory-baseline-2026-09-06-064318.md): all five existing gates passed (small image 128.5 MiB, large image 906.6 MiB, animation 163.0 MiB, thousand-image grid 155.9 MiB, filmstrip 166.0 MiB peak RSS). These are six-second launch samples, not a substitute for long-running interaction profiling.
+- GitHub's check results on the pull request provide remote validation of the final pushed revision.

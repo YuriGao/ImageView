@@ -96,6 +96,7 @@ scripts/run-memory-benchmarks.sh
 - [默认应用关联设计](docs/superpowers/specs/2026-07-11-default-image-app-settings-design.md)
 - [多图片窗口设计](docs/superpowers/specs/2026-07-11-multiple-image-windows-design.md)
 - [辅助功能发布检查](docs/qa/2026-07-15-accessibility-validation.md)
+- [性能优化记录](docs/engineering/performance-optimization.md)
 - [内存基准示例](docs/assets/performance/memory-baseline-2026-07-15-113013.md)
 
 ## Support
