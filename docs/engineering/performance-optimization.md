@@ -27,7 +27,7 @@ Validation and measured results will be recorded alongside each completed change
 
 ## 3. Animated frame prefetch
 
-- AnimationPlayer owns monotonic playback deadlines and at most two upcoming frames. Frame reads use a process-wide executor limited to two workers; shared frame sources serialize their ImageIO access.
+- AnimationPlayer owns monotonic playback deadlines and at most two upcoming frames. Frame reads use a process-wide executor limited to two workers; shared frame sources serialize their ImageIO access. On-demand frames opt into immediate ImageIO decoding and release their source cache entry after loading, so decoding does not move to the UI draw call.
 - Look-ahead is limited to 64 MiB, allowing one oversized upcoming frame when required for playback. Replacing an image cancels prefetch and ignores late results.
 - Validation: 491 tests, 487 passed and 4 optional RAW tests skipped. Added off-main frame reads, buffer bounds over repeated advancement, stale source replacement and timing compensation tests.
 
@@ -63,8 +63,8 @@ Validation and measured results will be recorded alongside each completed change
 
 ## Final validation
 
-- Full debug and optimized release suites each executed 498 tests: 494 passed, 4 optional camera RAW fixture tests skipped, zero failures.
+- Full debug and optimized release suites each executed 499 tests: 495 passed, 4 optional camera RAW fixture tests skipped, zero failures.
 - Release app bundle built successfully and passed `codesign --verify --deep --strict`.
 - `actionlint` passed for the updated workflow.
-- [2026-09-06 memory benchmark](../assets/performance/memory-baseline-2026-09-06-064318.md): all five existing gates passed (small image 128.5 MiB, large image 906.6 MiB, animation 163.0 MiB, thousand-image grid 155.9 MiB, filmstrip 166.0 MiB peak RSS). These are six-second launch samples, not a substitute for long-running interaction profiling.
+- [2026-09-07 memory benchmark](../assets/performance/memory-baseline-2026-09-07-064833.md): all five existing gates passed (small image 127.5 MiB, large image 908.3 MiB, animation 166.7 MiB, thousand-image grid 155.6 MiB, filmstrip 166.7 MiB peak RSS). These are six-second launch samples, not a substitute for long-running interaction profiling.
 - GitHub's check results on the pull request provide remote validation of the final pushed revision.

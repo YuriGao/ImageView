@@ -261,12 +261,17 @@ public final class ImageDecodeService: @unchecked Sendable {
         let durations = (0..<frameCount).map {
             animationDuration(source: source, index: $0)
         }
-        let frameOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+        // Decode while the frame worker is running, rather than on first UI draw.
+        let frameOptions = [
+            kCGImageSourceShouldCache: true,
+            kCGImageSourceShouldCacheImmediately: true
+        ] as CFDictionary
         return AnimatedFrameSource(frameCount: frameCount) { index in
-            guard let image = CGImageSourceCreateImageAtIndex(source, index, frameOptions) else {
-                return nil
+            autoreleasepool {
+                defer { CGImageSourceRemoveCacheAtIndex(source, index) }
+                guard let image = CGImageSourceCreateImageAtIndex(source, index, frameOptions) else { return nil }
+                return AnimatedFrame(cgImage: image, duration: durations[index])
             }
-            return AnimatedFrame(cgImage: image, duration: durations[index])
         }
     }
 
