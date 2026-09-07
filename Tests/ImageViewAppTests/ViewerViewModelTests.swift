@@ -8,6 +8,84 @@ import XCTest
 
 @MainActor
 final class ViewerViewModelTests: XCTestCase {
+    func testCancellingSaveWaiterKeepsBusyStateUntilAtomicSaveCompletes() async throws {
+        let image = try makeDecodedImage(width: 6, height: 4)
+        let started = expectation(description: "save started")
+        let gate = DispatchSemaphore(value: 0)
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: { _ in [] },
+            decodeImageAtURL: { _, _ in image },
+            currentFileVersionAtURL: { _ in FileVersionSequence.initial },
+            saveImage: { _, _, _, _ in
+                XCTAssertFalse(Thread.isMainThread)
+                started.fulfill()
+                _ = gate.wait(timeout: .now() + 3)
+            }
+        )
+        await viewModel.open(url: URL(fileURLWithPath: "/tmp/owned-save.png"))
+        await viewModel.applyEdit(.rotateClockwise)
+        let save = Task { await viewModel.saveCurrentEdits() }
+        await fulfillment(of: [started], timeout: 2)
+        save.cancel()
+        await Task.yield()
+        XCTAssertTrue(viewModel.isProcessingImage)
+        XCTAssertTrue(viewModel.hasUnsavedEdits)
+        XCTAssertFalse(viewModel.discardCurrentEdits())
+        gate.signal()
+        let succeeded = await save.value
+        XCTAssertTrue(succeeded)
+        XCTAssertFalse(viewModel.isProcessingImage)
+        XCTAssertFalse(viewModel.hasUnsavedEdits)
+    }
+
+    func testEditingLeavesMainActorResponsiveAndRejectsStaleResult() async throws {
+        let image = try makeDecodedImage(width: 6, height: 4)
+        let started = expectation(description: "background edit started")
+        let release = DispatchSemaphore(value: 0)
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: { _ in [] },
+            decodeImageAtURL: { _, _ in image },
+            editImage: { _, image in
+                XCTAssertFalse(Thread.isMainThread)
+                started.fulfill()
+                _ = release.wait(timeout: .now() + 3)
+                return image
+            }
+        )
+        await viewModel.open(url: URL(fileURLWithPath: "/tmp/edit.png"))
+        let edit = Task { await viewModel.applyEdit(.rotateClockwise) }
+        await fulfillment(of: [started], timeout: 2)
+        XCTAssertTrue(viewModel.isProcessingImage)
+        XCTAssertFalse(viewModel.canEditCurrentImage)
+        XCTAssertFalse(viewModel.discardCurrentEdits())
+        viewModel.resetToEmptyState()
+        release.signal()
+        await edit.value
+        XCTAssertNil(viewModel.currentImage)
+        XCTAssertFalse(viewModel.hasUnsavedEdits)
+        XCTAssertFalse(viewModel.isProcessingImage)
+    }
+
+    func testFailedUndoLeavesHistoryAndImageUnchanged() async throws {
+        let image = try makeDecodedImage(width: 6, height: 4)
+        let viewModel = ViewerViewModel(
+            scanContainingDirectory: { _ in [] },
+            decodeImageAtURL: { _, _ in image },
+            editImage: { operations, image in
+                if operations.isEmpty { throw ImageEditingError.cannotCreateContext }
+                return image
+            }
+        )
+        await viewModel.open(url: URL(fileURLWithPath: "/tmp/undo.png"))
+        await viewModel.applyEdit(.rotateClockwise)
+        let succeeded = await viewModel.undoEdit()
+        XCTAssertFalse(succeeded)
+        XCTAssertEqual(viewModel.pendingOperationCountForTesting, 1)
+        XCTAssertEqual(viewModel.redoOperationCountForTesting, 0)
+        XCTAssertTrue(viewModel.hasUnsavedEdits)
+        XCTAssertTrue(viewModel.currentImage?.cgImage === image.cgImage)
+    }
+
     func testDefaultViewModelsShareProcessImageCache() {
         let first = ViewerViewModel()
         let second = ViewerViewModel()
@@ -65,7 +143,7 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.currentMetadata?.pixelWidth, 9_504)
         XCTAssertEqual(viewModel.currentMetadata?.pixelHeight, 6_336)
         XCTAssertFalse(viewModel.canEditCurrentImage)
-        viewModel.applyEdit(.rotateClockwise)
+        await viewModel.applyEdit(.rotateClockwise)
         XCTAssertFalse(viewModel.hasUnsavedEdits)
         let fullLoadCount = await fullLoader.loadCount(for: url)
         XCTAssertEqual(fullLoadCount, 0)
@@ -328,11 +406,12 @@ final class ViewerViewModelTests: XCTestCase {
         )
         await viewModel.open(url: url)
 
-        viewModel.applyEdit(.crop(CGRect(x: 0, y: 0, width: 2, height: 2)))
+        await viewModel.applyEdit(.crop(CGRect(x: 0, y: 0, width: 2, height: 2)))
         XCTAssertEqual(viewModel.undoMenuTitle, AppStrings.text("menu.edit.undoNamed")
             .replacingOccurrences(of: "%@", with: AppStrings.text("editing.operation.crop")))
 
-        XCTAssertTrue(viewModel.undoEdit())
+        let operationResult1 = await viewModel.undoEdit()
+        XCTAssertTrue(operationResult1)
         XCTAssertEqual(viewModel.redoMenuTitle, AppStrings.text("menu.edit.redoNamed")
             .replacingOccurrences(of: "%@", with: AppStrings.text("editing.operation.crop")))
     }
@@ -350,7 +429,7 @@ final class ViewerViewModelTests: XCTestCase {
             loadPreviewAtURL: { _, _ in image }
         )
         await viewModel.open(url: firstURL)
-        viewModel.applyEdit(.rotateClockwise)
+        await viewModel.applyEdit(.rotateClockwise)
         XCTAssertTrue(viewModel.hasUnsavedEdits)
 
         _ = viewModel.removeItemsFromNavigation([firstURL])
@@ -447,7 +526,7 @@ final class ViewerViewModelTests: XCTestCase {
 
         await viewModel.open(url: brokenURL)
 
-        XCTAssertEqual(viewModel.errorMessage, "图片损坏或无法解码：broken.png")
+        XCTAssertEqual(viewModel.errorMessage, String(format: AppStrings.text("viewer.error.decode"), "broken.png"))
         XCTAssertNil(viewModel.currentImage)
         XCTAssertNil(viewModel.currentMetadata)
     }
@@ -464,7 +543,7 @@ final class ViewerViewModelTests: XCTestCase {
 
         await viewModel.open(url: unsupportedURL)
 
-        XCTAssertEqual(viewModel.errorMessage, "不支持的图片格式：txt")
+        XCTAssertEqual(viewModel.errorMessage, String(format: AppStrings.text("viewer.error.unsupportedFormat"), "txt"))
         XCTAssertNil(viewModel.currentImage)
         XCTAssertNil(viewModel.currentMetadata)
         XCTAssertNil(viewModel.navigationState)
@@ -529,7 +608,7 @@ final class ViewerViewModelTests: XCTestCase {
 
         await viewModel.open(url: brokenURL)
 
-        XCTAssertEqual(viewModel.errorMessage, "图片损坏或无法解码：broken.png")
+        XCTAssertEqual(viewModel.errorMessage, String(format: AppStrings.text("viewer.error.decode"), "broken.png"))
         XCTAssertNil(viewModel.currentImage)
         XCTAssertNil(viewModel.currentMetadata)
         XCTAssertNil(viewModel.navigationState)
@@ -660,7 +739,7 @@ final class ViewerViewModelTests: XCTestCase {
         await waitUntil { viewModel.currentImage?.pixelSize == preview.pixelSize }
 
         XCTAssertEqual(viewModel.loadPhase, .preview)
-        viewModel.applyEdit(.rotateClockwise)
+        await viewModel.applyEdit(.rotateClockwise)
         XCTAssertFalse(viewModel.hasUnsavedEdits)
         XCTAssertEqual(viewModel.currentImage?.pixelSize, preview.pixelSize)
 
@@ -826,8 +905,10 @@ final class ViewerViewModelTests: XCTestCase {
         await fullLoader.waitUntilPaused(url: url)
         await waitUntil { viewModel.loadPhase == .preview }
 
-        XCTAssertFalse(viewModel.saveCurrentEdits())
-        XCTAssertFalse(viewModel.saveCurrentEdits(to: targetURL, format: .png))
+        let operationResult2 = await viewModel.saveCurrentEdits()
+        XCTAssertFalse(operationResult2)
+        let operationResult3 = await viewModel.saveCurrentEdits(to: targetURL, format: .png)
+        XCTAssertFalse(operationResult3)
         XCTAssertFalse(FileManager.default.fileExists(atPath: targetURL.path))
         XCTAssertFalse(viewModel.hasUnsavedEdits)
         XCTAssertEqual(viewModel.currentImage?.pixelSize, preview.pixelSize)
@@ -917,11 +998,21 @@ final class ViewerViewModelTests: XCTestCase {
         await viewModel.open(url: imageURL)
         XCTAssertEqual(viewModel.displayTitle, "editable.png")
 
-        viewModel.applyEdit(.mirrorHorizontal)
-        XCTAssertEqual(viewModel.displayTitle, "editable.png - Edited")
+        await viewModel.applyEdit(.mirrorHorizontal)
+        XCTAssertEqual(viewModel.displayTitle, String(format: AppStrings.text("viewer.title.edited"), "editable.png"))
 
         XCTAssertTrue(viewModel.discardCurrentEdits())
         XCTAssertEqual(viewModel.displayTitle, "editable.png")
+    }
+
+    func testEditedTitleUsesSelectedLanguage() {
+        XCTAssertEqual(ViewerViewModel.displayTitle(filename: "image.png", hasUnsavedEdits: true, preferredLanguages: ["zh-Hans"]), "image.png - 已编辑")
+        XCTAssertEqual(ViewerViewModel.displayTitle(filename: "image.png", hasUnsavedEdits: true, preferredLanguages: ["en"]), "image.png - Edited")
+        for key in AppStrings.viewerErrorKeys {
+            XCTAssertNotEqual(AppStrings.text(key, preferredLanguages: ["en"]), key)
+            XCTAssertNotEqual(AppStrings.text(key, preferredLanguages: ["zh-Hans"]), key)
+            XCTAssertNotEqual(AppStrings.text(key, preferredLanguages: ["en"]), AppStrings.text(key, preferredLanguages: ["zh-Hans"]))
+        }
     }
 
     func testDisplayTitleFormattingAddsEditedMarkerOnlyWhenNeeded() {
@@ -931,7 +1022,7 @@ final class ViewerViewModelTests: XCTestCase {
         )
         XCTAssertEqual(
             ViewerViewModel.displayTitle(filename: "image.png", hasUnsavedEdits: true),
-            "image.png - Edited"
+            String(format: AppStrings.text("viewer.title.edited"), "image.png")
         )
     }
 
@@ -993,7 +1084,7 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.loadPhase, .failed)
         XCTAssertNil(viewModel.currentImage)
         XCTAssertNil(viewModel.currentMetadata)
-        XCTAssertEqual(viewModel.errorMessage, "图片损坏或无法解码：navigation-2-broken.png")
+        XCTAssertEqual(viewModel.errorMessage, String(format: AppStrings.text("viewer.error.decode"), "navigation-2-broken.png"))
     }
 
     func testMoveCurrentToTrashClearsDisplayedImageWhenLastItemIsRemoved() async throws {
@@ -1046,7 +1137,8 @@ final class ViewerViewModelTests: XCTestCase {
                 AppStrings.text("editing.operation.moveToTrash")
             )
         )
-        XCTAssertTrue(viewModel.undoEdit())
+        let operationResult4 = await viewModel.undoEdit()
+        XCTAssertTrue(operationResult4)
         await waitUntil { viewModel.loadPhase == .full }
         XCTAssertEqual(restoredPair.value?.0, trashedURL)
         XCTAssertEqual(restoredPair.value?.1, imageURL)
@@ -1079,9 +1171,11 @@ final class ViewerViewModelTests: XCTestCase {
         )
         await viewModel.open(url: imageURL)
         viewModel.moveCurrentToTrash()
-        XCTAssertTrue(viewModel.undoEdit())
+        let operationResult5 = await viewModel.undoEdit()
+        XCTAssertTrue(operationResult5)
 
-        XCTAssertTrue(viewModel.redoEdit())
+        let operationResult6 = await viewModel.redoEdit()
+        XCTAssertTrue(operationResult6)
 
         XCTAssertEqual(trashCallCount.value, 2)
         XCTAssertNil(viewModel.navigationState)
@@ -1116,12 +1210,14 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.navigationState)
         XCTAssertTrue(viewModel.canUndo)
 
-        XCTAssertTrue(viewModel.undoEdit())
+        let operationResult7 = await viewModel.undoEdit()
+        XCTAssertTrue(operationResult7)
         XCTAssertEqual(restoredPairs.value.map(\.1), [jpegURL, rawURL])
         XCTAssertEqual(viewModel.navigationState?.currentItem, jpegItem)
         XCTAssertTrue(viewModel.canRedo)
 
-        XCTAssertTrue(viewModel.redoEdit())
+        let operationResult8 = await viewModel.redoEdit()
+        XCTAssertTrue(operationResult8)
         XCTAssertEqual(movedURLs.value, [jpegURL, rawURL, jpegURL, rawURL])
         XCTAssertNil(viewModel.navigationState)
         XCTAssertTrue(viewModel.canUndo)
@@ -1151,7 +1247,8 @@ final class ViewerViewModelTests: XCTestCase {
 
         viewModel.moveCurrentToTrash()
         XCTAssertEqual(movedURLs.value, [jpegURL, rawURL])
-        XCTAssertTrue(viewModel.undoEdit())
+        let operationResult9 = await viewModel.undoEdit()
+        XCTAssertTrue(operationResult9)
         XCTAssertEqual(restoredDestinations.value, [jpegURL, rawURL])
         XCTAssertEqual(viewModel.navigationState?.currentItem, jpegItem)
     }
@@ -1183,7 +1280,7 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertEqual(restoredPairs.value.map(\.1), [jpegURL])
         XCTAssertEqual(viewModel.navigationState?.currentItem, jpegItem)
         XCTAssertFalse(viewModel.canUndo)
-        XCTAssertEqual(viewModel.errorMessage, "无法移动到废纸篓：paired-failure.ARW / paired-failure.JPG")
+        XCTAssertEqual(viewModel.errorMessage, String(format: AppStrings.text("viewer.error.trash"), "paired-failure.ARW / paired-failure.JPG"))
     }
 
     func testRenameCurrentSuccessClearsPriorErrorMessage() async throws {
@@ -1197,7 +1294,7 @@ final class ViewerViewModelTests: XCTestCase {
 
         await viewModel.open(url: imageURL)
         viewModel.renameCurrent(to: "   ")
-        XCTAssertEqual(viewModel.errorMessage, "无法重命名：start.png")
+        XCTAssertEqual(viewModel.errorMessage, String(format: AppStrings.text("viewer.error.rename"), "start.png"))
 
         viewModel.renameCurrent(to: "renamed")
 
@@ -1321,7 +1418,7 @@ final class ViewerViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.navigationState?.currentItem?.url, nextURL)
         await waitUntil { viewModel.currentImage?.pixelSize == CGSize(width: 7, height: 5) }
         XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 7, height: 5))
-        XCTAssertEqual(viewModel.errorMessage, "文件已在外部移除：a.png")
+        XCTAssertEqual(viewModel.errorMessage, String(format: AppStrings.text("viewer.error.externalRemoval"), "a.png"))
     }
 
     func testRefreshReloadsCurrentImageWhenExternalVersionChanges() async throws {
@@ -1371,7 +1468,7 @@ final class ViewerViewModelTests: XCTestCase {
 
         XCTAssertEqual(viewModel.navigationState?.currentItem?.url, firstURL)
         XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 4, height: 3))
-        XCTAssertEqual(viewModel.errorMessage, "图片已在外部修改且无法解码：a.png")
+        XCTAssertEqual(viewModel.errorMessage, String(format: AppStrings.text("viewer.error.externalDecode"), "a.png"))
 
         viewModel.showNext()
         await waitUntil { viewModel.navigationState?.currentItem?.url == secondURL }
@@ -1391,12 +1488,12 @@ final class ViewerViewModelTests: XCTestCase {
         )
 
         await viewModel.open(url: url)
-        viewModel.applyEdit(.rotateClockwise)
+        await viewModel.applyEdit(.rotateClockwise)
         await viewModel.refreshCurrentFileIfNeeded()
 
         XCTAssertTrue(viewModel.hasUnsavedEdits)
         XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 3, height: 4))
-        XCTAssertEqual(viewModel.errorMessage, "图片已在外部修改：edited.png")
+        XCTAssertEqual(viewModel.errorMessage, String(format: AppStrings.text("viewer.error.externalChange"), "edited.png"))
     }
 
     func testApplyEditMarksUnsavedAndUpdatesImageSize() async throws {
@@ -1406,7 +1503,7 @@ final class ViewerViewModelTests: XCTestCase {
         let viewModel = ViewerViewModel()
         await viewModel.open(url: imageURL)
 
-        viewModel.applyEdit(.rotateClockwise)
+        await viewModel.applyEdit(.rotateClockwise)
 
         XCTAssertTrue(viewModel.hasUnsavedEdits)
         XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 4, height: 6))
@@ -1418,23 +1515,26 @@ final class ViewerViewModelTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: imageURL.deletingLastPathComponent()) }
         let viewModel = ViewerViewModel()
         await viewModel.open(url: imageURL)
-        viewModel.applyEdit(.rotateClockwise)
-        viewModel.applyEdit(.mirrorHorizontal)
+        await viewModel.applyEdit(.rotateClockwise)
+        await viewModel.applyEdit(.mirrorHorizontal)
 
         XCTAssertTrue(viewModel.canUndo)
         XCTAssertFalse(viewModel.canRedo)
         XCTAssertEqual(viewModel.pendingOperationCountForTesting, 2)
-        XCTAssertTrue(viewModel.undoEdit())
+        let operationResult10 = await viewModel.undoEdit()
+        XCTAssertTrue(operationResult10)
         XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 4, height: 6))
         XCTAssertEqual(viewModel.pendingOperationCountForTesting, 1)
         XCTAssertEqual(viewModel.redoOperationCountForTesting, 1)
 
-        XCTAssertTrue(viewModel.undoEdit())
+        let operationResult11 = await viewModel.undoEdit()
+        XCTAssertTrue(operationResult11)
         XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 6, height: 4))
         XCTAssertFalse(viewModel.hasUnsavedEdits)
         XCTAssertTrue(viewModel.canRedo)
 
-        XCTAssertTrue(viewModel.redoEdit())
+        let operationResult12 = await viewModel.redoEdit()
+        XCTAssertTrue(operationResult12)
         XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 4, height: 6))
         XCTAssertTrue(viewModel.hasUnsavedEdits)
     }
@@ -1444,10 +1544,11 @@ final class ViewerViewModelTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: imageURL.deletingLastPathComponent()) }
         let viewModel = ViewerViewModel()
         await viewModel.open(url: imageURL)
-        viewModel.applyEdit(.rotateClockwise)
-        XCTAssertTrue(viewModel.undoEdit())
+        await viewModel.applyEdit(.rotateClockwise)
+        let operationResult13 = await viewModel.undoEdit()
+        XCTAssertTrue(operationResult13)
 
-        viewModel.applyEdit(.mirrorVertical)
+        await viewModel.applyEdit(.mirrorVertical)
 
         XCTAssertFalse(viewModel.canRedo)
         XCTAssertEqual(viewModel.pendingOperationCountForTesting, 1)
@@ -1460,7 +1561,7 @@ final class ViewerViewModelTests: XCTestCase {
         let viewModel = ViewerViewModel()
         await viewModel.open(url: imageURL)
 
-        viewModel.applyEdit(.crop(CGRect(x: 1, y: 1, width: 3, height: 2)))
+        await viewModel.applyEdit(.crop(CGRect(x: 1, y: 1, width: 3, height: 2)))
 
         XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 3, height: 2))
         XCTAssertTrue(viewModel.hasUnsavedEdits)
@@ -1476,7 +1577,7 @@ final class ViewerViewModelTests: XCTestCase {
         let viewModel = ViewerViewModel()
         await viewModel.open(url: imageURL)
 
-        viewModel.applyEdit(.rotateClockwise)
+        await viewModel.applyEdit(.rotateClockwise)
         XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 5, height: 7))
 
         viewModel.discardCurrentEditsAndReload()
@@ -1494,10 +1595,11 @@ final class ViewerViewModelTests: XCTestCase {
         let viewModel = ViewerViewModel()
         await viewModel.open(url: imageURL)
 
-        viewModel.applyEdit(.rotateClockwise)
+        await viewModel.applyEdit(.rotateClockwise)
         XCTAssertTrue(viewModel.hasUnsavedEdits)
 
-        XCTAssertTrue(viewModel.saveCurrentEdits())
+        let operationResult14 = await viewModel.saveCurrentEdits()
+        XCTAssertTrue(operationResult14)
 
         XCTAssertFalse(viewModel.hasUnsavedEdits)
         XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 3, height: 8))
@@ -1510,9 +1612,10 @@ final class ViewerViewModelTests: XCTestCase {
 
         let viewModel = ViewerViewModel()
         await viewModel.open(url: imageURL)
-        viewModel.applyEdit(.mirrorHorizontal)
+        await viewModel.applyEdit(.mirrorHorizontal)
 
-        XCTAssertTrue(viewModel.saveCurrentEdits())
+        let operationResult15 = await viewModel.saveCurrentEdits()
+        XCTAssertTrue(operationResult15)
 
         let properties = try imageProperties(at: imageURL)
         let exif = try XCTUnwrap(properties[kCGImagePropertyExifDictionary] as? [CFString: Any])
@@ -1532,9 +1635,10 @@ final class ViewerViewModelTests: XCTestCase {
 
         let viewModel = ViewerViewModel()
         await viewModel.open(url: imageURL)
-        viewModel.applyEdit(.rotateClockwise)
+        await viewModel.applyEdit(.rotateClockwise)
 
-        XCTAssertTrue(viewModel.saveCurrentEdits(to: targetURL, format: .png))
+        let operationResult16 = await viewModel.saveCurrentEdits(to: targetURL, format: .png)
+        XCTAssertTrue(operationResult16)
         XCTAssertEqual(viewModel.navigationState?.currentItem?.url, targetURL)
         XCTAssertFalse(viewModel.hasUnsavedEdits)
         XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 3, height: 8))
@@ -1548,9 +1652,10 @@ final class ViewerViewModelTests: XCTestCase {
 
         let viewModel = ViewerViewModel()
         await viewModel.open(url: imageURL)
-        viewModel.applyEdit(.mirrorHorizontal)
+        await viewModel.applyEdit(.mirrorHorizontal)
 
-        XCTAssertTrue(viewModel.saveCurrentEdits(to: targetURL, format: .jpeg))
+        let operationResult17 = await viewModel.saveCurrentEdits(to: targetURL, format: .jpeg)
+        XCTAssertTrue(operationResult17)
 
         let properties = try imageProperties(at: targetURL)
         let exif = try XCTUnwrap(properties[kCGImagePropertyExifDictionary] as? [CFString: Any])
@@ -1582,11 +1687,12 @@ final class ViewerViewModelTests: XCTestCase {
         )
 
         await viewModel.open(url: svgURL)
-        viewModel.applyEdit(.mirrorHorizontal)
-        XCTAssertFalse(viewModel.saveCurrentEdits())
+        await viewModel.applyEdit(.mirrorHorizontal)
+        let operationResult18 = await viewModel.saveCurrentEdits()
+        XCTAssertFalse(operationResult18)
 
         XCTAssertTrue(viewModel.hasUnsavedEdits)
-        XCTAssertEqual(viewModel.errorMessage, "无法保存该格式的编辑结果")
+        XCTAssertEqual(viewModel.errorMessage, AppStrings.text("viewer.error.save"))
     }
 
     func testDiscardCurrentEditsRestoresOriginalImageAndClearsUnsavedState() async throws {
@@ -1596,7 +1702,7 @@ final class ViewerViewModelTests: XCTestCase {
         let viewModel = ViewerViewModel()
         await viewModel.open(url: imageURL)
 
-        viewModel.applyEdit(.rotateClockwise)
+        await viewModel.applyEdit(.rotateClockwise)
         XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 4, height: 6))
 
         XCTAssertTrue(viewModel.discardCurrentEdits())
@@ -1616,7 +1722,7 @@ final class ViewerViewModelTests: XCTestCase {
         let viewModel = ViewerViewModel()
         await viewModel.open(url: secondURL)
 
-        viewModel.applyEdit(.rotateClockwise)
+        await viewModel.applyEdit(.rotateClockwise)
         XCTAssertEqual(viewModel.currentImage?.pixelSize, CGSize(width: 5, height: 8))
         XCTAssertEqual(viewModel.navigationState?.currentItem?.url, secondURL)
 

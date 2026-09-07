@@ -122,6 +122,66 @@ final class ImageCacheTests: XCTestCase {
         XCTAssertEqual(currentCost, image.decodedByteCost)
     }
 
+    func testCancellingLastConsumerReturnsBeforeNonCooperativeLoaderFinishes() async throws {
+        let cache = ImageCache()
+        let gate = CacheTestGate()
+        let image = DecodedImage(cgImage: makeImage(), pixelSize: CGSize(width: 1, height: 1), isAnimated: false)
+        let url = URL(fileURLWithPath: "/tmp/cancel-last.png")
+        let version = version
+        let request = Task { try await cache.loadImage(for: url, matching: version) { await gate.wait(); return image } }
+        while await gate.waitingCount == 0 { await Task.yield() }
+        request.cancel()
+        do { _ = try await request.value; XCTFail("Cancelled consumer succeeded") } catch is CancellationError {}
+        let count = await cache.inFlightRequestCount()
+        let cost = await cache.currentCost()
+        XCTAssertEqual(count, 0)
+        XCTAssertEqual(cost, 0)
+        await gate.release()
+    }
+
+    func testCancellingOneConsumerKeepsSharedLoadAliveForOthers() async throws {
+        let cache = ImageCache()
+        let gate = CacheTestGate()
+        let image = DecodedImage(cgImage: makeImage(), pixelSize: CGSize(width: 1, height: 1), isAnimated: false)
+        let url = URL(fileURLWithPath: "/tmp/cancel-shared.png")
+        let version = version
+        let calls = LockedCounter()
+        let loader: @Sendable () async throws -> DecodedImage = { calls.increment(); await gate.wait(); return image }
+        let first = Task { try await cache.loadImage(for: url, matching: version, loader: loader) }
+        let second = Task { try await cache.loadImage(for: url, matching: version, loader: loader) }
+        while await cache.consumerCount(for: url) < 2 { await Task.yield() }
+        first.cancel()
+        do { _ = try await first.value; XCTFail("Cancelled consumer succeeded") } catch is CancellationError {}
+        await gate.release()
+        _ = try await second.value
+        XCTAssertEqual(calls.value, 1)
+        let cached = await cache.image(for: url, matching: version)
+        XCTAssertNotNil(cached)
+    }
+
+    func testInvalidatedLoadCannotRemoveReplacementRequestOrRepopulateCache() async throws {
+        let cache = ImageCache()
+        let oldGate = CacheTestGate()
+        let newGate = CacheTestGate()
+        let image = DecodedImage(cgImage: makeImage(), pixelSize: CGSize(width: 1, height: 1), isAnimated: false)
+        let url = URL(fileURLWithPath: "/tmp/replace-flight.png")
+        let version = version
+        let old = Task { try await cache.loadImage(for: url, matching: version) { await oldGate.wait(); return image } }
+        while await oldGate.waitingCount == 0 { await Task.yield() }
+        await cache.removeImage(for: url)
+        do { _ = try await old.value; XCTFail("Invalidated request succeeded") } catch is CancellationError {}
+        let new = Task { try await cache.loadImage(for: url, matching: version) { await newGate.wait(); return image } }
+        while await newGate.waitingCount == 0 { await Task.yield() }
+        await oldGate.release()
+        for _ in 0..<20 { await Task.yield() }
+        let count = await cache.inFlightRequestCount()
+        let cost = await cache.currentCost()
+        XCTAssertEqual(count, 1)
+        XCTAssertEqual(cost, 0)
+        await newGate.release()
+        _ = try await new.value
+    }
+
     private func makeVersion(inode: UInt64, changeNanoseconds: Int64) -> CurrentFileVersion {
         CurrentFileVersion(
             device: 1,
@@ -155,5 +215,21 @@ private final class LockedCounter: @unchecked Sendable {
 
     func increment() {
         lock.withLock { storage += 1 }
+    }
+}
+
+private actor CacheTestGate {
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var released = false
+    var waitingCount: Int { waiters.count }
+    func wait() async {
+        if released { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+    func release() {
+        released = true
+        let pending = waiters
+        waiters.removeAll()
+        pending.forEach { $0.resume() }
     }
 }

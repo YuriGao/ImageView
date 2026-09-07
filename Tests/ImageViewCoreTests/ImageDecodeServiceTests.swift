@@ -491,6 +491,25 @@ final class ImageDecodeServiceTests: XCTestCase {
         XCTAssertEqual(secondFrame.duration, 0.2)
     }
 
+    func testOnDemandFramesRemainUsableAfterReleasingTheirSource() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("owned-frames.gif")
+        try writeAnimatedGIF(to: url)
+        let frames = try autoreleasepool {
+            let decoded = try ImageDecodeService(animationByteLimit: 1).decode(url: url, format: .gif)
+            let source = try XCTUnwrap(decoded.animationFrameSource)
+            return try (0..<2).map { try XCTUnwrap(source.frame(at: $0)) }
+        }
+        XCTAssertEqual(frames.map { $0.cgImage.width }, [4, 4])
+        let reference = try ImageDecodeService(animationByteLimit: Int.max).decode(url: url, format: .gif)
+        for index in 0..<2 {
+            XCTAssertEqual(sampledLuminance(in: frames[index].cgImage, xRatio: 0.5, yRatio: 0.5), sampledLuminance(in: reference.animationFrames[index].cgImage, xRatio: 0.5, yRatio: 0.5))
+        }
+        XCTAssertEqual(frames.map(\.duration), [0.1, 0.2])
+    }
+
     func testAnimationBudgetAllowsExactEstimateAndKeepsOneByteLessOutOfEagerFrames() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

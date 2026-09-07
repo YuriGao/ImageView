@@ -267,3 +267,17 @@
 "editing.history.limitReached" = "Edit history is limited to 20 steps. Save or discard edits to continue.";
 "editing.history.rebuildFailed" = "Could not restore edit history";
 "batchRename.defaultBaseName" = "Image";
+
+"viewer.processing" = "Processing image";
+
+"viewer.error.unsupportedFormat" = "Unsupported image format: %@";
+"viewer.error.decode" = "The image is damaged or cannot be decoded: %@";
+"viewer.error.trash" = "Cannot move to Trash: %@";
+"viewer.error.rename" = "Cannot rename: %@";
+"viewer.error.edit" = "Cannot apply the edit";
+"viewer.error.save" = "Cannot save edits in this format";
+"viewer.error.restore" = "Cannot restore the original image";
+"viewer.error.externalChange" = "The image was modified externally: %@";
+"viewer.error.externalDecode" = "The externally modified image cannot be decoded: %@";
+"viewer.error.externalRemoval" = "The file was removed externally: %@";
+"viewer.title.edited" = "%@ - Edited";

@@ -5,6 +5,7 @@ public final class ImageDecodeExecutor: @unchecked Sendable {
     public static let shared = ImageDecodeExecutor(maxConcurrentDecodeCount: maximumConcurrentDecodeCount)
 
     private let queue: OperationQueue
+    var operationCount: Int { queue.operationCount }
 
     public init(maxConcurrentDecodeCount: Int) {
         queue = OperationQueue()
@@ -14,9 +15,17 @@ public final class ImageDecodeExecutor: @unchecked Sendable {
     }
 
     public func decode(
+        priority: ImageDecodePriority = ImageDecodePriority(),
         _ operation: @escaping @Sendable () throws -> DecodedImage
     ) async throws -> DecodedImage {
-        let request = DecodeExecutionRequest()
+        try await execute(priority: priority, operation)
+    }
+
+    public func execute<Value: Sendable>(
+        priority: ImageDecodePriority = ImageDecodePriority(),
+        _ operation: @escaping @Sendable () throws -> Value
+    ) async throws -> Value {
+        let request = DecodeExecutionRequest<Value>()
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 guard request.install(continuation: continuation) else { return }
@@ -25,6 +34,7 @@ public final class ImageDecodeExecutor: @unchecked Sendable {
                     request.execute(operation)
                 }
                 request.install(operation: work)
+                priority.register(work)
                 queue.addOperation(work)
             }
         } onCancel: {
@@ -33,13 +43,13 @@ public final class ImageDecodeExecutor: @unchecked Sendable {
     }
 }
 
-private final class DecodeExecutionRequest: @unchecked Sendable {
+private final class DecodeExecutionRequest<Value: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
-    private var continuation: CheckedContinuation<DecodedImage, Error>?
+    private var continuation: CheckedContinuation<Value, Error>?
     private var operation: Operation?
     private var completed = false
 
-    func install(continuation: CheckedContinuation<DecodedImage, Error>) -> Bool {
+    func install(continuation: CheckedContinuation<Value, Error>) -> Bool {
         lock.lock()
         guard !completed else {
             lock.unlock()
@@ -62,7 +72,7 @@ private final class DecodeExecutionRequest: @unchecked Sendable {
         lock.unlock()
     }
 
-    func execute(_ body: @escaping @Sendable () throws -> DecodedImage) {
+    func execute(_ body: @escaping @Sendable () throws -> Value) {
         lock.lock()
         let shouldRun = !completed
         lock.unlock()
@@ -92,7 +102,7 @@ private final class DecodeExecutionRequest: @unchecked Sendable {
         continuation?.resume(throwing: CancellationError())
     }
 
-    private func finish(_ result: Result<DecodedImage, Error>) {
+    private func finish(_ result: Result<Value, Error>) {
         lock.lock()
         guard !completed else {
             lock.unlock()
@@ -104,5 +114,28 @@ private final class DecodeExecutionRequest: @unchecked Sendable {
         operation = nil
         lock.unlock()
         continuation?.resume(with: result)
+    }
+}
+
+/// A visible consumer can promote a queued prefetch without starting another decode.
+public final class ImageDecodePriority: @unchecked Sendable {
+    private let lock = NSLock()
+    private var interactive: Bool
+    private weak var operation: Operation?
+
+    public init(interactive: Bool = true) { self.interactive = interactive }
+
+    public func promote() {
+        lock.withLock {
+            interactive = true
+            operation?.queuePriority = .veryHigh
+        }
+    }
+
+    fileprivate func register(_ operation: Operation) {
+        lock.withLock {
+            self.operation = operation
+            operation.queuePriority = interactive ? .veryHigh : .low
+        }
     }
 }

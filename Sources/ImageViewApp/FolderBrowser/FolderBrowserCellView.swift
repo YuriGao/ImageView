@@ -102,6 +102,12 @@ final class FolderBrowserCellView: NSCollectionViewItem {
         }
     }
 
+    func updatePosition(_ position: Int, total: Int) {
+        accessibilityPosition = position
+        accessibilityTotal = total
+        updateAccessibility()
+    }
+
     override func prepareForReuse() {
         super.prepareForReuse()
         thumbnailRequest?.cancel()

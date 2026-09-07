@@ -1,7 +1,10 @@
-name: Build and Package DMG
+name: Test and Package ImageView
 
 on:
+  pull_request:
   push:
+    branches:
+      - "**"
     tags:
       - "v*"
   workflow_dispatch:
@@ -12,10 +15,30 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  test:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run full test suite
+        run: swift test --disable-sandbox
+      - name: Check optimized interactive paths
+        run: >-
+          swift test --disable-sandbox --configuration release -Xswiftc -DTESTING
+          --filter 'PerformanceGuardTests|ImageCacheTests|ImageDecodeExecutorTests|AnimationPlayerTests|ContinuousReadingLayoutTests|ViewerViewModelTests|FolderBrowserViewTests|FolderSessionTests'
+
   build:
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
     runs-on: macos-latest
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}

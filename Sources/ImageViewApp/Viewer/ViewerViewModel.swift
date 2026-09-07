@@ -69,10 +69,11 @@ final class ViewerViewModel: ObservableObject {
     @Published private(set) var errorMessage: String?
     @Published private(set) var displayTitle = "ImageView"
     @Published private(set) var hasUnsavedEdits = false
+    @Published private(set) var isProcessingImage = false
     @Published private(set) var loadPhase: ImageLoadPhase = .empty
 
     var canEditCurrentImage: Bool {
-        loadPhase == .full
+        !isProcessingImage && loadPhase == .full
             && currentImage != nil
             && navigationState?.currentItem?.format.isCameraRAW != true
     }
@@ -82,7 +83,6 @@ final class ViewerViewModel: ObservableObject {
     }
 
     private let scanContainingDirectory: @Sendable (URL) async throws -> [ImageItem]
-    private let decodeImageAtURL: @Sendable (URL, SupportedImageFormat) throws -> DecodedImage
     private let loadImageAtURL: @Sendable (URL, SupportedImageFormat) async throws -> VersionedLoadedImage
     private let loadFullResolutionAtURL: @Sendable (URL, SupportedImageFormat) async throws -> VersionedLoadedImage
     private let loadPreviewAtURL: @Sendable (URL, SupportedImageFormat) async throws -> DecodedImage
@@ -91,9 +91,14 @@ final class ViewerViewModel: ObservableObject {
     private let restoreFromTrashAtURL: @Sendable (URL, URL) throws -> Void
     private let currentFileVersionAtURL: @Sendable (URL) -> CurrentFileVersion?
     private let fullResolutionRequestDelay: Duration
-    private let metadataService = ImageMetadataService()
+    private var metadataTask: Task<Void, Never>?
+    private var metadataGeneration: UInt64 = 0
+    typealias EditImage = @Sendable ([EditOperation], DecodedImage) throws -> DecodedImage
+    typealias SaveImage = @Sendable (DecodedImage, URL, SupportedImageFormat, URL) throws -> Void
+    private let saveImage: SaveImage
+    private let editImage: EditImage
+    private static let editingExecutor = ImageDecodeExecutor(maxConcurrentDecodeCount: 1)
     private let fileActions = FileActions()
-    private let editingService = ImageEditingService()
     private let cache: ImageCache
     private var displayRequestGeneration: UInt64 = 0
     private var cancelActiveProgressiveLoad: (@Sendable () -> Void)?
@@ -109,8 +114,8 @@ final class ViewerViewModel: ObservableObject {
     private var displayedFileVersion: CurrentFileVersion?
     var pendingOperationCountForTesting: Int { pendingOperations.count }
     var redoOperationCountForTesting: Int { redoOperations.count }
-    var canUndo: Bool { !pendingOperations.isEmpty || trashUndoOperation != nil }
-    var canRedo: Bool { !redoOperations.isEmpty || trashRedoOperation != nil }
+    var canUndo: Bool { !isProcessingImage && (!pendingOperations.isEmpty || trashUndoOperation != nil) }
+    var canRedo: Bool { !isProcessingImage && (!redoOperations.isEmpty || trashRedoOperation != nil) }
     var undoMenuTitle: String {
         if let operation = pendingOperations.last {
             return String(
@@ -158,7 +163,14 @@ final class ViewerViewModel: ObservableObject {
         loadPreviewAtURL: (@Sendable (URL, SupportedImageFormat) async throws -> DecodedImage)? = nil,
         shouldLoadPreviewAtURL: (@Sendable (URL) -> Bool)? = nil,
         fullResolutionRequestDelay: Duration = ViewerViewModel.defaultFullResolutionRequestDelay,
-        cache: ImageCache = .shared
+        cache: ImageCache = .shared,
+        editImage: @escaping EditImage = { operations, image in
+            let output = try ImageEditingService().apply(operations, to: image.cgImage)
+            return DecodedImage(cgImage: output, pixelSize: CGSize(width: output.width, height: output.height), isAnimated: false)
+        },
+        saveImage: @escaping SaveImage = { image, target, format, source in
+            try ImageEditingService().save(image.cgImage, to: target, format: format, metadataSourceURL: source)
+        }
     ) {
         let resolvedDecodeImageAtURL: @Sendable (URL, SupportedImageFormat) throws -> DecodedImage =
             decodeImageAtURL ?? {
@@ -166,12 +178,13 @@ final class ViewerViewModel: ObservableObject {
                 return try decoder.decode(url: $0, format: $1, purpose: .full)
             }
         self.scanContainingDirectory = scanContainingDirectory
-        self.decodeImageAtURL = resolvedDecodeImageAtURL
         self.moveToTrashAtURL = moveToTrashAtURL
         self.restoreFromTrashAtURL = restoreFromTrashAtURL
         self.currentFileVersionAtURL = currentFileVersionAtURL
         self.fullResolutionRequestDelay = fullResolutionRequestDelay
         self.cache = cache
+        self.editImage = editImage
+        self.saveImage = saveImage
         self.shouldLoadPreviewAtURL = shouldLoadPreviewAtURL ?? { url in
             loadPreviewAtURL != nil || ImageDecodeService.requiresDownsampledPreview(url: url, maxPixelSize: 2_048)
         }
@@ -234,12 +247,13 @@ final class ViewerViewModel: ObservableObject {
             let cache = cache
             self.loadImageAtURL = { url, format in
                 for attempt in 0..<2 {
+                    try Task.checkCancellation()
                     guard let beforeVersion = currentFileVersionAtURL(url) else {
                         throw ImageDecodeError.cannotCreateSource
                     }
                     do {
-                        let decoded = try await cache.loadImage(for: url, matching: beforeVersion) {
-                            let decoded = try await detachedDecode {
+                        let decoded = try await cache.loadImage(for: url, matching: beforeVersion, priority: Task.currentPriority) { priority in
+                            let decoded = try await ImageDecodeExecutor.shared.decode(priority: priority) {
                                 try resolvedDecodeImageAtURL(url, format)
                             }
                             guard let afterVersion = currentFileVersionAtURL(url),
@@ -257,6 +271,7 @@ final class ViewerViewModel: ObservableObject {
                         }
                         return VersionedLoadedImage(image: decoded, version: completedVersion)
                     } catch {
+                        try Task.checkCancellation()
                         if attempt == 0,
                            let currentVersion = currentFileVersionAtURL(url),
                            !currentVersion.hasSameContentIdentity(as: beforeVersion) {
@@ -273,6 +288,7 @@ final class ViewerViewModel: ObservableObject {
     }
 
     deinit {
+        metadataTask?.cancel()
         displayTask?.cancel()
         preloadTask?.cancel()
         fullResolutionTask?.cancel()
@@ -311,7 +327,7 @@ final class ViewerViewModel: ObservableObject {
             currentMetadata = nil
             persistedCurrentImage = nil
             loadPhase = .failed
-            errorMessage = "不支持的图片格式：\(url.pathExtension)"
+            errorMessage = String(format: AppStrings.text("viewer.error.unsupportedFormat"), url.pathExtension)
             updateDisplayTitle()
             return
         }
@@ -436,7 +452,7 @@ final class ViewerViewModel: ObservableObject {
             persistedCurrentImage = nil
             displayedFileVersion = nil
             loadPhase = .failed
-            errorMessage = "图片损坏或无法解码：\(url.lastPathComponent)"
+            errorMessage = String(format: AppStrings.text("viewer.error.decode"), url.lastPathComponent)
             updateDisplayTitle()
         }
     }
@@ -506,7 +522,7 @@ final class ViewerViewModel: ObservableObject {
             updateDisplayTitle()
             startDisplayCurrentAndPreload()
         } catch {
-            errorMessage = "无法移动到废纸篓：\(item.displayFilename)"
+            errorMessage = String(format: AppStrings.text("viewer.error.trash"), item.displayFilename)
         }
     }
 
@@ -522,7 +538,7 @@ final class ViewerViewModel: ObservableObject {
             errorMessage = nil
             updateDisplayTitle()
         } catch {
-            errorMessage = "无法重命名：\(item.url.lastPathComponent)"
+            errorMessage = String(format: AppStrings.text("viewer.error.rename"), item.url.lastPathComponent)
         }
     }
 
@@ -589,20 +605,21 @@ final class ViewerViewModel: ObservableObject {
         fileActions.revealInFinder(url)
     }
 
-    func applyEdit(_ operation: EditOperation) {
+    func applyEdit(_ operation: EditOperation) async {
         guard canEditCurrentImage, let image = currentImage else { return }
         guard pendingOperations.count < Self.maximumEditHistoryCount else {
             errorMessage = AppStrings.text("editing.history.limitReached")
             return
         }
 
+        isProcessingImage = true
+        defer { isProcessingImage = false }
+        let generation = displayRequestGeneration
         do {
-            let output = try editingService.apply([operation], to: image.cgImage)
-            currentImage = DecodedImage(
-                cgImage: output,
-                pixelSize: CGSize(width: output.width, height: output.height),
-                isAnimated: false
-            )
+            let editImage = self.editImage
+            let output = try await Self.editingExecutor.decode { try editImage([operation], image) }
+            guard generation == displayRequestGeneration, !Task.isCancelled else { return }
+            currentImage = output
             if let item = navigationState?.currentItem, let currentImage {
                 updateMetadata(url: item.url, format: item.format, image: currentImage)
             }
@@ -613,15 +630,20 @@ final class ViewerViewModel: ObservableObject {
             errorMessage = nil
             updateDisplayTitle()
         } catch {
-            errorMessage = "无法应用编辑"
+            guard generation == displayRequestGeneration else { return }
+            errorMessage = AppStrings.text("viewer.error.edit")
         }
     }
 
     @discardableResult
-    func undoEdit() -> Bool {
-        if let operation = pendingOperations.popLast() {
+    func undoEdit() async -> Bool {
+        guard !isProcessingImage else { return false }
+        if let operation = pendingOperations.last {
+            let remaining = Array(pendingOperations.dropLast())
+            guard await rebuildEditedImageFromHistory(remaining) else { return false }
+            pendingOperations = remaining
             redoOperations.append(operation)
-            return rebuildEditedImageFromHistory()
+            return true
         }
         guard var operation = trashUndoOperation else { return false }
         do {
@@ -637,10 +659,14 @@ final class ViewerViewModel: ObservableObject {
     }
 
     @discardableResult
-    func redoEdit() -> Bool {
-        if let operation = redoOperations.popLast() {
-            pendingOperations.append(operation)
-            return rebuildEditedImageFromHistory()
+    func redoEdit() async -> Bool {
+        guard !isProcessingImage else { return false }
+        if let operation = redoOperations.last {
+            let updated = pendingOperations + [operation]
+            guard await rebuildEditedImageFromHistory(updated) else { return false }
+            pendingOperations = updated
+            redoOperations.removeLast()
+            return true
         }
         guard var operation = trashRedoOperation else { return false }
         do {
@@ -658,68 +684,41 @@ final class ViewerViewModel: ObservableObject {
     }
 
     @discardableResult
-    func saveCurrentEdits() -> Bool {
-        guard canEditCurrentImage,
-              let item = navigationState?.currentItem,
-              let image = currentImage else {
-            return false
-        }
-
-        do {
-            try editingService.save(
-                image.cgImage,
-                to: item.url,
-                format: item.format,
-                metadataSourceURL: item.url
-            )
-            let decoded = DecodedImage(
-                cgImage: image.cgImage,
-                pixelSize: image.pixelSize,
-                isAnimated: false
-            )
-            guard let writtenVersion = currentFileVersionAtURL(item.url) else {
-                throw ImageDecodeError.cannotCreateSource
-            }
-            Task { [cache] in
-                await cache.insert(decoded, for: item.url, version: writtenVersion)
-            }
-            persistedCurrentImage = decoded
-            displayedFileVersion = writtenVersion
-            updateMetadata(url: item.url, format: item.format, image: decoded)
-            clearEditHistory()
-            hasUnsavedEdits = false
-            errorMessage = nil
-            updateDisplayTitle()
-            return true
-        } catch {
-            errorMessage = "无法保存该格式的编辑结果"
-            return false
-        }
+    func saveCurrentEdits() async -> Bool {
+        guard let item = navigationState?.currentItem else { return false }
+        return await saveCurrentEdits(to: item.url, format: item.format)
     }
 
     @discardableResult
-    func saveCurrentEdits(to targetURL: URL, format: SupportedImageFormat) -> Bool {
-        guard canEditCurrentImage,
+    func saveCurrentEdits(to targetURL: URL, format: SupportedImageFormat) async -> Bool {
+        guard !Task.isCancelled, canEditCurrentImage,
               let item = navigationState?.currentItem,
-              let image = currentImage else {
-            return false
-        }
-
+              let image = currentImage else { return false }
+        isProcessingImage = true
+        defer { isProcessingImage = false }
+        let generation = displayRequestGeneration
         do {
-            try editingService.save(
-                image.cgImage,
-                to: targetURL,
-                format: format,
-                metadataSourceURL: item.url
-            )
-            let decoded = DecodedImage(cgImage: image.cgImage, pixelSize: image.pixelSize, isAnimated: false)
-            guard let writtenVersion = currentFileVersionAtURL(targetURL) else {
-                throw ImageDecodeError.cannotCreateSource
+            // Saving is allowed to finish atomically once started. UI transitions wait
+            // for this result; the generation guard also protects programmatic opens.
+            let saveImage = self.saveImage
+            let readVersion = currentFileVersionAtURL
+            let save = Task {
+                try await Self.editingExecutor.execute {
+                    try saveImage(image, targetURL, format, item.url)
+                    guard let version = readVersion(targetURL) else { throw ImageDecodeError.cannotCreateSource }
+                    let decoded = DecodedImage(cgImage: image.cgImage, pixelSize: image.pixelSize, isAnimated: false)
+                    return VersionedLoadedImage(image: decoded, version: version)
+                }
             }
-            Task { [cache] in
-                await cache.insert(decoded, for: targetURL, version: writtenVersion)
-            }
+            // This owned save task is intentionally not cancelled with its waiter:
+            // an atomic file replacement must finish before the UI becomes idle.
+            let saved = try await save.value
+            let decoded = saved.image
+            guard let writtenVersion = saved.version else { throw ImageDecodeError.cannotCreateSource }
+            await cache.insert(decoded, for: targetURL, version: writtenVersion)
+            guard generation == displayRequestGeneration else { return false }
             navigationState?.replaceCurrentURL(targetURL, format: format)
+            currentImage = decoded
             persistedCurrentImage = decoded
             displayedFileVersion = writtenVersion
             updateMetadata(url: targetURL, format: format, image: decoded)
@@ -729,13 +728,15 @@ final class ViewerViewModel: ObservableObject {
             updateDisplayTitle()
             return true
         } catch {
-            errorMessage = "无法另存编辑结果"
+            guard generation == displayRequestGeneration else { return false }
+            errorMessage = AppStrings.text("viewer.error.save")
             return false
         }
     }
 
     @discardableResult
     func discardCurrentEdits() -> Bool {
+        guard !isProcessingImage else { return false }
         guard hasUnsavedEdits else {
             errorMessage = nil
             return true
@@ -754,7 +755,7 @@ final class ViewerViewModel: ObservableObject {
             updateDisplayTitle()
             return true
         } catch {
-            errorMessage = "无法还原原始图片"
+            errorMessage = AppStrings.text("viewer.error.restore")
             return false
         }
     }
@@ -839,6 +840,7 @@ final class ViewerViewModel: ObservableObject {
         guard let state = navigationState,
               let current = state.currentItem,
               let currentIndex = state.currentIndex else { return [] }
+        let generation = displayRequestGeneration
         let focusedIndex = focusedItemID.flatMap { id in
             state.items.firstIndex { $0.id == id }
         } ?? currentIndex
@@ -855,7 +857,7 @@ final class ViewerViewModel: ObservableObject {
 
         for index in decodeOrder {
             let item = state.items[index]
-            guard navigationState?.currentItem?.id == current.id else { return [] }
+            guard !Task.isCancelled, generation == displayRequestGeneration, navigationState?.currentItem?.id == current.id else { return [] }
             let image: DecodedImage?
             if item.id == current.id, let currentImage {
                 image = currentImage
@@ -864,7 +866,7 @@ final class ViewerViewModel: ObservableObject {
             } else {
                 image = try? await display(url: item.url, format: item.format).image
             }
-            guard navigationState?.currentItem?.id == current.id else { return [] }
+            guard !Task.isCancelled, generation == displayRequestGeneration, navigationState?.currentItem?.id == current.id else { return [] }
             guard let image else { continue }
             let (nextCost, overflow) = decodedByteCost.addingReportingOverflow(image.decodedByteCost)
             let fitsBudget = !overflow && nextCost <= ContinuousReadingView.maximumDecodedByteCost
@@ -879,6 +881,7 @@ final class ViewerViewModel: ObservableObject {
     }
 
     func refreshCurrentFileIfNeeded() async {
+        guard !isProcessingImage else { return }
         guard let item = navigationState?.currentItem else { return }
         guard let currentVersion = currentFileVersionAtURL(item.url) else {
             removeExternallyUnavailableCurrentItem(item)
@@ -886,7 +889,7 @@ final class ViewerViewModel: ObservableObject {
         }
         guard currentVersion != displayedFileVersion else { return }
         guard !hasUnsavedEdits else {
-            errorMessage = "图片已在外部修改：\(item.url.lastPathComponent)"
+            errorMessage = String(format: AppStrings.text("viewer.error.externalChange"), item.url.lastPathComponent)
             return
         }
 
@@ -908,7 +911,7 @@ final class ViewerViewModel: ObservableObject {
         } catch {
             guard generation == displayRequestGeneration else { return }
             loadPhase = .failed
-            errorMessage = "图片已在外部修改且无法解码：\(item.url.lastPathComponent)"
+            errorMessage = String(format: AppStrings.text("viewer.error.externalDecode"), item.url.lastPathComponent)
         }
     }
 
@@ -935,7 +938,7 @@ final class ViewerViewModel: ObservableObject {
             persistedCurrentImage = nil
             displayedFileVersion = nil
             loadPhase = .failed
-            errorMessage = "图片损坏或无法解码：\(item.url.lastPathComponent)"
+            errorMessage = String(format: AppStrings.text("viewer.error.decode"), item.url.lastPathComponent)
             updateDisplayTitle()
         }
     }
@@ -1023,24 +1026,25 @@ final class ViewerViewModel: ObservableObject {
         return AppStrings.text(key)
     }
 
-    private func rebuildEditedImageFromHistory() -> Bool {
+    private func rebuildEditedImageFromHistory(_ operations: [EditOperation]) async -> Bool {
         guard let baseline = persistedCurrentImage else { return false }
+        isProcessingImage = true
+        defer { isProcessingImage = false }
+        let generation = displayRequestGeneration
         do {
-            let output = try editingService.apply(pendingOperations, to: baseline.cgImage)
-            let rebuilt = DecodedImage(
-                cgImage: output,
-                pixelSize: CGSize(width: output.width, height: output.height),
-                isAnimated: false
-            )
+            let editImage = self.editImage
+            let rebuilt = try await Self.editingExecutor.decode { try editImage(operations, baseline) }
+            guard generation == displayRequestGeneration, !Task.isCancelled else { return false }
             currentImage = rebuilt
             if let item = navigationState?.currentItem {
                 updateMetadata(url: item.url, format: item.format, image: rebuilt)
             }
-            hasUnsavedEdits = !pendingOperations.isEmpty
+            hasUnsavedEdits = !operations.isEmpty
             errorMessage = nil
             updateDisplayTitle()
             return true
         } catch {
+            guard generation == displayRequestGeneration else { return false }
             errorMessage = AppStrings.text("editing.history.rebuildFailed")
             return false
         }
@@ -1072,7 +1076,7 @@ final class ViewerViewModel: ObservableObject {
     private func removeExternallyUnavailableCurrentItem(_ item: ImageItem) {
         navigationState?.removeCurrent()
         displayedFileVersion = nil
-        errorMessage = "文件已在外部移除：\(item.url.lastPathComponent)"
+        errorMessage = String(format: AppStrings.text("viewer.error.externalRemoval"), item.url.lastPathComponent)
 
         guard navigationState?.currentItem != nil else {
             navigationState = nil
@@ -1148,8 +1152,8 @@ final class ViewerViewModel: ObservableObject {
         displayTitle = Self.displayTitle(filename: filename, hasUnsavedEdits: hasUnsavedEdits)
     }
 
-    static func displayTitle(filename: String, hasUnsavedEdits: Bool) -> String {
-        hasUnsavedEdits ? "\(filename) - Edited" : filename
+    static func displayTitle(filename: String, hasUnsavedEdits: Bool, preferredLanguages: [String] = Locale.preferredLanguages) -> String {
+        hasUnsavedEdits ? String(format: AppStrings.text("viewer.title.edited", preferredLanguages: preferredLanguages), filename) : filename
     }
 
     private func updateMetadata(url: URL, format: SupportedImageFormat, image: DecodedImage) {
@@ -1158,12 +1162,22 @@ final class ViewerViewModel: ObservableObject {
         } else {
             CGSize(width: image.cgImage.width, height: image.cgImage.height)
         }
-        currentMetadata = metadataService.metadata(
-            for: url,
-            format: format,
-            pixelWidth: Int(reportedPixelSize.width.rounded()),
-            pixelHeight: Int(reportedPixelSize.height.rounded())
-        )
+        metadataTask?.cancel()
+        metadataGeneration &+= 1
+        let generation = metadataGeneration
+        let width = Int(reportedPixelSize.width.rounded())
+        let height = Int(reportedPixelSize.height.rounded())
+        if let metadata = currentMetadata, metadata.url == url, metadata.format == format {
+            currentMetadata = metadata.replacingDimensions(width: width, height: height)
+        } else {
+            currentMetadata = ImageMetadata(url: url, format: format, pixelWidth: width, pixelHeight: height, fileSize: nil, modifiedAt: nil)
+        }
+        metadataTask = Task { [weak self] in
+            guard let metadata = try? await ImageMetadataLoader.shared.metadata(for: url, format: format, width: width, height: height) else { return }
+            guard !Task.isCancelled, let self, self.metadataGeneration == generation,
+                  self.currentMetadata?.url == url else { return }
+            self.currentMetadata = metadata
+        }
     }
 
     private func restoredCurrentImage() throws -> DecodedImage {
@@ -1171,10 +1185,6 @@ final class ViewerViewModel: ObservableObject {
             return persistedCurrentImage
         }
 
-        guard let item = navigationState?.currentItem else {
-            throw ImageDecodeError.cannotDecodeImage
-        }
-
-        return try decodeImageAtURL(item.url, item.format)
+        throw ImageDecodeError.cannotDecodeImage
     }
 }

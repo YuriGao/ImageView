@@ -48,9 +48,7 @@ final class ImageCanvasView: NSView {
             } else {
                 nil
             }
-            currentAnimationFrameIndex = 0
-            currentOnDemandAnimationFrame = nil
-            configureAnimation()
+            animationPlayer.configure(image)
             if displayMode == .fitWidth {
                 zoomToFitWidth()
             } else if let preservedManualPixelScale,
@@ -72,10 +70,13 @@ final class ImageCanvasView: NSView {
         }
     }
 
-    private var animationTimer: Timer?
-    private(set) var currentAnimationFrameIndex = 0
-    private var currentOnDemandAnimationFrame: AnimatedFrame?
-    var isAnimating: Bool { animationTimer != nil }
+    private lazy var animationPlayer: AnimationPlayer = {
+        let player = AnimationPlayer()
+        player.onFrameChanged = { [weak self] in self?.needsDisplay = true }
+        return player
+    }()
+    var currentAnimationFrameIndex: Int { animationPlayer.currentIndex }
+    var isAnimating: Bool { animationPlayer.isRunning }
 
     var scale: CGFloat = 1.0 {
         didSet {
@@ -391,58 +392,10 @@ final class ImageCanvasView: NSView {
 
         guard let drawRect = imageDrawRect else { return }
 
-        let displayedImage = currentOnDemandAnimationFrame?.cgImage
-            ?? (image.animationFrames.indices.contains(currentAnimationFrameIndex)
-                ? image.animationFrames[currentAnimationFrameIndex].cgImage
-                : image.cgImage)
+        let displayedImage = animationPlayer.currentFrame?.cgImage ?? image.cgImage
         let appKitImage = NSImage(cgImage: displayedImage, size: drawRect.size)
         appKitImage.draw(in: drawRect)
     }
 
-    func advanceAnimationFrame() {
-        guard let image else { return }
-        let frameCount = animationFrameCount(for: image)
-        guard frameCount > 0 else { return }
-        let nextFrameIndex = (currentAnimationFrameIndex + 1) % frameCount
-        if image.animationFrames.isEmpty {
-            guard let frame = image.animationFrameSource?.frame(at: nextFrameIndex) else { return }
-            currentOnDemandAnimationFrame = frame
-        }
-        currentAnimationFrameIndex = nextFrameIndex
-        needsDisplay = true
-        scheduleNextAnimationFrame()
-    }
-
-    private func configureAnimation() {
-        animationTimer?.invalidate()
-        animationTimer = nil
-        guard let image, animationFrameCount(for: image) > 0 else { return }
-        if image.animationFrames.isEmpty {
-            guard let frame = image.animationFrameSource?.frame(at: 0) else { return }
-            currentOnDemandAnimationFrame = frame
-        }
-        scheduleNextAnimationFrame()
-    }
-
-    private func scheduleNextAnimationFrame() {
-        animationTimer?.invalidate()
-        guard let image else { return }
-        let frame = currentOnDemandAnimationFrame
-            ?? (image.animationFrames.indices.contains(currentAnimationFrameIndex)
-                ? image.animationFrames[currentAnimationFrameIndex]
-                : nil)
-        guard let frame else { return }
-        animationTimer = Timer.scheduledTimer(withTimeInterval: frame.duration, repeats: false) { [weak self] _ in
-            Task { @MainActor in
-                self?.advanceAnimationFrame()
-            }
-        }
-    }
-
-    private func animationFrameCount(for image: DecodedImage) -> Int {
-        if !image.animationFrames.isEmpty {
-            return image.animationFrames.count
-        }
-        return image.animationFrameSource?.frameCount ?? 0
-    }
+    func advanceAnimationFrame() { animationPlayer.advance() }
 }

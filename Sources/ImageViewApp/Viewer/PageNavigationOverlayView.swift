@@ -145,7 +145,7 @@ final class PageNavigationOverlayView: NSView {
         }
     }
 
-    #if DEBUG
+    #if DEBUG || TESTING
     var debugPreviousButton: NSButton { previousButton }
     var debugNextButton: NSButton { nextButton }
     func performDebugPrevious() { showPrevious() }

@@ -58,6 +58,32 @@ final class ImageDecodeExecutorTests: XCTestCase {
         XCTAssertEqual(cancelledBodyCount.value, 0)
     }
 
+    func testVisibleConsumerPromotesQueuedPrefetchAheadOfBackgroundWork() async throws {
+        let executor = ImageDecodeExecutor(maxConcurrentDecodeCount: 1)
+        let gate = BlockingDecodeGate()
+        let order = DecodeOrder()
+        let blocker = Task<DecodedImage, Error>.detached { @Sendable [executor, gate] in try await executor.decode { gate.beginAndWait(); return Self.makeImage() } }
+        while !gate.hasStarted { await Task.yield() }
+        let background = Task<DecodedImage, Error>.detached { @Sendable [executor, order] in
+            try await executor.decode(priority: ImageDecodePriority(interactive: false)) {
+                order.append(1)
+                return Self.makeImage()
+            }
+        }
+        let promotedPriority = ImageDecodePriority(interactive: false)
+        let promoted = Task<DecodedImage, Error>.detached { @Sendable [executor, order, promotedPriority] in
+            try await executor.decode(priority: promotedPriority) {
+                order.append(2)
+                return Self.makeImage()
+            }
+        }
+        while executor.operationCount < 3 { await Task.yield() }
+        promotedPriority.promote()
+        gate.release()
+        _ = try await (blocker.value, background.value, promoted.value)
+        XCTAssertEqual(order.values, [2, 1])
+    }
+
     private static func makeImage() -> DecodedImage {
         let context = CGContext(
             data: nil,
@@ -118,4 +144,11 @@ private final class DecodeConcurrencyCounter: @unchecked Sendable {
     func end() {
         lock.withLock { current -= 1 }
     }
+}
+
+private final class DecodeOrder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [Int] = []
+    var values: [Int] { lock.withLock { storage } }
+    func append(_ value: Int) { lock.withLock { storage.append(value) } }
 }

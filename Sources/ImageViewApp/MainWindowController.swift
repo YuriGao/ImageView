@@ -24,19 +24,6 @@ private final class LocalEventMonitor: @unchecked Sendable {
 }
 
 @MainActor
-private final class ContextMenuActionDispatcher: NSObject {
-    private let handler: () -> Void
-
-    init(handler: @escaping () -> Void) {
-        self.handler = handler
-    }
-
-    @objc func perform(_ sender: Any?) {
-        handler()
-    }
-}
-
-@MainActor
 final class MainWindowController: NSWindowController {
     static let externalFileCheckInterval: TimeInterval = 2
     static let titleBarHeight: CGFloat = 32
@@ -58,6 +45,7 @@ final class MainWindowController: NSWindowController {
     var onOpenRecentRequested: ((URL) -> Void)?
     var onClearRecentRequested: (() -> Void)?
     private(set) var hasAssignedOpenRequest = false
+    var isProcessingImageOperation: Bool { imageOperationTask != nil || viewModel.isProcessingImage }
     var onWindowDidBecomeKey: ((MainWindowController) -> Void)?
     var onWindowDidClose: ((MainWindowController) -> Void)?
     enum MenuCommand: Equatable {
@@ -159,38 +147,49 @@ final class MainWindowController: NSWindowController {
         let isLoading: Bool
     }
 
-    private let viewModel = ViewerViewModel()
-    private let folderBrowserViewModel: FolderBrowserViewModel
-    private let settings: AppSettings
-    private let rootView = RootInteractionView()
-    private let titleBarView = NSVisualEffectView()
-    private let titleBarDivider = NSBox()
+    let viewModel = ViewerViewModel()
+    let folderBrowserViewModel: FolderBrowserViewModel
+    let settings: AppSettings
+    let rootView = RootInteractionView()
+    let titleBarView = NSVisualEffectView()
+    let titleBarDivider = NSBox()
     private let titleLabel = NSTextField(labelWithString: "ImageView")
     private let titleBarGridButton = HoverToolbarButton()
     private let titleBarMoreButton = HoverToolbarButton()
     private let titleBarControlsStack = NSStackView()
-    private let canvas = ImageCanvasView()
-    private let continuousReadingView = ContinuousReadingView()
+    let canvas = ImageCanvasView()
+    let continuousReadingView = ContinuousReadingView()
     private let folderBrowserView = FolderBrowserView()
     private let emptyStateView = EmptyStateView()
     private let errorStateView = ErrorStateView()
-    private let cropOverlay = CropOverlayView()
+    let cropOverlay = CropOverlayView()
     private let cropControlsView = NSHostingView(rootView: CropControlsView(onCancel: {}, onApply: {}))
-    private let inspectorView = NSHostingView(rootView: InspectorView(metadata: nil))
-    private let bottomBarView = NSVisualEffectView()
-    private let bottomBarDivider = NSBox()
+    let inspectorView = NSHostingView(rootView: InspectorView(metadata: nil))
+    let bottomBarView = NSVisualEffectView()
+    let bottomBarDivider = NSBox()
     private let bottomDimensionLabel = NSTextField(labelWithString: "— × — px")
     private let bottomPageLabel = NSTextField(labelWithString: "0 / 0")
-    private let bottomZoomLabel = NSTextField(labelWithString: "100%")
+    let bottomZoomLabel = NSTextField(labelWithString: "100%")
     private lazy var bottomZoomClickRecognizer = NSClickGestureRecognizer(
         target: self,
         action: #selector(showZoomMenu(_:))
     )
+    private let imageProgressIndicator = NSProgressIndicator()
+    var imageOperationTask: Task<Void, Never>? {
+        didSet {
+            if imageOperationTask != nil {
+                imageProgressIndicator.startAnimation(nil)
+            } else {
+                imageProgressIndicator.stopAnimation(nil)
+            }
+            updateTitleBarControlAvailability()
+        }
+    }
     private let bottomInfoButton = NSButton()
-    private let filmstripOverlayView = FilmstripOverlayView()
-    private let filmstripView = FilmstripView()
-    private let pageNavigationOverlayView = PageNavigationOverlayView()
-    private let usageHintView = UsageHintView()
+    let filmstripOverlayView = FilmstripOverlayView()
+    let filmstripView = FilmstripView()
+    let pageNavigationOverlayView = PageNavigationOverlayView()
+    let usageHintView = UsageHintView()
     private var cancellables: Set<AnyCancellable> = []
     private var gestureCoordinator: GestureCoordinator?
     private var keyMonitor: LocalEventMonitor?
@@ -198,25 +197,23 @@ final class MainWindowController: NSWindowController {
     private var displayedItemURL: URL?
     private var associatedViewerURL: URL?
     private var externalFileCheckTimer: Timer?
-    private var filmstripHideTimer: Timer?
-    private var filmstripVisibilityGeneration = 0
-    private var isPointerOverFilmstrip = false
-    private var pageControlsHideTimer: Timer?
-    private var pageControlsVisibilityGeneration = 0
-    private var usageHintTimer: Timer?
-    private var canvasTrailingConstraint: NSLayoutConstraint!
-    private var titleBarHeightConstraint: NSLayoutConstraint!
-    private var bottomBarHeightConstraint: NSLayoutConstraint!
-    private var isInspectorDocked = false
-    private var isPointerOverPageControls = false
+    let filmstripAutoHide = OverlayAutoHideScheduler()
+    var isPointerOverFilmstrip = false
+    let pageControlsAutoHide = OverlayAutoHideScheduler()
+    var usageHintTimer: Timer?
+    var canvasTrailingConstraint: NSLayoutConstraint!
+    var titleBarHeightConstraint: NSLayoutConstraint!
+    var bottomBarHeightConstraint: NSLayoutConstraint!
+    var isInspectorDocked = false
+    var isPointerOverPageControls = false
     private var folderRetryTask: Task<Void, Never>?
-    private var continuousReadingTask: Task<Void, Never>?
-    private var continuousReadingFocusID: ImageItem.ID?
-    private var isInFullScreen = false
-    private var fullScreenChromeHideTimer: Timer?
-    private var lastAnnouncedLoadedURL: URL?
+    var continuousReadingTask: Task<Void, Never>?
+    var continuousReadingFocusID: ImageItem.ID?
+    var isInFullScreen = false
+    var fullScreenChromeHideTimer: Timer?
+    var lastAnnouncedLoadedURL: URL?
     private var folderRetryGeneration: UInt64 = 0
-    private var isFolderBrowserMode = false
+    var isFolderBrowserMode = false
     private var currentFolderBrowserItems: [ImageItem] = []
     private var currentRoute: ContentRoute? {
         didSet { updateTitleBarControlAvailability() }
@@ -227,12 +224,12 @@ final class MainWindowController: NSWindowController {
     private var forwardRoute: ContentRoute? {
         didSet { updateTitleBarControlAvailability() }
     }
-    private var activeBatchRenameSheet: BatchRenameSheetController?
+    var activeBatchRenameSheet: BatchRenameSheetController?
     private var windowFrameBeforeTitleBarMaximize: NSRect?
     var batchActionDialogProviderForTesting: BatchActionDialogProvider?
     var recoveryAlertPresenterForTesting: ((RecoveryAlertPresentation) -> Void)?
     var accessibilityAnnouncementHandlerForTesting: ((String) -> Void)?
-    private var unsavedChangesChoiceForTesting: UnsavedChangesChoice?
+    var unsavedChangesChoiceForTesting: UnsavedChangesChoice?
 
     convenience init(
         settings: AppSettings = .shared,
@@ -415,6 +412,16 @@ final class MainWindowController: NSWindowController {
         cropControlsView.translatesAutoresizingMaskIntoConstraints = false
         cropOverlay.isHidden = true
         cropControlsView.isHidden = true
+        imageProgressIndicator.style = .spinning
+        imageProgressIndicator.controlSize = .small
+        imageProgressIndicator.isDisplayedWhenStopped = false
+        imageProgressIndicator.setAccessibilityLabel(AppStrings.text("viewer.processing"))
+        imageProgressIndicator.translatesAutoresizingMaskIntoConstraints = false
+        rootView.addSubview(imageProgressIndicator)
+        NSLayoutConstraint.activate([
+            imageProgressIndicator.trailingAnchor.constraint(equalTo: canvas.trailingAnchor, constant: -16),
+            imageProgressIndicator.topAnchor.constraint(equalTo: canvas.topAnchor, constant: 16)
+        ])
         canvasTrailingConstraint = canvas.trailingAnchor.constraint(equalTo: rootView.trailingAnchor)
         titleBarHeightConstraint = titleBarView.heightAnchor.constraint(equalToConstant: Self.titleBarHeight)
         bottomBarHeightConstraint = bottomBarView.heightAnchor.constraint(equalToConstant: Self.bottomBarHeight)
@@ -780,33 +787,6 @@ final class MainWindowController: NSWindowController {
         super.keyDown(with: event)
     }
 
-    @objc func renameCurrentImage(_ sender: Any?) {
-        cancelCrop(nil)
-        guard let item = viewModel.navigationState?.currentItem else {
-            NSSound.beep()
-            return
-        }
-
-        let alert = NSAlert()
-        alert.messageText = "重命名"
-        alert.informativeText = "输入新的文件名（不含扩展名）。"
-        let textField = NSTextField(string: item.url.deletingPathExtension().lastPathComponent)
-        textField.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
-        alert.accessoryView = textField
-        alert.addButton(withTitle: "重命名")
-        alert.addButton(withTitle: "取消")
-
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let newName = textField.stringValue
-        confirmUnsavedEditsIfNeeded(for: .renaming) { [weak self] in
-            self?.viewModel.renameCurrent(to: newName)
-        }
-    }
-
-    @objc func revealCurrentImageInFinder(_ sender: Any?) {
-        viewModel.revealCurrentInFinder()
-    }
-
     @objc func toggleWindowZoom(_ sender: Any?) {
         guard let window,
               let visibleFrame = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame else {
@@ -819,125 +799,6 @@ final class MainWindowController: NSWindowController {
         )
         windowFrameBeforeTitleBarMaximize = transition.restorationFrame
         window.setFrame(transition.targetFrame, display: true, animate: true)
-    }
-
-    @objc func copyCurrentImagePath(_ sender: Any?) {
-        viewModel.copyCurrentPathToPasteboard()
-    }
-
-    @objc func copyCurrentImage(_ sender: Any?) {
-        guard let image = viewModel.currentImage,
-              Self.writeImage(image.cgImage, to: .general) else {
-            NSSound.beep()
-            return
-        }
-    }
-
-    @discardableResult
-    static func writeImage(_ cgImage: CGImage, to pasteboard: NSPasteboard) -> Bool {
-        let image = NSImage(
-            cgImage: cgImage,
-            size: NSSize(width: cgImage.width, height: cgImage.height)
-        )
-        pasteboard.clearContents()
-        return pasteboard.writeObjects([image])
-    }
-
-    @objc func moveCurrentImageToTrash(_ sender: Any?) {
-        cancelCrop(nil)
-        guard confirmMoveCurrentImageToTrash() else { return }
-        confirmUnsavedEditsIfNeeded(for: .movingToTrash) { [weak self] in
-            self?.viewModel.moveCurrentToTrash()
-        }
-    }
-
-    @objc func rotateClockwise(_ sender: Any?) {
-        performEdit(.rotateClockwise)
-    }
-
-    @objc func rotateCounterClockwise(_ sender: Any?) {
-        performEdit(.rotateCounterClockwise)
-    }
-
-    @objc func mirrorHorizontal(_ sender: Any?) {
-        performEdit(.mirrorHorizontal)
-    }
-
-    @objc func mirrorVertical(_ sender: Any?) {
-        performEdit(.mirrorVertical)
-    }
-
-    @objc func startCropping(_ sender: Any?) {
-        guard viewModel.canEditCurrentImage,
-              let imageDrawRect = canvas.imageDrawRect else {
-            NSSound.beep()
-            return
-        }
-
-        cropOverlay.beginCropping(in: imageDrawRect)
-        updateCropControls()
-        window?.makeFirstResponder(cropOverlay)
-    }
-
-    @objc func applyCrop(_ sender: Any?) {
-        guard viewModel.canEditCurrentImage,
-              cropOverlay.isCropping,
-              let pixelCropRect = canvas.pixelCropRect(for: cropOverlay.cropRect) else {
-            NSSound.beep()
-            return
-        }
-
-        performEdit(.crop(pixelCropRect))
-        cancelCrop(nil)
-    }
-
-    @objc func cancelCrop(_ sender: Any?) {
-        cropOverlay.endCropping()
-        updateCropControls()
-        window?.makeFirstResponder(canvas)
-    }
-
-    @objc func saveEdits(_ sender: Any?) {
-        guard viewModel.canEditCurrentImage else {
-            NSSound.beep()
-            return
-        }
-        _ = viewModel.saveCurrentEdits()
-    }
-
-    @objc func saveEditsAs(_ sender: Any?) {
-        guard viewModel.canEditCurrentImage, viewModel.hasUnsavedEdits else {
-            NSSound.beep()
-            return
-        }
-
-        let formats = ImageEditingService.writableSaveFormats()
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = formats.compactMap(\.contentType)
-        let baseName = URL(fileURLWithPath: viewModel.currentFilename).deletingPathExtension().lastPathComponent
-        panel.nameFieldStringValue = "\(baseName)-edited.png"
-        guard panel.runModal() == .OK,
-              let url = panel.url,
-              let format = SupportedImageFormat(fileExtension: url.pathExtension) else {
-            return
-        }
-        _ = viewModel.saveCurrentEdits(to: url, format: format)
-    }
-
-    @objc func discardEdits(_ sender: Any?) {
-        guard viewModel.currentImage != nil else {
-            NSSound.beep()
-            return
-        }
-        _ = viewModel.discardCurrentEdits()
-    }
-
-    @objc func undoEdit(_ sender: Any?) {
-        if !viewModel.undoEdit() { NSSound.beep() }
-    }
-
-    @objc func redoEdit(_ sender: Any?) {
-        if !viewModel.redoEdit() { NSSound.beep() }
     }
 
     @objc func toggleFilmstrip(_ sender: Any?) {
@@ -977,324 +838,6 @@ final class MainWindowController: NSWindowController {
 
     @objc func zoomToFitWidth(_ sender: Any?) {
         canvas.zoomToFitWidth()
-    }
-
-    @objc private func setZoomPercentage(_ sender: NSMenuItem) {
-        canvas.setManualPercentage(CGFloat(sender.tag))
-    }
-
-    @objc private func setCustomZoomPercentage(_ sender: NSMenuItem) {
-        let alert = NSAlert()
-        alert.messageText = AppStrings.text("viewer.zoom.custom.title")
-        alert.informativeText = AppStrings.text("viewer.zoom.custom.message")
-        let currentPercentage = Int(((canvas.pixelScale ?? 1) * 100).rounded())
-        let field = NSTextField(string: "\(currentPercentage)")
-        field.frame = NSRect(x: 0, y: 0, width: 180, height: 24)
-        field.setAccessibilityLabel(AppStrings.text("viewer.zoom.custom.field"))
-        alert.accessoryView = field
-        alert.addButton(withTitle: AppStrings.text("viewer.zoom.custom.apply"))
-        alert.addButton(withTitle: AppStrings.text("viewer.zoom.custom.cancel"))
-        guard alert.runModal() == .alertFirstButtonReturn,
-              let percentage = Double(field.stringValue),
-              percentage.isFinite,
-              percentage >= 10,
-              percentage <= 1_200 else {
-            return
-        }
-        canvas.setManualPercentage(CGFloat(percentage))
-    }
-
-    @objc private func showZoomMenu(_ sender: Any?) {
-        let menu = NSMenu()
-        let fitItem = NSMenuItem(
-            title: AppStrings.text("menu.view.zoomToFit"),
-            action: #selector(zoomToFit(_:)),
-            keyEquivalent: ""
-        )
-        fitItem.target = self
-        fitItem.state = canvas.displayMode == .fit ? .on : .off
-        menu.addItem(fitItem)
-        let fitWidthItem = NSMenuItem(
-            title: AppStrings.text("menu.view.zoomToFitWidth"),
-            action: #selector(zoomToFitWidth(_:)),
-            keyEquivalent: ""
-        )
-        fitWidthItem.target = self
-        fitWidthItem.state = canvas.displayMode == .fitWidth ? .on : .off
-        menu.addItem(fitWidthItem)
-        menu.addItem(.separator())
-
-        for percentage in [50, 100, 200] {
-            let item = NSMenuItem(
-                title: "\(percentage)%",
-                action: #selector(setZoomPercentage(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.tag = percentage
-            if canvas.displayMode == .manual,
-               let pixelScale = canvas.pixelScale,
-               abs(pixelScale * 100 - CGFloat(percentage)) < 0.5 {
-                item.state = .on
-            }
-            menu.addItem(item)
-        }
-        menu.addItem(.separator())
-        let customItem = NSMenuItem(
-            title: AppStrings.text("viewer.zoom.custom.menu"),
-            action: #selector(setCustomZoomPercentage(_:)),
-            keyEquivalent: ""
-        )
-        customItem.target = self
-        menu.addItem(customItem)
-
-        let location = NSPoint(x: bottomZoomLabel.bounds.minX, y: bottomZoomLabel.bounds.maxY + 4)
-        menu.popUp(positioning: nil, at: location, in: bottomZoomLabel)
-    }
-
-    private func makeImageContextMenu() -> NSMenu? {
-        guard !isFolderBrowserMode,
-              viewModel.navigationState?.currentItem != nil,
-              viewModel.currentImage != nil,
-              !cropOverlay.isCropping else {
-            return nil
-        }
-
-        let menu = NSMenu()
-        menu.addItem(contextMenuItem("menu.file.copyImage", action: #selector(copyCurrentImage(_:))))
-        menu.addItem(contextMenuItem("menu.file.copyPath", action: #selector(copyCurrentImagePath(_:))))
-        menu.addItem(contextMenuItem("menu.file.reveal", action: #selector(revealCurrentImageInFinder(_:))))
-        menu.addItem(.separator())
-
-        let zoomItem = NSMenuItem(title: AppStrings.text("viewer.contextMenu.zoom"), action: nil, keyEquivalent: "")
-        let zoomMenu = NSMenu(title: zoomItem.title)
-        let fitItem = contextMenuItem("menu.view.zoomToFit", action: #selector(zoomToFit(_:)))
-        fitItem.state = canvas.displayMode == .fit ? .on : .off
-        zoomMenu.addItem(fitItem)
-        let fitWidthItem = contextMenuItem("menu.view.zoomToFitWidth", action: #selector(zoomToFitWidth(_:)))
-        fitWidthItem.state = canvas.displayMode == .fitWidth ? .on : .off
-        zoomMenu.addItem(fitWidthItem)
-        let actualSizeItem = contextMenuItem("menu.view.actualSize", action: #selector(actualSize(_:)))
-        if canvas.displayMode == .manual,
-           let pixelScale = canvas.pixelScale,
-           abs(pixelScale - 1) < 0.005 {
-            actualSizeItem.state = .on
-        }
-        zoomMenu.addItem(actualSizeItem)
-        zoomItem.submenu = zoomMenu
-        menu.addItem(zoomItem)
-        menu.addItem(.separator())
-
-        menu.addItem(contextMenuItem("menu.image.rotateClockwise", action: #selector(rotateClockwise(_:))))
-        menu.addItem(contextMenuItem("menu.image.rotateCounterclockwise", action: #selector(rotateCounterClockwise(_:))))
-        let flipItem = NSMenuItem(title: AppStrings.text("viewer.contextMenu.flip"), action: nil, keyEquivalent: "")
-        let flipMenu = NSMenu(title: flipItem.title)
-        flipMenu.addItem(contextMenuItem("menu.image.flipHorizontal", action: #selector(mirrorHorizontal(_:))))
-        flipMenu.addItem(contextMenuItem("menu.image.flipVertical", action: #selector(mirrorVertical(_:))))
-        flipItem.submenu = flipMenu
-        menu.addItem(flipItem)
-        menu.addItem(contextMenuItem("menu.image.crop", action: #selector(startCropping(_:))))
-
-        if viewModel.hasUnsavedEdits {
-            menu.addItem(.separator())
-            menu.addItem(contextMenuItem("menu.image.saveEdits", action: #selector(saveEdits(_:))))
-            menu.addItem(contextMenuItem("menu.image.saveAs", action: #selector(saveEditsAs(_:))))
-            menu.addItem(contextMenuItem("menu.image.discardEdits", action: #selector(discardEdits(_:))))
-        }
-
-        menu.addItem(.separator())
-        menu.addItem(contextMenuItem("menu.view.showInfo", action: #selector(toggleInspector(_:))))
-        menu.addItem(contextMenuItem("menu.file.rename", action: #selector(renameCurrentImage(_:))))
-        menu.addItem(.separator())
-        menu.addItem(contextMenuItem("menu.file.moveToTrash", action: #selector(moveCurrentImageToTrash(_:))))
-        return menu
-    }
-
-    private func contextMenuItem(_ titleKey: String, action: Selector) -> NSMenuItem {
-        let item = NSMenuItem(title: AppStrings.text(titleKey), action: action, keyEquivalent: "")
-        if let sourceItem = Self.menuItem(in: NSApp.mainMenu, matching: action) {
-            item.keyEquivalent = sourceItem.keyEquivalent
-            item.keyEquivalentModifierMask = sourceItem.keyEquivalentModifierMask
-        }
-        item.target = self
-        item.isEnabled = validateMenuItem(item)
-        return item
-    }
-
-    private func makeFilmstripContextMenu(for item: ImageItem) -> NSMenu {
-        let menu = NSMenu()
-        menu.autoenablesItems = false
-        let isCurrent = viewModel.navigationState?.currentItem?.id == item.id
-        menu.addItem(actionMenuItem(
-            title: AppStrings.text("viewer.contextMenu.showImage"),
-            isEnabled: !isCurrent
-        ) { [weak self] in
-            self?.selectImage(item)
-        })
-        menu.addItem(.separator())
-        menu.addItem(actionMenuItem(title: AppStrings.text("menu.file.copyPath")) { [weak self] in
-            self?.copyPaths([item.url])
-        })
-        menu.addItem(actionMenuItem(title: AppStrings.text("menu.file.reveal")) {
-            NSWorkspace.shared.activateFileViewerSelecting([item.url])
-        })
-        menu.addItem(.separator())
-        menu.addItem(actionMenuItem(title: AppStrings.text("menu.file.rename")) { [weak self] in
-            self?.renameContextItem(item)
-        })
-        menu.addItem(actionMenuItem(title: AppStrings.text("menu.file.moveToTrash")) { [weak self] in
-            self?.trashContextItem(item)
-        })
-        return menu
-    }
-
-    private func makeContinuousReadingContextMenu(for page: ContinuousReadingPage) -> NSMenu {
-        let menu = NSMenu()
-        menu.autoenablesItems = false
-        menu.addItem(actionMenuItem(title: AppStrings.text("viewer.contextMenu.showSingleImage")) { [weak self] in
-            self?.showContinuousPageInSingleImageView(page.item)
-        })
-        menu.addItem(.separator())
-        menu.addItem(actionMenuItem(
-            title: AppStrings.text("menu.file.copyImage"),
-            isEnabled: page.image != nil
-        ) {
-            guard let image = page.image else { return }
-            _ = Self.writeImage(image.cgImage, to: .general)
-        })
-        menu.addItem(actionMenuItem(title: AppStrings.text("menu.file.copyPath")) { [weak self] in
-            self?.copyPaths([page.item.url])
-        })
-        menu.addItem(actionMenuItem(title: AppStrings.text("menu.file.reveal")) {
-            NSWorkspace.shared.activateFileViewerSelecting([page.item.url])
-        })
-        menu.addItem(.separator())
-        menu.addItem(actionMenuItem(title: AppStrings.text("menu.file.rename")) { [weak self] in
-            self?.renameContextItem(page.item)
-        })
-        menu.addItem(actionMenuItem(title: AppStrings.text("menu.file.moveToTrash")) { [weak self] in
-            self?.trashContextItem(page.item)
-        })
-        return menu
-    }
-
-    private func makeFolderBrowserContextMenu(for items: [ImageItem]) -> NSMenu? {
-        guard !items.isEmpty, !folderBrowserViewModel.isOperating else { return nil }
-        let menu = NSMenu()
-        menu.autoenablesItems = false
-        if items.count == 1, let item = items.first {
-            menu.addItem(actionMenuItem(title: AppStrings.text("folderBrowser.contextMenu.open")) { [weak self] in
-                self?.openFolderBrowserItem(item)
-            })
-            menu.addItem(.separator())
-            menu.addItem(actionMenuItem(title: AppStrings.text("menu.file.copyPath")) { [weak self] in
-                self?.copyPaths([item.url])
-            })
-            menu.addItem(actionMenuItem(title: AppStrings.text("menu.file.reveal")) {
-                NSWorkspace.shared.activateFileViewerSelecting([item.url])
-            })
-            menu.addItem(.separator())
-            menu.addItem(actionMenuItem(title: AppStrings.text("folderBrowser.contextMenu.move")) { [weak self] in
-                self?.moveSelectedFolderBrowserItemsToFolder()
-            })
-            menu.addItem(actionMenuItem(title: AppStrings.text("menu.file.rename")) { [weak self] in
-                self?.renameSelectedFolderBrowserItems()
-            })
-            menu.addItem(.separator())
-            menu.addItem(actionMenuItem(title: AppStrings.text("menu.file.moveToTrash")) { [weak self] in
-                self?.moveSelectedFolderBrowserItemsToTrash()
-            })
-            return menu
-        }
-
-        let count = items.count
-        menu.addItem(actionMenuItem(
-            title: String(format: AppStrings.text("folderBrowser.contextMenu.copyPaths"), count)
-        ) { [weak self] in
-            self?.copyPaths(items.map(\.url))
-        })
-        menu.addItem(actionMenuItem(
-            title: String(format: AppStrings.text("folderBrowser.contextMenu.revealItems"), count)
-        ) {
-            NSWorkspace.shared.activateFileViewerSelecting(items.map(\.url))
-        })
-        menu.addItem(.separator())
-        menu.addItem(actionMenuItem(
-            title: String(format: AppStrings.text("folderBrowser.contextMenu.moveItems"), count)
-        ) { [weak self] in
-            self?.moveSelectedFolderBrowserItemsToFolder()
-        })
-        menu.addItem(actionMenuItem(
-            title: String(format: AppStrings.text("folderBrowser.contextMenu.renameItems"), count)
-        ) { [weak self] in
-            self?.renameSelectedFolderBrowserItems()
-        })
-        menu.addItem(.separator())
-        menu.addItem(actionMenuItem(
-            title: String(format: AppStrings.text("folderBrowser.contextMenu.trashItems"), count)
-        ) { [weak self] in
-            self?.moveSelectedFolderBrowserItemsToTrash()
-        })
-        return menu
-    }
-
-    private func actionMenuItem(
-        title: String,
-        isEnabled: Bool = true,
-        handler: @escaping () -> Void
-    ) -> NSMenuItem {
-        let dispatcher = ContextMenuActionDispatcher(handler: handler)
-        let item = NSMenuItem(
-            title: title,
-            action: #selector(ContextMenuActionDispatcher.perform(_:)),
-            keyEquivalent: ""
-        )
-        item.target = dispatcher
-        item.representedObject = dispatcher
-        item.isEnabled = isEnabled
-        return item
-    }
-
-    private func showContinuousPageInSingleImageView(_ item: ImageItem) {
-        performWithCurrentItem(item) { [weak self] in
-            self?.settings.usesContinuousReading = false
-        }
-    }
-
-    private func renameContextItem(_ item: ImageItem) {
-        performWithCurrentItem(item) { [weak self] in
-            self?.renameCurrentImage(nil)
-        }
-    }
-
-    private func trashContextItem(_ item: ImageItem) {
-        performWithCurrentItem(item) { [weak self] in
-            self?.moveCurrentImageToTrash(nil)
-        }
-    }
-
-    private func performWithCurrentItem(_ item: ImageItem, action: @escaping () -> Void) {
-        if viewModel.navigationState?.currentItem?.id == item.id {
-            action()
-            return
-        }
-        cancelCrop(nil)
-        confirmUnsavedEditsIfNeeded(for: .navigating) { [weak self] in
-            guard let self else { return }
-            self.viewModel.show(item: item)
-            action()
-        }
-    }
-
-    private func copyPaths(_ urls: [URL]) {
-        guard Self.writePaths(urls, to: .general) else { NSSound.beep(); return }
-    }
-
-    @discardableResult
-    static func writePaths(_ urls: [URL], to pasteboard: NSPasteboard) -> Bool {
-        guard !urls.isEmpty else { return false }
-        pasteboard.clearContents()
-        return pasteboard.setString(urls.map(\.path).joined(separator: "\n"), forType: .string)
     }
 
     @objc func browseCurrentImageFolder(_ sender: Any?) {
@@ -1370,7 +913,7 @@ final class MainWindowController: NSWindowController {
         return nil
     }
 
-    private func openFolderBrowserItem(_ item: ImageItem) {
+    func openFolderBrowserItem(_ item: ImageItem) {
         confirmUnsavedEditsIfNeeded(for: .opening) { [weak self] in
             guard let self else { return }
             self.folderBrowserViewModel.recordOpenedItem(item)
@@ -1553,108 +1096,6 @@ final class MainWindowController: NSWindowController {
         forwardRoute = nil
         backRoute = previousRoute
         showRoute(target, recordHistory: false)
-    }
-
-    private func moveSelectedFolderBrowserItemsToTrash() {
-        let selectedItems = folderBrowserViewModel.selectedItems
-        guard !selectedItems.isEmpty else {
-            NSSound.beep()
-            return
-        }
-
-        let confirmed = batchActionDialogProviderForTesting?.confirmTrash?(selectedItems.count)
-            ?? confirmMoveSelectedFolderBrowserItemsToTrash(count: selectedItems.count)
-        guard confirmed else { return }
-
-        confirmUnsavedEditsForSelectedViewerIfNeeded(selectedItems, transition: .movingToTrash) { [weak self] in
-            self?.folderBrowserViewModel.moveSelectedToTrash()
-        }
-    }
-
-    private func moveSelectedFolderBrowserItemsToFolder() {
-        let selectedItems = folderBrowserViewModel.selectedItems
-        guard !selectedItems.isEmpty else {
-            NSSound.beep()
-            return
-        }
-
-        let destination = batchActionDialogProviderForTesting?.chooseDestinationFolder?()
-            ?? chooseDestinationFolderForBatchMove()
-        guard let destination else { return }
-
-        guard let skipPlan = folderBrowserViewModel.planSelectedMove(
-            to: destination,
-            conflictPolicy: .skip
-        ) else { return }
-
-        let choice: MoveConflictChoice
-        if skipPlan.conflictingNames.isEmpty {
-            choice = .skipConflicts
-        } else {
-            choice = batchActionDialogProviderForTesting?.chooseMoveConflict?(skipPlan.conflictingNames)
-                ?? chooseMoveConflict(names: skipPlan.conflictingNames)
-        }
-        guard choice != .cancel else { return }
-
-        confirmUnsavedEditsForSelectedViewerIfNeeded(selectedItems, transition: .navigating) { [weak self] in
-            guard let self else { return }
-            switch choice {
-            case .skipConflicts:
-                self.folderBrowserViewModel.executeMovePlan(skipPlan)
-            case .keepBoth:
-                guard let keepBothPlan = self.folderBrowserViewModel.planSelectedMove(
-                    to: destination,
-                    conflictPolicy: .keepBoth
-                ) else { return }
-                self.folderBrowserViewModel.executeMovePlan(keepBothPlan)
-            case .cancel:
-                break
-            }
-        }
-    }
-
-    private func confirmUnsavedEditsForSelectedViewerIfNeeded(
-        _ selectedItems: [ImageItem],
-        transition: UnsavedChangesTransition,
-        perform action: () -> Void
-    ) {
-        let selectedURLs = Set(selectedItems.map { $0.url.standardizedFileURL })
-        guard let viewerURL = viewModel.navigationState?.currentItem?.url.standardizedFileURL,
-              selectedURLs.contains(viewerURL) else {
-            action()
-            return
-        }
-        confirmUnsavedEditsIfNeeded(for: transition, perform: action)
-    }
-
-    private func renameSelectedFolderBrowserItems() {
-        let selectedItems = folderBrowserViewModel.selectedItems
-        guard !selectedItems.isEmpty else {
-            NSSound.beep()
-            return
-        }
-
-        let folderBrowserViewModel = self.folderBrowserViewModel
-        let planRename: BatchRenameSheetController.PlanRename = { urls, baseName, startNumber, padding in
-            folderBrowserViewModel.planBatchRename(
-                urls: urls,
-                baseName: baseName,
-                startNumber: startNumber,
-                padding: padding
-            )
-        }
-        let confirm: (BatchRenameSheetController.RenameParameters, BatchRenamePlan) -> Void = { [weak self] _, plan in
-            guard let self else { return }
-            self.confirmUnsavedEditsForSelectedViewerIfNeeded(selectedItems, transition: .renaming) {
-                self.folderBrowserViewModel.executeRenamePlan(plan)
-            }
-        }
-
-        if let requestRenameParameters = batchActionDialogProviderForTesting?.requestRenameParameters {
-            requestRenameParameters(selectedItems, planRename, confirm)
-        } else {
-            showBatchRenameSheet(items: selectedItems, planRename: planRename, onConfirm: confirm)
-        }
     }
 
     private func installKeyMonitor() {
@@ -1848,80 +1289,6 @@ final class MainWindowController: NSWindowController {
         }
     }
 
-    static func menuCommand(for action: Selector?) -> MenuCommand? {
-        switch action {
-        case #selector(renameCurrentImage(_:)),
-             #selector(revealCurrentImageInFinder(_:)),
-             #selector(copyCurrentImagePath(_:)),
-             #selector(moveCurrentImageToTrash(_:)):
-            return .fileOperationRequiringCurrentItem
-        case #selector(copyCurrentImage(_:)):
-            return .copyImage
-        case #selector(showPreviousImage(_:)), #selector(showNextImage(_:)):
-            return .navigation
-        case #selector(actualSize(_:)), #selector(zoomToFit(_:)), #selector(zoomToFitWidth(_:)):
-            return .canvasSizing
-        case #selector(startCropping(_:)):
-            return .startCropping
-        case #selector(rotateClockwise(_:)):
-            return .editOperation(.rotateClockwise)
-        case #selector(rotateCounterClockwise(_:)):
-            return .editOperation(.rotateCounterClockwise)
-        case #selector(mirrorHorizontal(_:)):
-            return .editOperation(.mirrorHorizontal)
-        case #selector(mirrorVertical(_:)):
-            return .editOperation(.mirrorVertical)
-        case #selector(saveEdits(_:)):
-            return .saveEdits
-        case #selector(saveEditsAs(_:)):
-            return .saveEditsAs
-        case #selector(discardEdits(_:)):
-            return .discardEdits
-        case #selector(undoEdit(_:)):
-            return .undoEdit
-        case #selector(redoEdit(_:)):
-            return .redoEdit
-        default:
-            return nil
-        }
-    }
-
-    static func isMenuCommandEnabled(
-        _ command: MenuCommand,
-        hasCurrentItem: Bool,
-        hasCurrentImage: Bool,
-        canEditCurrentImage: Bool,
-        hasUnsavedEdits: Bool,
-        isFolderBrowserMode: Bool = false
-    ) -> Bool {
-        if isFolderBrowserMode {
-            return false
-        }
-
-        switch command {
-        case .fileOperationRequiringCurrentItem:
-            return hasCurrentItem
-        case .copyImage:
-            return hasCurrentImage
-        case .navigation:
-            return hasCurrentItem
-        case .canvasSizing:
-            return hasCurrentImage
-        case .startCropping:
-            return canEditCurrentImage
-        case .editOperation:
-            return canEditCurrentImage
-        case .saveEdits, .saveEditsAs:
-            return canEditCurrentImage && hasUnsavedEdits
-        case .discardEdits:
-            return hasCurrentImage && hasUnsavedEdits
-        case .undoEdit:
-            return hasCurrentImage && hasUnsavedEdits
-        case .redoEdit:
-            return hasCurrentImage
-        }
-    }
-
     private func updateDimensionStatus(metadata: ImageMetadata?) {
         bottomDimensionLabel.stringValue = Self.dimensionText(
             pixelWidth: metadata?.pixelWidth,
@@ -1941,7 +1308,7 @@ final class MainWindowController: NSWindowController {
         bottomZoomLabel.setAccessibilityValue(bottomZoomLabel.stringValue)
     }
 
-    private func updateCropControls() {
+    func updateCropControls() {
         cropControlsView.rootView = CropControlsView(
             onCancel: { [weak self] in self?.cancelCrop(nil) },
             onApply: { [weak self] in self?.applyCrop(nil) }
@@ -1949,98 +1316,6 @@ final class MainWindowController: NSWindowController {
         cropControlsView.isHidden = !cropOverlay.isCropping
         if cropOverlay.isCropping {
             hidePageControls(immediately: true)
-        }
-    }
-
-    private func confirmMoveCurrentImageToTrash() -> Bool {
-        guard let item = viewModel.navigationState?.currentItem else {
-            NSSound.beep()
-            return false
-        }
-        guard settings.confirmsDelete else { return true }
-
-        let alert = NSAlert()
-        alert.messageText = AppStrings.text("viewer.confirmTrash.title")
-        alert.informativeText = String(
-            format: AppStrings.text("viewer.confirmTrash.message"),
-            item.url.lastPathComponent
-        )
-        alert.addButton(withTitle: AppStrings.text("viewer.confirmTrash.button"))
-        alert.addButton(withTitle: AppStrings.text("viewer.confirmTrash.cancel"))
-
-        return alert.runModal() == .alertFirstButtonReturn
-    }
-
-    private func confirmMoveSelectedFolderBrowserItemsToTrash(count: Int) -> Bool {
-        guard settings.confirmsDelete else { return true }
-
-        let alert = NSAlert()
-        alert.messageText = String(format: AppStrings.text("folderBrowser.confirmTrash.title"), count)
-        alert.informativeText = AppStrings.text("folderBrowser.confirmTrash.message")
-        alert.addButton(withTitle: AppStrings.text("folderBrowser.confirmTrash.button"))
-        alert.addButton(withTitle: AppStrings.text("folderBrowser.confirmTrash.cancel"))
-        return alert.runModal() == .alertFirstButtonReturn
-    }
-
-    private func chooseDestinationFolderForBatchMove() -> URL? {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.canCreateDirectories = true
-        panel.prompt = AppStrings.text("folderBrowser.movePanel.prompt")
-        return panel.runModal() == .OK ? panel.url : nil
-    }
-
-    private func chooseMoveConflict(names: [String]) -> MoveConflictChoice {
-        let alert = NSAlert()
-        alert.messageText = AppStrings.text("folderBrowser.moveConflict.title")
-        alert.informativeText = AppStrings.text("folderBrowser.moveConflict.message")
-        alert.addButton(withTitle: AppStrings.text("folderBrowser.moveConflict.skip"))
-        alert.addButton(withTitle: AppStrings.text("folderBrowser.moveConflict.keepBoth"))
-        alert.addButton(withTitle: AppStrings.text("folderBrowser.moveConflict.cancel"))
-
-        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 360, height: 140))
-        textView.isEditable = false
-        textView.isSelectable = true
-        textView.drawsBackground = false
-        textView.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
-        textView.string = names.joined(separator: "\n")
-
-        let scrollView = NSScrollView(frame: textView.frame)
-        scrollView.hasVerticalScroller = true
-        scrollView.autohidesScrollers = true
-        scrollView.borderType = .bezelBorder
-        scrollView.documentView = textView
-        alert.accessoryView = scrollView
-
-        switch alert.runModal() {
-        case .alertFirstButtonReturn:
-            return .skipConflicts
-        case .alertSecondButtonReturn:
-            return .keepBoth
-        default:
-            return .cancel
-        }
-    }
-
-    private func showBatchRenameSheet(
-        items: [ImageItem],
-        planRename: @escaping BatchRenameSheetController.PlanRename,
-        onConfirm: @escaping (BatchRenameSheetController.RenameParameters, BatchRenamePlan) -> Void
-    ) {
-        let controller = BatchRenameSheetController(items: items, planRename: planRename)
-        controller.onConfirm = { [weak self] parameters, plan in
-            onConfirm(parameters, plan)
-            self?.activeBatchRenameSheet = nil
-        }
-
-        guard controller.window != nil, let window else {
-            return
-        }
-        activeBatchRenameSheet = controller
-        controller.beginSheet(on: window) { [weak self] _ in
-            self?.activeBatchRenameSheet = nil
         }
     }
 
@@ -2060,205 +1335,6 @@ final class MainWindowController: NSWindowController {
         updatePageStatus(navigationState: viewModel.navigationState)
         updateZoomStatus()
         updateContinuousReadingPresentation()
-    }
-
-    private func syncFilmstripContent(navigationState: NavigationState?) {
-        guard settings.showsFilmstrip else {
-            filmstripView.apply(items: [], current: nil)
-            return
-        }
-        filmstripView.apply(
-            items: navigationState?.items ?? [],
-            current: navigationState?.currentItem
-        )
-    }
-
-    private func updateContinuousReadingPresentation() {
-        let shouldShow = settings.usesContinuousReading
-            && viewModel.currentImage != nil
-            && !isFolderBrowserMode
-        continuousReadingView.isHidden = !shouldShow
-        canvas.isHidden = shouldShow || isFolderBrowserMode
-        if shouldShow {
-            refreshContinuousReadingWindow()
-        } else {
-            continuousReadingTask?.cancel()
-            continuousReadingTask = nil
-        }
-        bottomZoomLabel.isHidden = shouldShow || isFolderBrowserMode || viewModel.currentImage == nil
-    }
-
-    private func refreshContinuousReadingWindow() {
-        continuousReadingTask?.cancel()
-        let viewModel = viewModel
-        let focusedItemID = continuousReadingFocusID ?? viewModel.navigationState?.currentItem?.id
-        continuousReadingTask = Task { [weak self, viewModel] in
-            let pages = await viewModel.continuousReadingPages(centeredAt: focusedItemID)
-            guard !Task.isCancelled, let self, self.settings.usesContinuousReading else { return }
-            self.continuousReadingView.apply(
-                pages: pages,
-                currentItemID: focusedItemID
-            )
-        }
-    }
-
-    private func updateInspector(metadata: ImageMetadata?) {
-        inspectorView.rootView = InspectorView(
-            metadata: metadata,
-            isDocked: isInspectorDocked,
-            onToggleDock: { [weak self] in self?.toggleInspectorDock() },
-            onClose: { [weak self] in self?.settings.showsInspector = false }
-        )
-    }
-
-    private func toggleInspectorDock() {
-        isInspectorDocked.toggle()
-        updateInspector(metadata: viewModel.currentMetadata)
-        updateInspectorLayout()
-    }
-
-    private func updateInspectorLayout() {
-        let shouldReserveSidebar = isInspectorDocked
-            && settings.showsInspector
-            && viewModel.currentImage != nil
-            && !isFolderBrowserMode
-        canvasTrailingConstraint?.constant = shouldReserveSidebar ? -252 : 0
-        inspectorView.layer?.cornerRadius = shouldReserveSidebar ? 0 : 8
-        rootView.layoutSubtreeIfNeeded()
-    }
-
-    private func revealFilmstripOverlay() {
-        guard filmstripIsEligible(pointerIsActive: true) else {
-            hideFilmstripOverlay(immediately: true)
-            return
-        }
-        cancelFilmstripAutoHide()
-        filmstripOverlayView.isHidden = false
-
-        if filmstripOverlayView.alphaValue < 1 {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.16
-                filmstripOverlayView.animator().alphaValue = 1
-            }
-        }
-
-        scheduleFilmstripAutoHide()
-    }
-
-    private func cancelFilmstripAutoHide() {
-        filmstripHideTimer?.invalidate()
-        filmstripHideTimer = nil
-        filmstripVisibilityGeneration += 1
-    }
-
-    private func filmstripIsEligible(pointerIsActive: Bool) -> Bool {
-        Self.shouldDisplayFilmstripOverlay(
-            isEnabled: settings.showsFilmstrip,
-            hasLoadedImage: viewModel.currentImage != nil,
-            canvasScale: canvas.scale,
-            pointerIsActive: pointerIsActive
-        )
-    }
-
-    private func scheduleFilmstripAutoHide() {
-        guard Self.shouldAutoHideFilmstrip(
-            isEnabled: settings.showsFilmstrip,
-            pointerIsOverOverlay: isPointerOverFilmstrip
-        ) else { return }
-        let generation = filmstripVisibilityGeneration
-        filmstripHideTimer = Timer.scheduledTimer(withTimeInterval: Self.overlayAutoHideDelay, repeats: false) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                guard let self, self.filmstripVisibilityGeneration == generation else { return }
-                self.hideFilmstripOverlay()
-            }
-        }
-    }
-
-    private func hideFilmstripOverlay(immediately: Bool = false) {
-        cancelFilmstripAutoHide()
-        guard !filmstripOverlayView.isHidden else { return }
-
-        if immediately {
-            isPointerOverFilmstrip = false
-            filmstripOverlayView.alphaValue = 0
-            filmstripOverlayView.isHidden = true
-            return
-        }
-
-        let generation = filmstripVisibilityGeneration
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = Self.overlayFadeOutDuration
-            filmstripOverlayView.animator().alphaValue = 0
-        } completionHandler: { [weak self] in
-            Task { @MainActor [weak self] in
-                guard let self, self.filmstripVisibilityGeneration == generation else { return }
-                self.filmstripOverlayView.isHidden = true
-            }
-        }
-    }
-
-    private func revealPageControls() {
-        guard Self.shouldDisplayPageControls(
-            itemCount: viewModel.navigationState?.items.count ?? 0,
-            isCropping: cropOverlay.isCropping
-        ) else {
-            hidePageControls(immediately: true)
-            return
-        }
-
-        cancelPageControlsAutoHide()
-        pageNavigationOverlayView.isHidden = false
-        if pageNavigationOverlayView.alphaValue < 1 {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.14
-                pageNavigationOverlayView.animator().alphaValue = 1
-            }
-        }
-        schedulePageControlsAutoHide()
-    }
-
-    private func cancelPageControlsAutoHide() {
-        pageControlsHideTimer?.invalidate()
-        pageControlsHideTimer = nil
-        pageControlsVisibilityGeneration += 1
-    }
-
-    private func schedulePageControlsAutoHide() {
-        guard Self.shouldAutoHidePageControls(
-            pointerIsOverControls: isPointerOverPageControls
-        ) else { return }
-        let generation = pageControlsVisibilityGeneration
-        pageControlsHideTimer = Timer.scheduledTimer(
-            withTimeInterval: Self.overlayAutoHideDelay,
-            repeats: false
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                guard let self, self.pageControlsVisibilityGeneration == generation else { return }
-                self.hidePageControls()
-            }
-        }
-    }
-
-    private func hidePageControls(immediately: Bool = false) {
-        cancelPageControlsAutoHide()
-        guard !pageNavigationOverlayView.isHidden else { return }
-
-        if immediately {
-            pageNavigationOverlayView.alphaValue = 0
-            pageNavigationOverlayView.isHidden = true
-            return
-        }
-
-        let generation = pageControlsVisibilityGeneration
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = Self.overlayFadeOutDuration
-            pageNavigationOverlayView.animator().alphaValue = 0
-        } completionHandler: { [weak self] in
-            Task { @MainActor [weak self] in
-                guard let self, self.pageControlsVisibilityGeneration == generation else { return }
-                self.pageNavigationOverlayView.isHidden = true
-            }
-        }
     }
 
     private func configureContentBars() {
@@ -2377,62 +1453,6 @@ final class MainWindowController: NSWindowController {
         titleLabel.toolTip = toolTip
         titleLabel.setAccessibilityLabel(title)
         titleLabel.setAccessibilityHelp(toolTip)
-    }
-
-    @objc private func showMoreMenu(_ sender: NSButton) {
-        let menu = NSMenu()
-        let commands: [(String, Selector)] = [
-            ("menu.image.rotateClockwise", #selector(rotateClockwise(_:))),
-            ("menu.image.crop", #selector(startCropping(_:))),
-            ("menu.view.showFilmstrip", #selector(toggleFilmstrip(_:))),
-            ("menu.view.continuousReading", #selector(toggleContinuousReading(_:))),
-            ("menu.view.showInfo", #selector(toggleInspector(_:))),
-            ("menu.image.saveAs", #selector(saveEditsAs(_:))),
-            ("menu.file.reveal", #selector(revealCurrentImageInFinder(_:))),
-            ("menu.file.moveToTrash", #selector(moveCurrentImageToTrash(_:)))
-        ]
-        for (index, command) in commands.enumerated() {
-            if index == 2 || index == 6 || index == 7 { menu.addItem(.separator()) }
-            let item = NSMenuItem(
-                title: AppStrings.text(command.0),
-                action: command.1,
-                keyEquivalent: ""
-            )
-            if let sourceItem = Self.menuItem(in: NSApp.mainMenu, matching: command.1) {
-                item.keyEquivalent = sourceItem.keyEquivalent
-                item.keyEquivalentModifierMask = sourceItem.keyEquivalentModifierMask
-            }
-            item.image = Self.moreMenuSymbol(for: command.1).flatMap {
-                NSImage(systemSymbolName: $0, accessibilityDescription: item.title)
-            }
-            item.target = self
-            item.isEnabled = validateMenuItem(item)
-            menu.addItem(item)
-        }
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.maxY + 4), in: sender)
-    }
-
-    private static func menuItem(in menu: NSMenu?, matching action: Selector) -> NSMenuItem? {
-        guard let menu else { return nil }
-        for item in menu.items {
-            if item.action == action { return item }
-            if let match = menuItem(in: item.submenu, matching: action) { return match }
-        }
-        return nil
-    }
-
-    private static func moreMenuSymbol(for action: Selector) -> String? {
-        switch action {
-        case #selector(rotateClockwise(_:)): return "rotate.right"
-        case #selector(startCropping(_:)): return "crop"
-        case #selector(toggleFilmstrip(_:)): return "rectangle.stack"
-        case #selector(toggleContinuousReading(_:)): return "book.pages"
-        case #selector(toggleInspector(_:)): return "info.circle"
-        case #selector(saveEditsAs(_:)): return "square.and.arrow.down"
-        case #selector(revealCurrentImageInFinder(_:)): return "folder"
-        case #selector(moveCurrentImageToTrash(_:)): return "trash"
-        default: return nil
-        }
     }
 
     private func canToggleTitleBarGrid(folderState: FolderRouteState?) -> Bool {
@@ -2559,72 +1579,6 @@ final class MainWindowController: NSWindowController {
         } else if !hasCurrentImage || isFolderBrowserMode {
             hideUsageHint()
         }
-    }
-
-    private func showUsageHintIfNeeded() {
-        guard !settings.hasShownUsageHint, usageHintView.isHidden else { return }
-        settings.hasShownUsageHint = true
-        usageHintView.alphaValue = 1
-        usageHintView.isHidden = false
-        NSAccessibility.post(element: usageHintView, notification: .announcementRequested)
-        usageHintTimer?.invalidate()
-        usageHintTimer = Timer.scheduledTimer(withTimeInterval: 6, repeats: false) { [weak self] _ in
-            Task { @MainActor in self?.hideUsageHint() }
-        }
-    }
-
-    private func hideUsageHint() {
-        usageHintTimer?.invalidate()
-        usageHintTimer = nil
-        usageHintView.isHidden = true
-    }
-
-    private func revealFullScreenChromeIfNeeded() {
-        guard isInFullScreen else { return }
-        setFullScreenChromeVisible(true)
-        fullScreenChromeHideTimer?.invalidate()
-        fullScreenChromeHideTimer = Timer.scheduledTimer(
-            withTimeInterval: Self.overlayAutoHideDelay,
-            repeats: false
-        ) { [weak self] _ in
-            Task { @MainActor in self?.setFullScreenChromeVisible(false) }
-        }
-    }
-
-    private func setFullScreenChromeVisible(_ visible: Bool) {
-        titleBarHeightConstraint.constant = visible ? Self.titleBarHeight : 0
-        bottomBarHeightConstraint.constant = visible ? Self.bottomBarHeight : 0
-        titleBarView.isHidden = !visible
-        titleBarDivider.isHidden = !visible
-        bottomBarView.isHidden = !visible
-        bottomBarDivider.isHidden = !visible
-        rootView.needsLayout = true
-    }
-
-    private func announceLoadedImageIfNeeded(hasImage: Bool, loadPhase: ImageLoadPhase) {
-        guard hasImage, loadPhase == .full,
-              let url = viewModel.navigationState?.currentItem?.url.standardizedFileURL else {
-            if !hasImage { lastAnnouncedLoadedURL = nil }
-            return
-        }
-        guard lastAnnouncedLoadedURL != url else { return }
-        lastAnnouncedLoadedURL = url
-        let message = String(
-            format: AppStrings.text("viewer.announcement.loaded"),
-            url.lastPathComponent
-        )
-        if let accessibilityAnnouncementHandlerForTesting {
-            accessibilityAnnouncementHandlerForTesting(message)
-            return
-        }
-        NSAccessibility.post(
-            element: canvas,
-            notification: .announcementRequested,
-            userInfo: [
-                .announcement: message,
-                .priority: NSAccessibilityPriorityLevel.medium.rawValue
-            ]
-        )
     }
 
     private func enterFolderBrowserMode() {
@@ -2958,105 +1912,14 @@ final class MainWindowController: NSWindowController {
         }
     }
 
-    private func selectImage(_ item: ImageItem) {
+    func selectImage(_ item: ImageItem) {
         cancelCrop(nil)
         confirmUnsavedEditsIfNeeded(for: .navigating) { [weak self] in
             self?.viewModel.show(item: item)
         }
     }
 
-    private func performEdit(_ operation: EditOperation) {
-        guard viewModel.canEditCurrentImage else {
-            NSSound.beep()
-            return
-        }
-        viewModel.applyEdit(operation)
-    }
 
-    private func confirmUnsavedEditsIfNeeded(
-        for transition: UnsavedChangesTransition,
-        perform action: () -> Void
-    ) {
-        guard viewModel.hasUnsavedEdits else {
-            action()
-            return
-        }
-
-        let choice = promptForUnsavedChanges(transition: transition)
-        let saveSucceeded = choice == .save ? viewModel.saveCurrentEdits() : false
-        let resolution = Self.resolveUnsavedChanges(choice: choice, saveSucceeded: saveSucceeded)
-
-        guard resolution == .proceed else { return }
-        if choice == .discard, !viewModel.discardCurrentEdits() {
-            return
-        }
-        action()
-    }
-
-    private func promptForUnsavedChanges(transition: UnsavedChangesTransition) -> UnsavedChangesChoice {
-        if let unsavedChangesChoiceForTesting {
-            return unsavedChangesChoiceForTesting
-        }
-        let alert = NSAlert()
-        alert.messageText = String(
-            format: AppStrings.text("unsavedChanges.title"),
-            transition.localizedDescription
-        )
-        alert.informativeText = AppStrings.text("unsavedChanges.message")
-        alert.addButton(withTitle: AppStrings.text("unsavedChanges.button.save"))
-        alert.addButton(withTitle: AppStrings.text("unsavedChanges.button.discard"))
-        alert.addButton(withTitle: AppStrings.text("unsavedChanges.button.cancel"))
-
-        switch alert.runModal() {
-        case .alertFirstButtonReturn:
-            return .save
-        case .alertSecondButtonReturn:
-            return .discard
-        default:
-            return .cancel
-        }
-    }
-}
-
-extension MainWindowController: NSMenuItemValidation {
-    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        if menuItem.action == #selector(undoEdit(_:)) {
-            menuItem.title = viewModel.undoMenuTitle
-            return !isFolderBrowserMode && viewModel.canUndo
-        }
-        if menuItem.action == #selector(redoEdit(_:)) {
-            menuItem.title = viewModel.redoMenuTitle
-            return !isFolderBrowserMode && viewModel.canRedo
-        }
-        if menuItem.action == #selector(toggleFilmstrip(_:)) {
-            guard !isFolderBrowserMode else { return false }
-            menuItem.state = settings.showsFilmstrip ? .on : .off
-            return true
-        }
-        if menuItem.action == #selector(toggleInspector(_:)) {
-            guard !isFolderBrowserMode else { return false }
-            menuItem.state = settings.showsInspector ? .on : .off
-            return true
-        }
-        if menuItem.action == #selector(toggleContinuousReading(_:)) {
-            guard !isFolderBrowserMode, viewModel.currentImage != nil else { return false }
-            menuItem.state = settings.usesContinuousReading ? .on : .off
-            return true
-        }
-
-        guard let command = Self.menuCommand(for: menuItem.action) else {
-            return true
-        }
-
-        return Self.isMenuCommandEnabled(
-            command,
-            hasCurrentItem: viewModel.navigationState?.currentItem != nil,
-            hasCurrentImage: viewModel.currentImage != nil,
-            canEditCurrentImage: viewModel.canEditCurrentImage,
-            hasUnsavedEdits: viewModel.hasUnsavedEdits,
-            isFolderBrowserMode: isFolderBrowserMode
-        )
-    }
 }
 
 extension MainWindowController: NSWindowDelegate {
@@ -3117,39 +1980,21 @@ extension MainWindowController: NSWindowDelegate {
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         cancelCrop(nil)
+        guard imageOperationTask == nil, !viewModel.isProcessingImage else { return false }
         guard viewModel.hasUnsavedEdits else { return true }
-
-        let choice = promptForUnsavedChanges(transition: .closing)
-        let saveSucceeded = choice == .save ? viewModel.saveCurrentEdits() : false
-        let resolution = Self.resolveUnsavedChanges(choice: choice, saveSucceeded: saveSucceeded)
-
-        if choice == .discard, resolution == .proceed {
+        switch promptForUnsavedChanges(transition: .closing) {
+        case .save:
+            imageOperationTask = Task { [weak self] in
+                guard let self else { return }
+                let saved = await self.viewModel.saveCurrentEdits()
+                self.imageOperationTask = nil
+                if saved { sender.performClose(nil) }
+            }
+            return false
+        case .discard:
             return viewModel.discardCurrentEdits()
-        }
-
-        return resolution == .proceed
-    }
-}
-
-private enum UnsavedChangesTransition {
-    case opening
-    case navigating
-    case renaming
-    case movingToTrash
-    case closing
-
-    var localizedDescription: String {
-        switch self {
-        case .opening:
-            return AppStrings.text("unsavedChanges.transition.opening")
-        case .navigating:
-            return AppStrings.text("unsavedChanges.transition.navigating")
-        case .renaming:
-            return AppStrings.text("unsavedChanges.transition.renaming")
-        case .movingToTrash:
-            return AppStrings.text("unsavedChanges.transition.movingToTrash")
-        case .closing:
-            return AppStrings.text("unsavedChanges.transition.closing")
+        case .cancel:
+            return false
         }
     }
 }

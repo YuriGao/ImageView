@@ -56,4 +56,14 @@ public struct ImageMetadata: Equatable, Sendable {
         self.isoSpeed = isoSpeed
         self.focalLength = focalLength
     }
+    public func replacingDimensions(width: Int, height: Int) -> ImageMetadata {
+        ImageMetadata(
+            url: url, format: format, pixelWidth: width, pixelHeight: height,
+            fileSize: fileSize, modifiedAt: modifiedAt, capturedAt: capturedAt,
+            cameraMake: cameraMake, cameraModel: cameraModel, colorSpace: colorSpace,
+            colorProfile: colorProfile, bitDepth: bitDepth, orientation: orientation,
+            exposureTime: exposureTime, aperture: aperture, isoSpeed: isoSpeed, focalLength: focalLength
+        )
+    }
+
 }

@@ -179,6 +179,41 @@ final class FolderBrowserViewTests: XCTestCase {
         XCTAssertTrue(view.testingBatchActionButtonsDisabled)
     }
 
+    func testFilteringKeepsCachedThumbnailsAndSelectionWithoutFullReload() async throws {
+        let items = (0..<3).map { ImageItem(url: URL(fileURLWithPath: "/tmp/filter-\($0).png"), format: .png) }
+        ThumbnailProvider.removeAllCachedThumbnailsForTesting()
+        let decodes = FolderBrowserLockedValue(0)
+        let provider = ThumbnailProvider(decoder: { _, _ in
+            decodes.withValue { $0 += 1 }
+            let context = CGContext(data: nil, width: 4, height: 3, bitsPerComponent: 8, bytesPerRow: 16, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            return DecodedImage(cgImage: context.makeImage()!, pixelSize: CGSize(width: 4, height: 3), isAnimated: false)
+        })
+        let view = FolderBrowserView(thumbnailProvider: provider)
+        view.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+        view.layoutSubtreeIfNeeded()
+        view.apply(items: items, selectedIDs: [items[1].id])
+        view.layoutSubtreeIfNeeded()
+        for _ in 0..<200 where view.testingCell(at: 2)?.testingImage == nil { try await Task.sleep(for: .milliseconds(5)) }
+        XCTAssertNotNil(view.testingCell(at: 2)?.testingImage)
+        let originalDecodes = decodes.value
+        let reloads = view.testingReloadCount
+        view.applyItems(Array(items.dropFirst()))
+        view.layoutSubtreeIfNeeded()
+        XCTAssertEqual(view.testingReloadCount, reloads)
+        XCTAssertEqual(view.testingItemCount, 2)
+        XCTAssertEqual(view.testingSelectedIDs, [items[1].id])
+        XCTAssertEqual(view.testingCell(at: 0)?.representedObject as? ImageItem, items[1])
+        for _ in 0..<200 where view.testingCell(at: 0)?.testingImage == nil { try await Task.sleep(for: .milliseconds(5)) }
+        XCTAssertNotNil(view.testingCell(at: 0)?.testingImage)
+        XCTAssertEqual(decodes.value, originalDecodes)
+        XCTAssertTrue(view.testingCell(at: 0)?.view.accessibilityLabel()?.contains(String(format: AppStrings.text("folderBrowser.item.position"), 1, 2)) == true)
+        view.applyItems(items)
+        view.layoutSubtreeIfNeeded()
+        XCTAssertEqual(view.testingReloadCount, reloads)
+        XCTAssertEqual(view.testingItemCount, 3)
+        XCTAssertEqual(view.testingSelectedIDs, [items[1].id])
+    }
+
     func testSelectionOnlyUpdateDoesNotRestartThumbnailRequests() {
         let item = ImageItem(url: URL(fileURLWithPath: "/tmp/one.png"), format: .png)
         let loadCount = FolderBrowserLockedValue(0)

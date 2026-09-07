@@ -267,3 +267,17 @@
 "editing.history.limitReached" = "最多保留 20 步编辑；请先保存或放弃编辑。";
 "editing.history.rebuildFailed" = "无法还原编辑历史";
 "batchRename.defaultBaseName" = "图片";
+
+"viewer.processing" = "正在处理图片";
+
+"viewer.error.unsupportedFormat" = "不支持的图片格式：%@";
+"viewer.error.decode" = "图片损坏或无法解码：%@";
+"viewer.error.trash" = "无法移动到废纸篓：%@";
+"viewer.error.rename" = "无法重命名：%@";
+"viewer.error.edit" = "无法应用编辑";
+"viewer.error.save" = "无法保存该格式的编辑结果";
+"viewer.error.restore" = "无法还原原始图片";
+"viewer.error.externalChange" = "图片已在外部修改：%@";
+"viewer.error.externalDecode" = "图片已在外部修改且无法解码：%@";
+"viewer.error.externalRemoval" = "文件已在外部移除：%@";
+"viewer.title.edited" = "%@ - 已编辑";

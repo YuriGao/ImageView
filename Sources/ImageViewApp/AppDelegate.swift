@@ -112,6 +112,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         openURLs(urls)
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // A background save can be replacing its destination even while the main
+        // thread is responsive. Keep the app alive until owned operations finish.
+        imageWindowControllers.contains(where: \.isProcessingImageOperation) ? .terminateCancel : .terminateNow
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
     }

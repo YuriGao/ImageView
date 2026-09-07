@@ -48,6 +48,11 @@ enum AppStrings {
         , "emptyState.recent", "emptyState.clearRecent"
     ]
 
+    static let viewerErrorKeys = [
+        "viewer.error.unsupportedFormat", "viewer.error.decode", "viewer.error.trash", "viewer.error.rename", "viewer.error.edit", "viewer.error.save", "viewer.error.restore", "viewer.error.externalChange", "viewer.error.externalDecode", "viewer.error.externalRemoval",
+        "viewer.title.edited", "viewer.processing"
+    ]
+
     static let errorStateKeys = [
         "errorState.retry"
     ]

@@ -141,8 +141,9 @@ private final class ContinuousReadingClipView: NSClipView {
 private final class ContinuousReadingDocumentView: NSView {
     var contextMenuProvider: ((ContinuousReadingPage) -> NSMenu?)?
     var pages: [ContinuousReadingPage] = [] {
-        didSet { needsDisplay = true }
+        didSet { pageLayout.update(pages); needsDisplay = true }
     }
+    private var pageLayout = ContinuousReadingLayout()
 
     override var isFlipped: Bool { true }
 
@@ -153,30 +154,33 @@ private final class ContinuousReadingDocumentView: NSView {
     }
 
     func requiredHeight(for width: CGFloat) -> CGFloat {
-        pageFrames(for: width).last?.maxY ?? 0
+        pageLayout.prepare(width: width)
+        return pageLayout.requiredHeight
     }
 
     func frame(for itemID: ImageItem.ID) -> CGRect? {
-        zip(pages, pageFrames(for: bounds.width)).first { $0.0.item.id == itemID }?.1
+        pageLayout.prepare(width: bounds.width)
+        return pageLayout.frame(for: itemID)
     }
 
     func nearestItemID(toDocumentY y: CGFloat) -> ImageItem.ID? {
-        zip(pages, pageFrames(for: bounds.width))
-            .min { abs($0.1.midY - y) < abs($1.1.midY - y) }?
-            .0.item.id
+        pageLayout.prepare(width: bounds.width)
+        return pageLayout.nearestItemID(to: y)
     }
 
     func page(at point: CGPoint) -> ContinuousReadingPage? {
-        zip(pages, pageFrames(for: bounds.width))
-            .first { $0.1.contains(point) }?
-            .0
+        pageLayout.prepare(width: bounds.width)
+        return pageLayout.index(at: point).map { pages[$0] }
     }
 
     override func draw(_ dirtyRect: NSRect) {
         NSColor.black.setFill()
         dirtyRect.fill()
-        for (page, frame) in zip(pages, pageFrames(for: bounds.width)) where frame.intersects(dirtyRect) {
-            guard let image = page.image else {
+        pageLayout.prepare(width: bounds.width)
+        for index in pageLayout.visibleRange(in: dirtyRect) {
+            let frame = pageLayout.frame(at: index)
+            guard frame.intersects(dirtyRect) else { continue }
+            guard let image = pages[index].image else {
                 NSColor.windowBackgroundColor.withAlphaComponent(0.18).setFill()
                 frame.fill()
                 continue
@@ -192,21 +196,4 @@ private final class ContinuousReadingDocumentView: NSView {
         }
     }
 
-    private func pageFrames(for width: CGFloat) -> [CGRect] {
-        let horizontalInset: CGFloat = 16
-        let gap: CGFloat = 18
-        let contentWidth = max(width - horizontalInset * 2, 1)
-        var y: CGFloat = 16
-        return pages.map { page in
-            let aspectHeight: CGFloat
-            if let image = page.image, image.cgImage.width > 0 {
-                aspectHeight = contentWidth * CGFloat(image.cgImage.height) / CGFloat(image.cgImage.width)
-            } else {
-                aspectHeight = min(contentWidth * 0.75, 420)
-            }
-            let frame = CGRect(x: horizontalInset, y: y, width: contentWidth, height: max(aspectHeight, 1))
-            y = frame.maxY + gap
-            return frame
-        }
-    }
 }
