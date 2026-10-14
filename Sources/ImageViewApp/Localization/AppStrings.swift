@@ -197,8 +197,9 @@ enum AppStrings {
     ]
 
     static func text(_ key: String, preferredLanguages: [String] = Locale.preferredLanguages) -> String {
-        let localization = preferredLanguages.contains { $0.lowercased().hasPrefix("zh") } ? "zh-hans" : "en"
+        let requested = preferredLanguages.contains { $0.lowercased().hasPrefix("zh") } ? "zh-hans" : "en"
         let resourceBundle = packagedResourceBundle ?? Bundle.module
+        let localization = resourceBundle.localizations.first { $0.lowercased() == requested } ?? requested
         guard let path = resourceBundle.path(forResource: localization, ofType: "lproj"),
               let bundle = Bundle(path: path) else {
             return key
