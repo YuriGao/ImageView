@@ -59,11 +59,14 @@ final class PageNavigationOverlayView: NSView {
         nextButton.isEnabled = nextEnabled
     }
 
+    /// `hitTest(_:)` 收到的点位于**父视图**坐标系，必须先换算到自身坐标系，
+    /// 再交给按钮（按钮期望的点同样是其父视图坐标系，即本视图坐标系）。
     override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let superview else { return nil }
+        let localPoint = convert(point, from: superview)
         for button in [previousButton, nextButton] where !button.isHidden {
-            let localPoint = button.convert(point, from: self)
-            if button.bounds.contains(localPoint) {
-                return button.hitTest(localPoint)
+            if let hit = button.hitTest(localPoint) {
+                return hit
             }
         }
         return nil
