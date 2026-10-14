@@ -36,6 +36,13 @@ final class RootInteractionView: NSView {
     }
 
     override func mouseMoved(with event: NSEvent) {
+        // 窗口开启了 acceptsMouseMovedEvents，整块屏幕上的鼠标移动都会经响应链送达这里，
+        // 与跟踪区域无关；只有落在窗口范围内的移动才应算作"指针在窗口里"，
+        // 否则鼠标在窗口外移动也会唤出翻页箭头和胶片条。
+        guard bounds.contains(convert(event.locationInWindow, from: nil)) else {
+            super.mouseMoved(with: event)
+            return
+        }
         onPointerMoved?()
         super.mouseMoved(with: event)
     }
