@@ -197,13 +197,27 @@ enum AppStrings {
     ]
 
     static func text(_ key: String, preferredLanguages: [String] = Locale.preferredLanguages) -> String {
-        let localization = preferredLanguages.contains { $0.lowercased().hasPrefix("zh") } ? "zh-hans" : "en"
         let resourceBundle = packagedResourceBundle ?? Bundle.module
+        let localization = localizationName(
+            for: preferredLanguages,
+            available: resourceBundle.localizations
+        )
         guard let path = resourceBundle.path(forResource: localization, ofType: "lproj"),
               let bundle = Bundle(path: path) else {
             return key
         }
         return bundle.localizedString(forKey: key, value: key, table: "Localizable")
+    }
+
+    /// Build engines disagree on how they name localization directories in the
+    /// resource bundle: the native engine emitted `zh-hans.lproj`, the
+    /// swiftbuild engine emits `Contents/Resources/zh-Hans.lproj`. Lookups of
+    /// `.lproj` directories compare case-sensitively, so match the requested
+    /// language against the names the bundle actually reports instead of
+    /// assuming one spelling.
+    static func localizationName(for preferredLanguages: [String], available: [String]) -> String {
+        let requested = preferredLanguages.contains { $0.lowercased().hasPrefix("zh") } ? "zh-hans" : "en"
+        return available.first { $0.lowercased() == requested } ?? requested
     }
 
     private static var packagedResourceBundle: Bundle? {

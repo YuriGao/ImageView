@@ -152,4 +152,41 @@ final class AppStringsTests: XCTestCase {
             "此文件夹中的批量重命名需要手动恢复：%@"
         )
     }
+
+    // MARK: - 资源包本地化目录名
+    //
+    // 回归背景：native 构建引擎产出 zh-hans.lproj，swiftbuild 引擎产出
+    // Contents/Resources/zh-Hans.lproj；.lproj 查找大小写敏感，按固定小写去查会让
+    // 所有中文文案回落到 key（曾导致 328 条断言失败）。
+
+    func testLocalizationNameMatchesBundleSpellingCaseInsensitively() {
+        XCTAssertEqual(
+            AppStrings.localizationName(for: ["zh-Hans-CN"], available: ["zh-Hans", "en"]),
+            "zh-Hans"
+        )
+        XCTAssertEqual(
+            AppStrings.localizationName(for: ["zh-Hans-CN"], available: ["zh-hans", "en"]),
+            "zh-hans"
+        )
+    }
+
+    func testLocalizationNameUsesEnglishForOtherPreferredLanguages() {
+        for preferredLanguages in [["en-US"], ["fr"], []] {
+            XCTAssertEqual(
+                AppStrings.localizationName(for: preferredLanguages, available: ["zh-Hans", "en"]),
+                "en"
+            )
+        }
+    }
+
+    func testLocalizationNameFallsBackToTheRequestedLanguageWhenTheBundleIsUnexpected() {
+        XCTAssertEqual(
+            AppStrings.localizationName(for: ["zh-Hans"], available: []),
+            "zh-hans"
+        )
+        XCTAssertEqual(
+            AppStrings.localizationName(for: ["en"], available: ["Base"]),
+            "en"
+        )
+    }
 }

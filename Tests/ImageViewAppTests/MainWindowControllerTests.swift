@@ -94,6 +94,26 @@ final class MainWindowControllerTests: XCTestCase {
         XCTAssertEqual(MainWindowController.bottomBarHeight, 28)
     }
 
+    /// 信息面板是浮在画布右上角的卡片，正好压在右侧翻页箭头上；
+    /// 它必须位于翻页浮层之下，否则会把右箭头的点击全部吃掉（左箭头不受影响）。
+    func testPageControlsStayAboveTheInspectorPanel() throws {
+        let controller = MainWindowController(settings: AppSettings(defaults: makeIsolatedDefaults()))
+        let rootView = try XCTUnwrap(controller.window?.contentView)
+
+        let overlayIndex = try XCTUnwrap(
+            rootView.subviews.firstIndex(of: controller.pageNavigationOverlayView)
+        )
+        let inspectorIndex = try XCTUnwrap(
+            rootView.subviews.firstIndex(of: controller.inspectorViewForTesting)
+        )
+
+        XCTAssertGreaterThan(
+            overlayIndex,
+            inspectorIndex,
+            "翻页箭头必须排在信息面板之上，否则面板会吞掉右侧箭头的鼠标点击"
+        )
+    }
+
     func testShouldResetCanvasTransformOnlyWhenDisplayedItemChanges() {
         let first = URL(fileURLWithPath: "/tmp/first.png")
         let firstDuplicate = URL(fileURLWithPath: "/tmp/./first.png")
