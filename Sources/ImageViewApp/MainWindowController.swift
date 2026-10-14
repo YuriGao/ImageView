@@ -380,8 +380,10 @@ final class MainWindowController: NSWindowController {
         rootView.addSubview(bottomBarView)
         rootView.addSubview(bottomBarDivider)
         rootView.addSubview(filmstripOverlayView)
-        rootView.addSubview(pageNavigationOverlayView)
         rootView.addSubview(inspectorView)
+        // 翻页箭头是随鼠标出现的浮层控件，必须排在信息面板之上，
+        // 否则面板会盖住右侧箭头并把点击全部吃掉（左侧箭头不受影响）。
+        rootView.addSubview(pageNavigationOverlayView)
         rootView.addSubview(usageHintView)
         bottomBarView.addSubview(bottomDimensionLabel)
         bottomBarView.addSubview(bottomPageLabel)
@@ -1639,6 +1641,7 @@ final class MainWindowController: NSWindowController {
     }
 
     var isInspectorVisibleForTesting: Bool { !inspectorView.isHidden }
+    var inspectorViewForTesting: NSView { inspectorView }
     var hasLoadedImageForTesting: Bool { viewModel.currentImage != nil }
     var canEditCurrentImageForTesting: Bool { viewModel.canEditCurrentImage }
     var hasUnsavedEditsForTesting: Bool { viewModel.hasUnsavedEdits }
